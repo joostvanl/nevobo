@@ -1,0 +1,11 @@
+node_modules
+data
+.env
+*.log
+*.err
+.git
+docs
+*.md
+test-*.js
+fix-*.js
+flush-*.js

@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment secrets — NOOIT committen
+.env
+
+# SQLite database & WAL files
+data/
+
+# Uploaded media
+public/uploads/
+
+# Logs
+*.log
+*.err
+
+# Temp/debug scripts
+test-*.js
+fix-*.js
+flush-*.js
+seed-*.js
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp

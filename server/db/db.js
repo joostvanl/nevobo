@@ -1,0 +1,105 @@
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs');
+
+const DB_PATH = path.join(__dirname, '../../data/volleyball.db');
+const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
+
+// Ensure data directory exists
+const dataDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const db = new Database(DB_PATH);
+
+// Enable WAL mode for better concurrent read performance
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Run schema migration on startup
+const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
+db.exec(schema);
+
+// Incremental migrations: add columns that may not exist in older DBs
+const migrations = [
+  `ALTER TABLE goals ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE clubs ADD COLUMN home_address TEXT`,
+  `CREATE TABLE IF NOT EXISTS media_views (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    viewed_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS media_likes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(media_id, user_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS media_comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_roles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,
+    club_id    INTEGER REFERENCES clubs(id) ON DELETE CASCADE,
+    team_id    INTEGER REFERENCES teams(id) ON DELETE CASCADE,
+    granted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_roles_unique
+   ON user_roles(user_id, role, IFNULL(club_id,0), IFNULL(team_id,0))`,
+  `CREATE TABLE IF NOT EXISTS team_memberships (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id         INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    membership_type TEXT NOT NULL DEFAULT 'player',
+    added_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(team_id, user_id)
+  )`,
+  // Persistent cache: competition team data per Nevobo club code (survives server restarts)
+  `CREATE TABLE IF NOT EXISTS competition_teams (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_nevobo_code  TEXT NOT NULL,
+    team_path         TEXT NOT NULL,
+    team_naam         TEXT,
+    standpositietekst TEXT,
+    fetched_at        INTEGER NOT NULL,
+    UNIQUE(club_nevobo_code, team_path)
+  )`,
+  // Persistent cache: which opponent codes a club encounters in its competition poules
+  `CREATE TABLE IF NOT EXISTS club_opponents (
+    club_nevobo_code     TEXT NOT NULL,
+    opponent_nevobo_code TEXT NOT NULL,
+    fetched_at           INTEGER NOT NULL,
+    PRIMARY KEY(club_nevobo_code, opponent_nevobo_code)
+  )`,
+  // Metadata for competition_teams cache — stores total_count to detect incomplete caches
+  // (clubs with >50 teams require pagination; this ensures we always re-fetch if incomplete)
+  `CREATE TABLE IF NOT EXISTS competition_teams_meta (
+    club_nevobo_code  TEXT PRIMARY KEY,
+    total_count       INTEGER NOT NULL DEFAULT 0,
+    fetched_at        INTEGER NOT NULL
+  )`,
+  // Persistent feed cache: RSS feeds and LD+JSON (schedule, results, standings, indelingen)
+  // TTL is stored alongside the data so smart per-entry expiry works after restart.
+  `CREATE TABLE IF NOT EXISTS feed_cache (
+    cache_key  TEXT PRIMARY KEY,
+    data_json  TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    ttl_ms     INTEGER NOT NULL
+  )`,
+];
+for (const migration of migrations) {
+  try { db.exec(migration); } catch (_) { /* column already exists */ }
+}
+
+module.exports = db;

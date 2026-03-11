@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FF5722" />
+  <meta name="description" content="Volleybal app voor Nederlandse verenigingen" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>VolleyApp</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏐</text></svg>" />
+  <link rel="stylesheet" href="/css/app.css" />
+
+  <!-- CDN Libraries -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- App shell: shown when logged in -->
+<div id="app" class="app-shell hidden">
+  <!-- App Header -->
+  <header class="app-header">
+    <span class="logo">🏐 VolleyApp</span>
+    <span class="page-title" id="header-title">Home</span>
+    <button class="header-action" id="header-profile-btn" title="Profiel">👤</button>
+  </header>
+
+  <!-- Page container -->
+  <main id="page-container" class="page">
+    <div class="spinner"></div>
+  </main>
+
+  <!-- Bottom navigation -->
+  <nav class="bottom-nav">
+    <button class="nav-item" data-route="home">
+      <span class="nav-icon">🏠</span>
+      <span>Home</span>
+    </button>
+    <button class="nav-item" data-route="matches">
+      <span class="nav-icon">📅</span>
+      <span>Wedstrijden</span>
+    </button>
+    <button class="nav-item" data-route="team-own">
+      <span class="nav-icon">👕</span>
+      <span>Team</span>
+    </button>
+    <button class="nav-item" data-route="carpool">
+      <span class="nav-icon">🚗</span>
+      <span>Carpool</span>
+    </button>
+    <button class="nav-item" data-route="social">
+      <span class="nav-icon">💬</span>
+      <span>Sociaal</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Auth screen: shown when logged out -->
+<div id="auth-screen">
+  <div class="auth-page">
+    <div class="auth-logo">🏐 VolleyApp</div>
+    <p class="auth-tagline">Jouw clubapp voor Nederlandse volleybal</p>
+
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Inloggen</button>
+        <button class="auth-tab" data-tab="register">Registreren</button>
+      </div>
+
+      <!-- Login form -->
+      <form id="login-form" autocomplete="on">
+        <div class="form-group">
+          <label class="form-label" for="login-email">E-mailadres</label>
+          <input class="form-input" type="email" id="login-email" name="email" placeholder="jij@voorbeeld.nl" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Wachtwoord</label>
+          <input class="form-input" type="password" id="login-password" name="password" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Inloggen</button>
+      </form>
+
+      <!-- Register form -->
+      <form id="register-form" class="hidden" autocomplete="on">
+        <div class="form-group">
+          <label class="form-label" for="reg-name">Je naam</label>
+          <input class="form-input" type="text" id="reg-name" name="name" placeholder="Voornaam Achternaam" required autocomplete="name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-email">E-mailadres</label>
+          <input class="form-input" type="email" id="reg-email" name="email" placeholder="jij@voorbeeld.nl" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-password">Wachtwoord</label>
+          <input class="form-input" type="password" id="reg-password" name="password" placeholder="Minimaal 6 tekens" required autocomplete="new-password" minlength="6" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reg-club">Club (optioneel)</label>
+          <select class="form-select" id="reg-club" name="club_id">
+            <option value="">— Selecteer een club —</option>
+          </select>
+          <p class="form-hint">Kun je jouw club niet vinden? Voeg hem daarna toe.</p>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Account aanmaken</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="/js/app.js" type="module"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

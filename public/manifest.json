@@ -1,0 +1,17 @@
+{
+  "name": "VolleyApp",
+  "short_name": "VolleyApp",
+  "description": "Volleybal app voor Nederlandse verenigingen",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8F9FF",
+  "theme_color": "#FF5722",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏐</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
