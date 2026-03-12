@@ -58,6 +58,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       </span>
       <button class="rv-delete-btn" id="rv-delete" style="display:none" title="Verwijderen">🗑</button>
       <button class="rv-revert-btn" id="rv-revert" style="display:none" title="Blur aan/uit"></button>
+      <button class="rv-mute-btn" id="rv-mute" style="display:none" title="Geluid aan/uit">🔊</button>
     </div>
 
     <div class="rv-infobar" id="rv-infobar">
@@ -86,6 +87,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   const commentsEl = overlay.querySelector('#rv-comments');
   const deleteBtn  = overlay.querySelector('#rv-delete');
   const revertBtn  = overlay.querySelector('#rv-revert');
+  const muteBtn    = overlay.querySelector('#rv-mute');
+  let isMuted = false; // standaard: geluid aan
 
   function buildSlides() {
     track.innerHTML = list.map((m, i) => `
@@ -108,7 +111,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         vid = document.createElement('video');
         vid.src = m.file_path;
         vid.loop = true;
-        vid.muted = true;
+        vid.muted = isMuted;
         vid.playsInline = true;
       }
       vid.classList.add('rv-media');
@@ -149,7 +152,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         slide.innerHTML = `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
       } else {
         const vid = document.createElement('video');
-        vid.src = m.file_path; vid.loop = true; vid.muted = true; vid.playsInline = true;
+        vid.src = m.file_path; vid.loop = true; vid.muted = isMuted; vid.playsInline = true;
         vid.className = 'rv-media';
         slide.appendChild(vid);
       }
@@ -191,7 +194,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       const si = parseInt(slide.dataset.i);
       const v  = slide.querySelector('video');
       if (!v) return;
-      if (si === i) { v.muted = true; v.currentTime = 0; v.loop = true; v.play().catch(() => {}); }
+      if (si === i) { v.muted = isMuted; v.currentTime = 0; v.loop = true; v.play().catch(() => {}); }
       else          { v.pause(); v.currentTime = 0; }
     });
 
@@ -216,6 +219,9 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     // Show/hide delete button
     const showDel = !!(onDelete && canDelete && canDelete(m));
     deleteBtn.style.display = showDel ? 'flex' : 'none';
+
+    // Show/hide mute button — only for videos
+    muteBtn.style.display = m.file_type === 'video' ? 'flex' : 'none';
 
     // Show/hide revert-blur button — only for image items the uploader can manage
     revertBtn.style.display = 'none';
@@ -404,10 +410,18 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   idx = startIdx;
 
   const startVid = track.querySelector(`#rv-slide-${startIdx} video`);
-  if (startVid) { startVid.muted = true; startVid.play().catch(() => {}); }
+  if (startVid) { startVid.muted = isMuted; startVid.play().catch(() => {}); }
 
   updateMeta();
   recordView();
+
+  // Klik op video → pause/resume toggle
+  track.addEventListener('click', e => {
+    const vid = e.target.closest('.rv-slide')?.querySelector('video');
+    if (!vid) return;
+    if (vid.paused) { vid.play().catch(() => {}); }
+    else            { vid.pause(); }
+  });
 
   // Swipe
   overlay.addEventListener('touchstart', e => {
@@ -443,6 +457,12 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   commentBtn.addEventListener('click', openComments);
   deleteBtn.addEventListener('click', deleteCurrentItem);
   revertBtn.addEventListener('click', revertCurrentBlur);
+  muteBtn.addEventListener('click', () => {
+    isMuted = !isMuted;
+    muteBtn.textContent = isMuted ? '🔇' : '🔊';
+    muteBtn.title = isMuted ? 'Geluid aan' : 'Geluid uit';
+    track.querySelectorAll('video').forEach(v => { v.muted = isMuted; });
+  });
   overlay.querySelector('#rv-comments-close').addEventListener('click', () => { commentsEl.style.display = 'none'; });
 
   overlay.querySelector('#rv-comment-form')?.addEventListener('submit', async e => {
