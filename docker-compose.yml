@@ -5,10 +5,10 @@ services:
     build: .
     container_name: volleyapp
     restart: unless-stopped
+    env_file: .env          # laadt alle variabelen uit .env (JWT_SECRET, FACE_BLUR_*, etc.)
     environment:
       NODE_ENV: production
       PORT: 3000
-      JWT_SECRET: ${JWT_SECRET}
     volumes:
       - ./data:/app/data
       - uploads:/app/public/uploads

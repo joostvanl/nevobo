@@ -27,6 +27,9 @@ COPY package.json ./
 # Data directory (SQLite DB + uploads) is mounted as a volume at runtime
 RUN mkdir -p /app/data /app/public/uploads
 
+# Download face-api model weights (~12 MB) at build time so they are baked in
+RUN node server/scripts/download-models.js
+
 ENV NODE_ENV=production
 ENV PORT=3000
 
