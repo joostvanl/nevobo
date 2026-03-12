@@ -33,12 +33,16 @@ export async function render(container) {
       <div class="page-hero">
         <div class="container">
           <div style="display:flex;align-items:center;gap:1rem">
-            ${renderAvatar(me.name, me.avatar_url, 'lg')}
+            <div id="avatar-wrap" style="position:relative;cursor:pointer;flex-shrink:0" title="Profielfoto wijzigen">
+              ${renderAvatar(me.name, me.avatar_url, 'lg')}
+              <div style="position:absolute;bottom:0;right:0;background:var(--primary);border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:0.7rem;border:2px solid #fff">📷</div>
+            </div>
             <div style="flex:1;min-width:0">
               <h1 style="color:#fff;font-size:1.4rem;margin:0">${esc(me.name)}</h1>
               <div style="display:flex;gap:0.5rem;margin-top:0.35rem;flex-wrap:wrap">
                 <span class="chip" style="background:rgba(255,255,255,0.2);color:#fff">Level ${me.level}</span>
                 <span class="chip" style="background:rgba(255,255,255,0.2);color:#fff">${me.xp} XP</span>
+                ${me.anonymous_mode ? `<span class="chip" style="background:rgba(255,255,255,0.2);color:#fff">👤 Anoniem</span>` : ''}
               </div>
             </div>
             <button id="edit-profile-btn" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:50%;width:36px;height:36px;font-size:1rem;cursor:pointer;flex-shrink:0" title="Profiel bewerken">✏️</button>
@@ -144,6 +148,11 @@ export async function render(container) {
       showEditOverlay(me, clubs, container);
     });
 
+    // Avatar click → upload new profile photo
+    document.getElementById('avatar-wrap')?.addEventListener('click', () => {
+      showAvatarPicker(me, container);
+    });
+
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
   }
@@ -185,7 +194,8 @@ async function loadMyMedia(userId, container) {
       card.addEventListener('click', () => {
         const startIdx = parseInt(card.dataset.idx);
         openReelViewer(items, startIdx, {
-          canDelete: () => true,
+          canDelete:     () => true,
+          canRevertBlur: (m) => m.file_type === 'image',
           onDelete: async (m) => {
             await api(`/api/social/media/${m.id}`, { method: 'DELETE' });
             showToast('Verwijderd', 'success');
@@ -198,6 +208,16 @@ async function loadMyMedia(userId, container) {
               el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
             }
             return true;
+          },
+          onClose: (updatedList) => {
+            // Refresh thumbnails so blur/unblur changes are visible
+            updatedList.forEach((item, i) => {
+              if (item.file_type !== 'image') return;
+              const card = el.querySelector(`.prof-media-item[data-idx="${i}"]`);
+              if (!card) return;
+              const img = card.querySelector('img.prof-media-thumb');
+              if (img) img.src = item.file_path + '?t=' + Date.now();
+            });
           },
         });
       });
@@ -233,7 +253,36 @@ function showEditOverlay(me, clubs, container) {
             ${clubs.map(c => `<option value="${c.id}" ${c.id === me.club_id ? 'selected' : ''}>${c.name}</option>`).join('')}
           </select>
         </div>
-        <button type="submit" class="btn btn-primary btn-block" id="prof-save">Opslaan</button>
+
+        <!-- Privacy / anonymous mode -->
+        <div class="form-group" style="background:rgba(0,0,0,0.03);border-radius:10px;padding:0.85rem;border:1px solid var(--border)">
+          <label style="display:flex;align-items:flex-start;gap:0.75rem;cursor:pointer">
+            <input type="checkbox" id="prof-anonymous" style="width:18px;height:18px;margin-top:2px;accent-color:var(--primary);flex-shrink:0" ${me.anonymous_mode ? 'checked' : ''} />
+            <div>
+              <div style="font-weight:700;font-size:0.9rem">👤 Ik wil anoniem blijven</div>
+              <div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.2rem;line-height:1.4">
+                Je gezicht wordt automatisch vervaagd in foto's en video's die anderen posten. Hiervoor maken we een eenmalige herkenningsfoto.
+              </div>
+            </div>
+          </label>
+          <div id="face-ref-section" style="margin-top:0.85rem;display:${me.anonymous_mode ? 'block' : 'none'}">
+            <div style="font-size:0.8rem;font-weight:600;margin-bottom:0.3rem;color:var(--text)">
+              📸 Herkenningsfoto's
+              <span style="font-weight:400;color:var(--text-muted);font-size:0.72rem"> — max. 5, meer hoeken = betere herkenning</span>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.6rem;line-height:1.4">
+              Voeg foto's toe van jezelf vanuit verschillende hoeken (recht vooraan, zijkant, licht). Ze worden alleen gebruikt om je gezicht te herkennen en nooit gedeeld.
+            </p>
+            <div id="face-refs-grid" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:0.7rem;min-height:16px"></div>
+            <div class="flex gap-2">
+              <button type="button" class="btn btn-secondary btn-sm" style="flex:1" id="face-camera-btn">📷 Camera</button>
+              <button type="button" class="btn btn-secondary btn-sm" style="flex:1" id="face-upload-btn">📁 Uploaden</button>
+            </div>
+            <div id="face-upload-status" style="margin-top:0.5rem;font-size:0.78rem"></div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="prof-save" style="margin-top:0.75rem">Opslaan</button>
       </form>
 
       <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--border)" />
@@ -274,17 +323,50 @@ function showEditOverlay(me, clubs, container) {
   overlay.querySelector('#edit-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 
+  // Toggle face-ref section when anonymous checkbox changes
+  overlay.querySelector('#prof-anonymous').addEventListener('change', function () {
+    overlay.querySelector('#face-ref-section').style.display = this.checked ? 'block' : 'none';
+  });
+
+  // Load and render existing face references
+  loadFaceRefs(overlay);
+
+  // Face reference: camera
+  overlay.querySelector('#face-camera-btn')?.addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => {
+      const f = inp.files?.[0]; inp.remove();
+      if (f) uploadFaceRef(f, overlay);
+    });
+    inp.click();
+  });
+
+  // Face reference: file upload
+  overlay.querySelector('#face-upload-btn')?.addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => {
+      const f = inp.files?.[0]; inp.remove();
+      if (f) uploadFaceRef(f, overlay);
+    });
+    inp.click();
+  });
+
   // Profile form
   overlay.querySelector('#profile-form').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = overlay.querySelector('#prof-save');
     btn.disabled = true; btn.textContent = 'Opslaan…';
     try {
-      const data = await api('/api/auth/profile', {
+      await api('/api/auth/profile', {
         method: 'PATCH',
         body: {
           name: overlay.querySelector('#prof-name').value,
           club_id: overlay.querySelector('#prof-club').value || null,
+          anonymous_mode: overlay.querySelector('#prof-anonymous').checked,
         },
       });
       const meRefresh = await api('/api/auth/me');
@@ -345,7 +427,152 @@ function showEditOverlay(me, clubs, container) {
   overlay.querySelector('#club-code').addEventListener('input', function () { this.value = this.value.toLowerCase(); });
 }
 
-/* ─── Backend: my-media endpoint ─────────────────────────────────────────── */
+/* ─── Avatar picker ─────────────────────────────────────────────────────── */
+function showAvatarPicker(me, container) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:320px;text-align:center">
+      <h3 style="margin-bottom:0.5rem">Profielfoto</h3>
+      ${me.avatar_url ? `<img src="${esc(me.avatar_url)}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;margin:0 auto 1rem;display:block;border:3px solid var(--primary)" />` : ''}
+      <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:1rem">Kies een nieuwe profielfoto</p>
+      <div class="flex gap-2 mb-2">
+        <button class="btn btn-secondary" style="flex:1" id="av-camera">📷 Camera</button>
+        <button class="btn btn-secondary" style="flex:1" id="av-upload">📁 Galerij</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" style="width:100%" id="av-cancel">Annuleren</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#av-cancel').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  const doUpload = async (file) => {
+    showToast('Uploaden…', '');
+    const fd = new FormData();
+    fd.append('avatar', file);
+    const token = state.token || localStorage.getItem('vb_token');
+    try {
+      const res = await fetch('/api/auth/avatar', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      state.user = data.user;
+      localStorage.setItem('vb_user', JSON.stringify(state.user));
+      showToast('Profielfoto bijgewerkt! 🎉', 'success');
+      render(container);
+    } catch (err) { showToast(err.message || 'Upload mislukt', 'error'); }
+  };
+
+  overlay.querySelector('#av-camera').addEventListener('click', () => {
+    overlay.remove();
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => { const f = inp.files?.[0]; inp.remove(); if (f) doUpload(f); });
+    inp.click();
+  });
+
+  overlay.querySelector('#av-upload').addEventListener('click', () => {
+    overlay.remove();
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => { const f = inp.files?.[0]; inp.remove(); if (f) doUpload(f); });
+    inp.click();
+  });
+}
+
+/* ─── Face reference management ──────────────────────────────────────────── */
+
+async function loadFaceRefs(editOverlay) {
+  const grid = editOverlay.querySelector('#face-refs-grid');
+  if (!grid) return;
+  try {
+    const token = state.token || localStorage.getItem('vb_token');
+    const data  = await fetch('/api/auth/face-references', {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.json());
+    const refs = data.refs || [];
+    renderFaceRefsGrid(refs, grid, editOverlay);
+    const maxed = refs.length >= 5;
+    const camBtn = editOverlay.querySelector('#face-camera-btn');
+    const upBtn  = editOverlay.querySelector('#face-upload-btn');
+    if (camBtn) camBtn.disabled = maxed;
+    if (upBtn)  upBtn.disabled  = maxed;
+  } catch (_) {}
+}
+
+function renderFaceRefsGrid(refs, grid, editOverlay) {
+  if (!refs.length) {
+    grid.innerHTML = `<span style="font-size:0.75rem;color:var(--text-muted)">Nog geen foto's — voeg er minimaal 1 toe</span>`;
+    return;
+  }
+  grid.innerHTML = refs.map(r => `
+    <div style="position:relative;width:60px;height:60px" data-ref-id="${r.id}">
+      <img src="${r.file_path}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid var(--border)" />
+      <button type="button" data-ref-id="${r.id}"
+        style="position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;border:none;background:var(--danger);color:#fff;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1">✕</button>
+    </div>`).join('');
+
+  grid.querySelectorAll('button[data-ref-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.refId;
+      if (!confirm('Referentiefoto verwijderen?')) return;
+      const token = state.token || localStorage.getItem('vb_token');
+      try {
+        const res = await fetch(`/api/auth/face-reference/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }).then(r => r.json());
+        if (!res.ok) throw new Error(res.error);
+        loadFaceRefs(editOverlay);
+        showToast('Foto verwijderd', 'success');
+      } catch (err) {
+        showToast(err.message || 'Verwijderen mislukt', 'error');
+      }
+    });
+  });
+}
+
+async function uploadFaceRef(file, editOverlay) {
+  const statusEl = editOverlay.querySelector('#face-upload-status');
+  if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted)">Analyseren…</span>';
+  const fd = new FormData();
+  fd.append('photo', file);
+  const token = state.token || localStorage.getItem('vb_token');
+  try {
+    const res  = await fetch('/api/auth/face-reference', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      // Show quality issues with hints
+      const hints = data.hints || [];
+      const html = `
+        <div style="background:rgba(220,53,69,0.08);border:1px solid rgba(220,53,69,0.25);border-radius:8px;padding:0.6rem 0.75rem;margin-top:0.25rem">
+          <div style="font-weight:700;color:var(--danger);font-size:0.8rem;margin-bottom:0.35rem">⚠️ Foto afgekeurd</div>
+          ${data.issues ? data.issues.map(i => `<div style="font-size:0.78rem;color:var(--danger)">• ${i}</div>`).join('') : `<div style="font-size:0.78rem;color:var(--danger)">• ${data.error}</div>`}
+          ${hints.length ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.4rem;border-top:1px solid rgba(0,0,0,0.08);padding-top:0.35rem">
+            💡 ${hints[0]}
+          </div>` : ''}
+        </div>`;
+      if (statusEl) statusEl.innerHTML = html;
+      return;
+    }
+    if (statusEl) statusEl.innerHTML = '';
+    showToast('Herkenningsfoto toegevoegd ✅', 'success');
+    loadFaceRefs(editOverlay);
+  } catch (err) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--danger)">${err.message || 'Upload mislukt'}</span>`;
+    showToast(err.message || 'Upload mislukt', 'error');
+  }
+}
 
 /* ─── Leaderboard ────────────────────────────────────────────────────────── */
 async function loadLeaderboard(clubId, myId) {

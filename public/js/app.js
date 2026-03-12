@@ -30,6 +30,179 @@ export function showToast(message, type = '') {
   setTimeout(() => toast.remove(), 3200);
 }
 
+// ─── Quality debug panel ──────────────────────────────────────────────────────
+/**
+ * Shows a dismissable debug panel with raw quality measurements vs thresholds.
+ * Stays visible until the user closes it. Helps calibrate threshold values.
+ */
+export function showQualityDebugPanel(qualityDebug) {
+  if (!qualityDebug?.length) return;
+  const existing = document.getElementById('quality-debug-panel');
+  if (existing) existing.remove();
+
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  function bar(value, min, max, low, high) {
+    // Renders a small visual bar showing where the value falls within 0-255
+    const pct = Math.round((value / 255) * 100);
+    const lowPct  = Math.round((low  / 255) * 100);
+    const highPct = Math.round((high / 255) * 100);
+    return `
+      <div style="position:relative;height:8px;background:#e9ecef;border-radius:4px;margin-top:3px">
+        <div style="position:absolute;left:${lowPct}%;width:${highPct - lowPct}%;height:100%;background:rgba(40,167,69,0.25);border-radius:4px"></div>
+        <div style="position:absolute;left:${Math.max(0,pct-1)}%;width:2%;height:100%;background:${value < low || value > high ? '#dc3545' : '#28a745'};border-radius:2px"></div>
+      </div>`;
+  }
+
+  const panel = document.createElement('div');
+  panel.id = 'quality-debug-panel';
+  panel.style.cssText = `
+    position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+    width:min(96vw,420px);background:#fff;border:2px solid #f0ad4e;
+    border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.18);
+    z-index:9998;font-family:monospace;overflow:hidden`;
+
+  panel.innerHTML = `
+    <div style="background:#f0ad4e;padding:0.55rem 0.75rem;display:flex;align-items:center;justify-content:space-between">
+      <span style="font-weight:700;font-size:0.85rem;color:#fff">🔬 Kwaliteitscheck debug</span>
+      <button id="qdb-close" style="background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;padding:0 0.2rem">✕</button>
+    </div>
+    <div style="padding:0.75rem;font-size:0.78rem;max-height:60vh;overflow-y:auto">
+      ${qualityDebug.map(q => {
+        const t = q.thresholds || {};
+        const bOk = q.brightness >= (t.minBrightness||35) && q.brightness <= (t.maxBrightness||220);
+        const sOk = q.sharpness  >= (t.minSharpness||2);
+        const gOk = !q.grainRatio || q.grainRatio <= (t.maxGrainRatio||3.2);
+        const minPx = t.minPixels || 200;
+        const shortSide = Math.min(q.width || 9999, q.height || 9999);
+        const rOk = shortSide >= minPx;
+        const res = (q.width && q.height) ? `${q.width}×${q.height}` : '?';
+        return `
+          <div style="margin-bottom:0.9rem;padding-bottom:0.9rem;border-bottom:1px solid #eee">
+            <div style="font-weight:700;color:#333;margin-bottom:0.5rem;font-size:0.8rem">📁 ${esc(q.file)}</div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem">
+              <div style="background:${bOk?'#f0fff4':'#fff5f5'};border:1px solid ${bOk?'#b7ebc0':'#ffd0d0'};border-radius:6px;padding:0.4rem 0.5rem">
+                <div style="color:#666;font-size:0.7rem">Helderheid ${bOk?'✅':'❌'}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:${bOk?'#28a745':'#dc3545'}">${q.brightness}</div>
+                <div style="color:#888;font-size:0.68rem">${t.minBrightness||35}–${t.maxBrightness||220}</div>
+                ${bar(q.brightness, 0, 255, t.minBrightness||35, t.maxBrightness||220)}
+              </div>
+              <div style="background:${sOk?'#f0fff4':'#fff5f5'};border:1px solid ${sOk?'#b7ebc0':'#ffd0d0'};border-radius:6px;padding:0.4rem 0.5rem">
+                <div style="color:#666;font-size:0.7rem">Scherpte (640px) ${sOk?'✅':'❌'}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:${sOk?'#28a745':'#dc3545'}">${q.sharpness}</div>
+                <div style="color:#888;font-size:0.68rem">min: ${t.minSharpness||2} · @80px: ${q.sharpness80||'?'}</div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem">
+              <div style="background:${gOk?'#f0fff4':'#fff5f5'};border:1px solid ${gOk?'#b7ebc0':'#ffd0d0'};border-radius:6px;padding:0.4rem 0.5rem">
+                <div style="color:#666;font-size:0.7rem">Grain ratio ${gOk?'✅':'❌'}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:${gOk?'#28a745':'#dc3545'}">${q.grainRatio??'?'}</div>
+                <div style="color:#888;font-size:0.68rem">max: ${t.maxGrainRatio||3.2} · lager = beter</div>
+              </div>
+              <div style="background:${rOk?'#f0fff4':'#fff5f5'};border:1px solid ${rOk?'#b7ebc0':'#ffd0d0'};border-radius:6px;padding:0.4rem 0.5rem">
+                <div style="color:#666;font-size:0.7rem">Resolutie ${rOk?'✅':'❌'}</div>
+                <div style="font-size:0.95rem;font-weight:700;color:${rOk?'#28a745':'#dc3545'}">${res}</div>
+                <div style="color:#888;font-size:0.68rem">min: ${minPx}px korte zijde</div>
+              </div>
+            </div>
+
+            <div style="margin-top:0.4rem;font-size:0.72rem;color:${q.passed?'#28a745':'#dc3545'};font-weight:600">
+              ${q.passed ? '✅ Kwaliteit OK — blur uitgevoerd' : '⚠️ Kwaliteit onvoldoende — blur overgeslagen'}
+            </div>
+          </div>`;
+      }).join('')}
+      <div style="font-size:0.72rem;color:#888;margin-top:0.25rem">
+        Thresholds in <code>server/services/faceBlur.js</code> · Grain ratio = scherpte@640 / scherpte@80
+      </div>
+    </div>`;
+
+  document.body.appendChild(panel);
+  panel.querySelector('#qdb-close').addEventListener('click', () => panel.remove());
+}
+
+// ─── Quality warning modal ────────────────────────────────────────────────────
+/**
+ * Shows a persistent modal when uploaded photos were not anonymised due to
+ * insufficient quality (too dark / blurry).
+ *
+ * qualityIssues: [{ mediaId, file_path, warnings: string[] }]
+ * onDelete(mediaId): called after successful server-side delete (reload gallery etc.)
+ */
+export function showQualityWarningModal(qualityIssues, onDelete) {
+  if (!qualityIssues?.length) return;
+
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const modal = document.createElement('div');
+  modal.className = 'badge-unlock-overlay';
+  modal.style.cssText = 'z-index:9999';
+  modal.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:380px;padding:1.25rem">
+      <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem">
+        <span style="font-size:1.4rem">⚠️</span>
+        <div>
+          <div style="font-weight:800;font-size:1rem;color:var(--danger)">Foto niet geanonimiseerd</div>
+          <div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.1rem">
+            De kwaliteit was onvoldoende voor betrouwbare gezichtsherkenning
+          </div>
+        </div>
+      </div>
+      <p style="font-size:0.82rem;color:var(--text);line-height:1.5;margin-bottom:1rem">
+        Personen die anoniem willen blijven zijn mogelijk <strong>herkenbaar</strong> op onderstaande foto's.
+        Verwijder de foto's om dit te voorkomen, of behoud ze als anonimisering niet nodig is.
+      </p>
+      <div id="qw-items" style="display:flex;flex-direction:column;gap:0.75rem;margin-bottom:1.1rem"></div>
+      <button class="btn btn-secondary btn-block" id="qw-keep" style="margin-top:0.25rem">Alles behouden</button>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  const itemsEl = modal.querySelector('#qw-items');
+  const remaining = new Set(qualityIssues.map(q => q.mediaId));
+
+  function renderItems() {
+    itemsEl.innerHTML = qualityIssues
+      .filter(q => remaining.has(q.mediaId))
+      .map(q => `
+        <div style="display:flex;align-items:center;gap:0.75rem;background:rgba(220,53,69,0.05);border:1px solid rgba(220,53,69,0.2);border-radius:10px;padding:0.6rem 0.75rem" data-mid="${q.mediaId}">
+          <img src="${esc(q.file_path)}" style="width:52px;height:52px;object-fit:cover;border-radius:7px;flex-shrink:0" />
+          <div style="flex:1;min-width:0">
+            ${q.warnings.map(w => `<div style="font-size:0.75rem;color:var(--danger)">• ${esc(w.replace(/—.*/, '').trim())}</div>`).join('')}
+          </div>
+          <button class="btn btn-sm" data-del="${q.mediaId}"
+            style="background:var(--danger);color:#fff;flex-shrink:0;padding:0.35rem 0.7rem;font-size:0.78rem;border-radius:8px">
+            🗑 Verwijder
+          </button>
+        </div>`).join('');
+
+    // Bind delete buttons
+    itemsEl.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const mid = parseInt(btn.dataset.del);
+        btn.disabled = true; btn.textContent = '…';
+        try {
+          await fetch(`/api/social/media/${mid}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${state.token || localStorage.getItem('vb_token')}` },
+          });
+          remaining.delete(mid);
+          if (typeof onDelete === 'function') onDelete(mid);
+          if (remaining.size === 0) { modal.remove(); return; }
+          renderItems();
+        } catch (_) {
+          btn.disabled = false; btn.textContent = '🗑 Verwijder';
+          showToast('Verwijderen mislukt', 'error');
+        }
+      });
+    });
+  }
+
+  renderItems();
+
+  modal.querySelector('#qw-keep').addEventListener('click', () => modal.remove());
+}
+
 // ─── Team picker (when user has multiple team memberships) ───────────────────
 const ROLE_LABELS = { player: 'Speler', coach: 'Trainer/Coach', trainer: 'Trainer/Coach', parent: 'Ouder' };
 

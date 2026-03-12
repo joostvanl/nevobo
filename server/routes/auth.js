@@ -2,8 +2,29 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken } = require('../middleware/auth');
+
+// Multer for avatar + face reference uploads
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, '../../public/uploads/avatars');
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `user_${req.user.id}_${Date.now()}${ext}`);
+  },
+});
+const avatarUpload = multer({
+  storage: avatarStorage,
+  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const JWT_EXPIRES = '7d';
@@ -202,11 +223,12 @@ router.delete('/memberships/:teamId', verifyToken, (req, res) => {
 
 // PATCH /api/auth/profile
 router.patch('/profile', verifyToken, (req, res) => {
-  const { name, team_id, club_id } = req.body;
+  const { name, team_id, club_id, anonymous_mode } = req.body;
   const updates = {};
   if (name) updates.name = name;
   if (team_id !== undefined) updates.team_id = team_id;
   if (club_id !== undefined) updates.club_id = club_id;
+  if (anonymous_mode !== undefined) updates.anonymous_mode = anonymous_mode ? 1 : 0;
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ ok: false, error: 'Geen velden om bij te werken' });
@@ -217,6 +239,108 @@ router.patch('/profile', verifyToken, (req, res) => {
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ ok: true, user: safeUser(user) });
+});
+
+// POST /api/auth/avatar — upload profile photo
+router.post('/avatar', verifyToken, avatarUpload.single('avatar'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'Geen afbeelding ontvangen' });
+
+  // Normalize EXIF orientation so the avatar displays correctly everywhere
+  try {
+    const sharp = require('sharp');
+    const tmpPath = req.file.path + '.rot.tmp';
+    await sharp(req.file.path).rotate().toFile(tmpPath);
+    fs.renameSync(tmpPath, req.file.path);
+  } catch (_) { /* keep original if rotation fails */ }
+
+  const relativePath = '/uploads/avatars/' + req.file.filename;
+
+  // Delete old avatar file if it was a local upload
+  const existing = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+  if (existing?.avatar_url?.startsWith('/uploads/avatars/')) {
+    const old = path.join(__dirname, '../../public', existing.avatar_url);
+    fs.unlink(old, () => {});
+  }
+
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(relativePath, req.user.id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ ok: true, avatar_url: relativePath, user: safeUser(user) });
+});
+
+// POST /api/auth/face-reference — add a portrait reference photo (up to 5 per user)
+router.post('/face-reference', verifyToken, avatarUpload.single('photo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'Geen foto ontvangen' });
+
+  // Max 5 reference photos per user
+  const count = db.prepare('SELECT COUNT(*) AS n FROM face_references WHERE user_id = ?').get(req.user.id);
+  if (count.n >= 5) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ ok: false, error: 'Maximaal 5 referentiefoto\'s toegestaan' });
+  }
+
+  // Normalise EXIF orientation before storing
+  const relativePath = '/uploads/avatars/' + req.file.filename;
+  const absPath = path.join(__dirname, '../../public', relativePath);
+  try {
+    const tmpPath = absPath + '.tmp';
+    await require('sharp')(absPath).rotate().toFile(tmpPath);
+    fs.renameSync(tmpPath, absPath);
+  } catch (_) { /* keep original if sharp fails */ }
+
+  // Quality check: brightness, sharpness, face detection
+  try {
+    const { checkReferencePhotoQuality } = require('../services/faceBlur');
+    const quality = await checkReferencePhotoQuality(absPath);
+    if (!quality.ok && !quality.skipped) {
+      fs.unlink(absPath, () => {});
+      return res.status(400).json({
+        ok: false,
+        error: quality.issues.join(' · '),
+        issues: quality.issues,
+        hints:  quality.hints,
+      });
+    }
+  } catch (_) { /* non-blocking — proceed on unexpected check error */ }
+
+  // Insert into face_references table
+  const row = db.prepare('INSERT INTO face_references (user_id, file_path) VALUES (?, ?)').run(req.user.id, relativePath);
+
+  // Also keep legacy face_reference_path pointing to the first/latest one (backward compat)
+  db.prepare('UPDATE users SET face_reference_path = ? WHERE id = ?').run(relativePath, req.user.id);
+
+  res.json({ ok: true, id: row.lastInsertRowid, file_path: relativePath });
+});
+
+// DELETE /api/auth/face-reference/:id — remove a specific reference photo
+router.delete('/face-reference/:id', verifyToken, (req, res) => {
+  const ref = db.prepare('SELECT * FROM face_references WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!ref) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  // Remove file from disk
+  try {
+    const absPath = path.join(__dirname, '../../public', ref.file_path);
+    if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
+  } catch (_) {}
+
+  // Invalidate descriptor cache
+  try {
+    const { invalidateCache } = require('../services/faceBlur');
+    invalidateCache(ref.file_path);
+  } catch (_) {}
+
+  db.prepare('DELETE FROM face_references WHERE id = ?').run(ref.id);
+
+  // Update legacy column to most recent remaining reference (or null)
+  const remaining = db.prepare('SELECT file_path FROM face_references WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(req.user.id);
+  db.prepare('UPDATE users SET face_reference_path = ? WHERE id = ?').run(remaining?.file_path ?? null, req.user.id);
+
+  res.json({ ok: true });
+});
+
+// GET /api/auth/face-references — list all reference photos for current user
+router.get('/face-references', verifyToken, (req, res) => {
+  const refs = db.prepare('SELECT id, file_path, created_at FROM face_references WHERE user_id = ? ORDER BY created_at ASC').all(req.user.id);
+  res.json({ ok: true, refs });
 });
 
 // Helper used by other routes

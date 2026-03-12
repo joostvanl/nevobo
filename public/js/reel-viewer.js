@@ -6,10 +6,15 @@
  *                  like_count, comment_count, view_count, liked_by_me }
  *   startIdx   — index to open at
  *   options    — {
- *     sourceVideo: HTMLVideoElement | null   — already-playing video to reuse
- *     onDelete:   async (item) => boolean    — called when user deletes; return true to confirm removal from list
- *     canDelete:  (item) => boolean          — whether to show delete button for an item
+ *     sourceVideo: HTMLVideoElement | null       — already-playing video to reuse
+ *     onDelete:   async (item) => boolean        — called when user deletes; return true to confirm removal from list
+ *     canDelete:  (item) => boolean              — whether to show delete button for an item
+ *     fetchMore:  async (offset) => item[]       — load more items when near the end; return [] when exhausted
  *   }
+ *
+ * Behaviour:
+ *   - When fetchMore is provided and user is within 2 slides of the end, more items are loaded.
+ *   - Once all items are loaded (fetchMore returns []), swiping past the last item wraps back to the first.
  */
 import { api, state, showToast } from './app.js';
 
@@ -18,13 +23,15 @@ function esc(str) {
 }
 
 export function openReelViewer(items, startIdx = 0, options = {}) {
-  const { sourceVideo = null, onDelete = null, canDelete = null } = options;
+  const { sourceVideo = null, onDelete = null, canDelete = null, fetchMore = null, canRevertBlur = null, onClose = null } = options;
 
   // Work on a mutable copy so deletions don't affect the caller's array
-  let list = [...items];
-  let idx  = startIdx;
+  let list        = [...items];
+  let idx         = startIdx;
   let touchStartX = 0;
   let touchStartY = 0;
+  let allLoaded   = !fetchMore;   // true when no more items to fetch
+  let loadingMore = false;
 
   const overlay = document.createElement('div');
   overlay.className = 'rv-overlay';
@@ -50,6 +57,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         <span class="rv-act-label" id="rv-view-count">0</span>
       </span>
       <button class="rv-delete-btn" id="rv-delete" style="display:none" title="Verwijderen">🗑</button>
+      <button class="rv-revert-btn" id="rv-revert" style="display:none" title="Blur aan/uit"></button>
     </div>
 
     <div class="rv-infobar" id="rv-infobar">
@@ -77,6 +85,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   const commentBtn = overlay.querySelector('#rv-comment');
   const commentsEl = overlay.querySelector('#rv-comments');
   const deleteBtn  = overlay.querySelector('#rv-delete');
+  const revertBtn  = overlay.querySelector('#rv-revert');
 
   function buildSlides() {
     track.innerHTML = list.map((m, i) => `
@@ -121,7 +130,55 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     });
   }
 
+  // Append new slides to track without full rebuild (avoids disrupting current video)
+  function appendSlides(newItems) {
+    const frame = overlay.querySelector('.rv-frame');
+    const w = frame ? frame.offsetWidth  : window.innerWidth;
+    const h = frame ? frame.offsetHeight : window.innerHeight;
+    const startI = list.length;
+    list.push(...newItems);
+    newItems.forEach((m, j) => {
+      const i     = startI + j;
+      const slide = document.createElement('div');
+      slide.className  = 'rv-slide';
+      slide.dataset.i  = i;
+      slide.id         = `rv-slide-${i}`;
+      slide.style.width  = w + 'px';
+      slide.style.height = h + 'px';
+      if (m.file_type !== 'video') {
+        slide.innerHTML = `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
+      } else {
+        const vid = document.createElement('video');
+        vid.src = m.file_path; vid.loop = true; vid.muted = true; vid.playsInline = true;
+        vid.className = 'rv-media';
+        slide.appendChild(vid);
+      }
+      track.appendChild(slide);
+    });
+    track.style.width = (w * list.length) + 'px';
+  }
+
+  // Trigger background load when within 2 items of the end
+  function maybeLoadMore() {
+    if (allLoaded || loadingMore || !fetchMore) return;
+    if (idx < list.length - 2) return;
+    loadingMore = true;
+    fetchMore(list.length).then(more => {
+      if (!more || more.length === 0) {
+        allLoaded = true;
+      } else {
+        appendSlides(more);
+      }
+      loadingMore = false;
+    }).catch(() => { loadingMore = false; });
+  }
+
   function goTo(i, animate = true) {
+    // Infinite wrap-around once all items are loaded
+    if (allLoaded && list.length > 0) {
+      if (i >= list.length) i = 0;
+      else if (i < 0) i = list.length - 1;
+    }
     i = Math.max(0, Math.min(i, list.length - 1));
     idx = i;
 
@@ -140,6 +197,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
     updateMeta();
     recordView();
+    maybeLoadMore();
   }
 
   function updateMeta() {
@@ -158,6 +216,41 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     // Show/hide delete button
     const showDel = !!(onDelete && canDelete && canDelete(m));
     deleteBtn.style.display = showDel ? 'flex' : 'none';
+
+    // Show/hide revert-blur button — only for image items the uploader can manage
+    revertBtn.style.display = 'none';
+    if (canRevertBlur && canRevertBlur(m) && m.file_type === 'image') {
+      // Async check: does a .orig backup exist for this item?
+      fetch(`/api/social/media/${m.id}/has-original`, {
+        headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+      }).then(r => r.json()).then(data => {
+        // Only show if this is still the active item and team has (or had) anon members
+        if (list[idx]?.id === m.id && (data.teamHasAnon || data.hasOriginal)) {
+          m._blurred    = data.hasOriginal;
+          m._teamHasAnon = data.teamHasAnon;
+          updateRevertBtn(m);
+        }
+      }).catch(() => {});
+    }
+  }
+
+  function updateRevertBtn(m) {
+    if (canRevertBlur && canRevertBlur(m) && m.file_type === 'image' && m._blurred !== undefined
+        && (m._teamHasAnon || m._blurred)) {
+      revertBtn.style.display = 'flex';
+      revertBtn.textContent = '🙈';
+      if (m._blurred) {
+        // Blur is active — icon full opacity
+        revertBtn.title = 'Toon origineel (blur verwijderen)';
+        revertBtn.classList.remove('rv-revert-btn--faded');
+      } else {
+        // Showing original — icon greyed out
+        revertBtn.title = 'Blur opnieuw toepassen';
+        revertBtn.classList.add('rv-revert-btn--faded');
+      }
+    } else {
+      revertBtn.style.display = 'none';
+    }
   }
 
   async function recordView() {
@@ -214,6 +307,50 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     }
   }
 
+  async function revertCurrentBlur() {
+    const m = list[idx];
+    const isBlurred = !!m._blurred;
+    const confirmMsg = isBlurred
+      ? 'Originele (ongeblurde) versie tonen? Anonieme personen worden dan zichtbaar.'
+      : 'Blur opnieuw toepassen op deze foto?';
+    if (!confirm(confirmMsg)) return;
+
+    revertBtn.disabled = true;
+    try {
+      if (isBlurred) {
+        const data = await api(`/api/social/media/${m.id}/revert-blur`, { method: 'POST' });
+        if (!data.ok) throw new Error(data.error || 'Herstel mislukt');
+        showToast('Originele versie zichtbaar', 'success');
+      } else {
+        const data = await api(`/api/social/media/${m.id}/reblur`, { method: 'POST' });
+        if (!data.ok) throw new Error(data.error || 'Blur mislukt');
+        showToast(data.blurred ? 'Blur opnieuw toegepast' : 'Geen gezicht gevonden — blur niet toegepast', data.blurred ? 'success' : 'warning');
+      }
+      // Reload image and re-fetch authoritative state from server
+      const slide = track.querySelector(`#rv-slide-${idx}`);
+      const img = slide?.querySelector('img');
+      if (img) img.src = m.file_path + '?t=' + Date.now();
+      // Always re-check real server state — don't trust local tracking
+      refreshRevertState(m);
+    } catch (err) {
+      showToast(err.message || 'Actie mislukt', 'error');
+    } finally {
+      revertBtn.disabled = false;
+    }
+  }
+
+  function refreshRevertState(m) {
+    if (!canRevertBlur || !canRevertBlur(m) || m.file_type !== 'image') return;
+    fetch(`/api/social/media/${m.id}/has-original`, {
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+    }).then(r => r.json()).then(data => {
+      if (list[idx]?.id !== m.id) return; // user swiped away
+      m._blurred    = data.hasOriginal;
+      m._teamHasAnon = data.teamHasAnon;
+      updateRevertBtn(m);
+    }).catch(() => {});
+  }
+
   async function openComments() {
     commentsEl.style.display = 'flex';
     const listEl = overlay.querySelector('#rv-comments-list');
@@ -253,6 +390,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     document.removeEventListener('keydown', onKey);
     document.body.style.overflow = '';
     overlay.remove();
+    if (onClose) onClose(list);
   }
 
   // Build & position
@@ -304,6 +442,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   likeBtn.addEventListener('click', toggleLike);
   commentBtn.addEventListener('click', openComments);
   deleteBtn.addEventListener('click', deleteCurrentItem);
+  revertBtn.addEventListener('click', revertCurrentBlur);
   overlay.querySelector('#rv-comments-close').addEventListener('click', () => { commentsEl.style.display = 'none'; });
 
   overlay.querySelector('#rv-comment-form')?.addEventListener('submit', async e => {

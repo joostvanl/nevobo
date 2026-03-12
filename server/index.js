@@ -45,3 +45,15 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`🏐 Volleyball App running on http://localhost:${PORT}`);
 });
+
+// Load face detection models in the background after startup
+const { loadModels } = require('./services/faceBlur');
+loadModels().catch(err => console.error('[faceBlur] Model load failed:', err.message));
+
+// Prevent uncaught TF/WASM errors from killing the server process
+process.on('uncaughtException', err => {
+  console.error('[server] Uncaught exception (server continues):', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled rejection (server continues):', reason?.message ?? reason);
+});

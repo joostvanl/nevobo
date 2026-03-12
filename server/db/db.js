@@ -101,9 +101,33 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN shirt_number  INTEGER`,
   `ALTER TABLE users ADD COLUMN position      TEXT`,
   `ALTER TABLE users ADD COLUMN birth_date    TEXT`,
+  // Privacy: anonymous mode + face reference photo for auto-blur
+  `ALTER TABLE users ADD COLUMN anonymous_mode     INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN face_reference_path TEXT`,
+  // Store bounding boxes of blurred faces so re-blur can skip face detection + matching
+  `ALTER TABLE match_media ADD COLUMN blur_regions TEXT`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
 }
+
+// Multiple face references per anonymous user
+db.exec(`
+  CREATE TABLE IF NOT EXISTS face_references (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    file_path   TEXT    NOT NULL,
+    created_at  TEXT    DEFAULT (datetime('now'))
+  )
+`);
+// Migrate existing single reference photos into the new table
+db.exec(`
+  INSERT OR IGNORE INTO face_references (user_id, file_path)
+  SELECT id, face_reference_path FROM users
+  WHERE face_reference_path IS NOT NULL AND face_reference_path != ''
+    AND NOT EXISTS (
+      SELECT 1 FROM face_references fr WHERE fr.user_id = users.id AND fr.file_path = users.face_reference_path
+    )
+`);
 
 module.exports = db;

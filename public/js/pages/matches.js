@@ -1,4 +1,4 @@
-import { api, state, formatDate, formatTime, showToast, navigate } from '../app.js';
+import { api, state, formatDate, formatTime, showToast, navigate, showQualityWarningModal, showQualityDebugPanel } from '../app.js';
 import { FilePicker } from '../file-picker.js';
 import { openReelViewer } from '../reel-viewer.js';
 
@@ -138,7 +138,7 @@ export async function render(container, params = {}) {
     if (params.teamName && params.nevoboCode) {
       renderMatchDetailByTeamFeed(container, params.matchId, params.teamName, params.nevoboCode, club);
     } else {
-      renderMatchDetailById(container, params.matchId, club, myTeams.length > 0);
+      renderMatchDetailById(container, params.matchId, club, myTeams.length > 0, myTeams);
     }
     return;
   }
@@ -299,7 +299,7 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
     });
 
     // Card click → detail
-    listEl.querySelectorAll('.match-card[data-match-idx]').forEach(card => {
+    listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const idx = parseInt(card.dataset.matchIdx);
@@ -375,7 +375,7 @@ async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
       });
     });
 
-    listEl.querySelectorAll('.match-card[data-match-idx]').forEach(card => {
+    listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
@@ -465,7 +465,7 @@ async function loadClubSection(listEl, club, myTeams, tab) {
     });
 
     // Card click → detail
-    listEl.querySelectorAll('.match-card[data-match-idx]').forEach(card => {
+    listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
@@ -537,7 +537,7 @@ async function loadFollowedTeamsSection(listEl, club, followedTeams, tab) {
     });
 
     // Card click → read-only detail
-    listEl.querySelectorAll('.match-card[data-match-idx]').forEach(card => {
+    listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
@@ -604,71 +604,68 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
   const isHomeGame = canInteract && clubName.length > 0
     && (match.home_team || '').toLowerCase().includes(clubName.toLowerCase());
 
-  const scoreDisplay = isResult && match.score !== null
-    ? `<div class="match-score">${match.score_home} – ${match.score_away}</div>`
-    : `<div class="match-score tbd">vs</div>`;
-
-  const setsHtml = isResult && match.sets?.length > 0
-    ? `<div class="match-sets">${match.sets.map(s => `<span class="set-score">${s}</span>`).join('')}</div>`
-    : '';
-
-  const readOnlyBadge = !canInteract
-    ? `<span class="chip chip-neutral" style="font-size:0.65rem;padding:0.1rem 0.4rem">👁️ volgend</span>`
-    : '';
-
-  const carpoolBadge = canInteract && !isResult && !isHomeGame && carpoolSeats !== null
-    ? carpoolSeats > 0
-      ? `<span class="chip chip-success" style="font-size:0.65rem;padding:0.1rem 0.4rem">🚗 ${carpoolSeats} plaats${carpoolSeats === 1 ? '' : 'en'}</span>`
-      : `<span class="chip chip-neutral" style="font-size:0.65rem;padding:0.1rem 0.4rem">🚗 Geen plaatsen</span>`
-    : '';
-
   const teamLink = (name) => {
     if (!nevoboCode || !name) return `class="match-team-name"`;
     const code = resolveClubCode(name, nevoboCode);
     return `class="match-team-name team-name-link" data-teamname="${escapeAttr(name)}" data-nevobocode="${escapeAttr(code)}"`;
   };
 
-  // Prefer club code from match data (server-enriched), fall back to client-side lookup
-  const logoCode = (name, directCode) => {
-    if (directCode) return directCode;
-    return resolveClubCode(name, nevoboCode, true); // strict: null if unknown
-  };
-
   const teamLogo = (name, directCode) => {
-    const code = logoCode(name, directCode);
+    const code = directCode || resolveClubCode(name, nevoboCode, true);
     if (!code) return '';
     const url = resolveTeamLogo(name, nevoboCode) || `https://assets.nevobo.nl/organisatie/logo/${code.toUpperCase()}.jpg`;
     return `<img src="${url}" alt="${escapeAttr(name)}"
       onload="this.style.opacity=1"
       onerror="this.style.display='none'"
-      style="width:22px;height:22px;border-radius:5px;object-fit:contain;background:#fff;flex-shrink:0;opacity:0;transition:opacity .15s;border:1px solid var(--border)" />`;
+      style="width:34px;height:34px;border-radius:8px;object-fit:contain;background:#fff;flex-shrink:0;opacity:0;transition:opacity .15s;border:1px solid var(--border)" />`;
   };
 
+  // Centre column: score pill for results, VS badge for schedule
+  const centreHtml = isResult && match.score_home != null
+    ? `<div class="mc-score">
+        <span class="mc-score-num">${match.score_home}–${match.score_away}</span>
+        ${match.sets?.length ? `<span class="mc-sets">${match.sets.join(' ')}</span>` : ''}
+       </div>`
+    : `<div class="mc-vs"><span>VS</span></div>`;
+
+  const carpoolBadge = canInteract && !isResult && !isHomeGame && carpoolSeats !== null
+    ? carpoolSeats > 0
+      ? `<span class="mc-badge mc-badge--ok">🚗 ${carpoolSeats} plek${carpoolSeats === 1 ? '' : 'ken'}</span>`
+      : `<span class="mc-badge">🚗 Vol</span>`
+    : '';
+
+  const readOnlyBadge = !canInteract
+    ? `<span class="mc-badge">👁 volgend</span>`
+    : '';
+
+  const carpoolBtn = canInteract && !isResult && !isHomeGame
+    ? `<button class="mc-action-btn match-carpool-btn" data-matchid="${encodeMatchId(match)}">🚗 Carpool</button>`
+    : '';
+
   return `
-    <div class="match-card" data-match-idx="${idx}" style="cursor:pointer${!canInteract ? ';opacity:0.88' : ''}">
-      <div class="match-card-teams">
-        <div style="display:flex;align-items:center;gap:0.4rem;min-width:0">
+    <div class="mc-card" data-match-idx="${idx}">
+      <div class="mc-teams">
+        <div class="mc-side">
           ${teamLogo(match.home_team, match.home_club_code)}
-          <div ${teamLink(match.home_team)} style="min-width:0">${match.home_team || '—'}</div>
+          <span ${teamLink(match.home_team)} class="mc-name">${match.home_team || '—'}</span>
         </div>
-        ${scoreDisplay}
-        <div style="display:flex;align-items:center;justify-content:flex-end;gap:0.4rem;min-width:0">
-          <div ${teamLink(match.away_team)} style="text-align:right;min-width:0">${match.away_team || '—'}</div>
+        ${centreHtml}
+        <div class="mc-side mc-side-right">
           ${teamLogo(match.away_team, match.away_club_code)}
+          <span ${teamLink(match.away_team)} class="mc-name">${match.away_team || '—'}</span>
         </div>
       </div>
-      ${setsHtml}
-      <div class="match-card-meta">
-        ${match.datetime ? `<span>📅 ${formatDate(match.datetime)}</span>` : ''}
-        ${match.datetime ? `<span>🕐 ${formatTime(match.datetime)}</span>` : ''}
-        ${match.venue_name ? `<span>📍 ${match.venue_name}</span>` : ''}
-        ${match.poule_code ? `<span class="chip chip-neutral">${match.poule_code}</span>` : ''}
-        ${carpoolBadge}
-        ${readOnlyBadge}
-      </div>
-      <div class="match-card-actions">
-        <button class="btn btn-ghost btn-sm details-btn">Details →</button>
-        ${canInteract && !isResult && !isHomeGame ? `<button class="btn btn-ghost btn-sm match-carpool-btn" data-matchid="${encodeMatchId(match)}" style="color:var(--accent)">🚗 Carpool</button>` : ''}
+      <div class="mc-foot">
+        <div class="mc-foot-left">
+          ${match.datetime ? `<span class="mc-dt">${formatDate(match.datetime)} · ${formatTime(match.datetime)}</span>` : ''}
+          ${match.venue_name ? `<span class="mc-venue">📍 ${match.venue_name}</span>` : ''}
+          ${match.poule_code ? `<span class="mc-badge">${match.poule_code}</span>` : ''}
+          ${carpoolBadge}${readOnlyBadge}
+        </div>
+        <div class="mc-foot-right">
+          ${carpoolBtn}
+          <button class="mc-action-btn details-btn">Details →</button>
+        </div>
       </div>
     </div>`;
 }
@@ -888,7 +885,7 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
   }
 }
 
-async function renderMatchDetailById(container, matchId, club, canInteract) {
+async function renderMatchDetailById(container, matchId, club, canInteract, myTeams = []) {
   container.innerHTML = `<div class="spinner"></div>`;
   try {
     const [schedData, resData] = await Promise.all([
@@ -898,7 +895,7 @@ async function renderMatchDetailById(container, matchId, club, canInteract) {
     const all = [...(schedData.matches || []), ...(resData.matches || [])];
     const match = all.find(m => encodeMatchId(m) === matchId);
     if (match) {
-      renderMatchDetail(container, match, club, null, canInteract);
+      renderMatchDetail(container, match, club, null, canInteract, myTeams);
     } else {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Wedstrijd niet gevonden</p><button class="btn btn-primary mt-3" onclick="navigate('matches')">Terug</button></div>`;
     }
@@ -1062,19 +1059,27 @@ function renderMatchReel(el, items, canInteract) {
       const myUserId = state.user?.id;
       openReelViewer(items, idx, {
         sourceVideo: existingVideo,
-        canDelete: (item) => canInteract && myUserId && item.user_id === myUserId,
-        onDelete: async (item, afterDelete) => {
-          try {
-            await api(`/api/social/media/${item.id}`, { method: 'DELETE' });
-            items.splice(items.indexOf(item), 1);
-            if (items.length === 0) {
-              el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">Nog geen foto's. Wees de eerste! 📸</div>`;
-              afterDelete(null);
-            } else {
-              renderMatchReel(el, items, canInteract);
-              afterDelete(null);
-            }
-          } catch (_) { showToast('Verwijderen mislukt', 'error'); }
+        canDelete:      (item) => canInteract && myUserId && item.user_id === myUserId,
+        canRevertBlur:  (item) => canInteract && myUserId && item.user_id === myUserId,
+        onDelete: async (item) => {
+          await api(`/api/social/media/${item.id}`, { method: 'DELETE' });
+          items.splice(items.indexOf(item), 1);
+          if (items.length === 0) {
+            el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">Nog geen foto's. Wees de eerste! 📸</div>`;
+          } else {
+            renderMatchReel(el, items, canInteract);
+          }
+          return true;
+        },
+        onClose: (updatedList) => {
+          // Refresh thumbnails so blur/unblur changes are visible
+          updatedList.forEach((item, i) => {
+            if (item.file_type !== 'image') return;
+            const card = reelTrack.querySelector(`.hm-reel-card[data-index="${i}"]`);
+            if (!card) return;
+            const img = card.querySelector('img.hm-reel-media');
+            if (img) img.src = item.file_path + '?t=' + Date.now();
+          });
         },
       });
     });
@@ -1200,14 +1205,19 @@ async function doUpload(matchId, teamId, files, caption = '') {
   fd.append('match_id', matchId);
   if (teamId) fd.append('team_id', teamId);
   try {
-    await fetch('/api/social/upload', {
+    const resp = await fetch('/api/social/upload', {
       method: 'POST',
       headers: { Authorization: `Bearer ${state.token}` },
       body: fd,
     });
+    const data = await resp.json().catch(() => ({}));
     sessionStorage.removeItem('vb_upload_intent');
     showToast('Geplaatst! 📸', 'success');
     loadMatchGallery(matchId, true);
+    if (data.qualityDebug?.length) showQualityDebugPanel(data.qualityDebug);
+    if (data.qualityIssues?.length) {
+      showQualityWarningModal(data.qualityIssues, () => loadMatchGallery(matchId, true));
+    }
   } catch (_) {
     showToast('Upload mislukt', 'error');
   }

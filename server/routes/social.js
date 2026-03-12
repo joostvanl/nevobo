@@ -6,6 +6,8 @@ const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
+const sharp = require('sharp');
+const { blurFacesIfNeeded, applyBlurRegions, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
 // Multer storage: save to public/uploads/<year>/<month>/
 const storage = multer.diskStorage({
@@ -108,7 +110,7 @@ router.post('/post', verifyToken, (req, res) => {
 });
 
 // POST /api/social/upload — upload photos/videos with optional caption
-router.post('/upload', verifyToken, upload.array('files', 10), (req, res) => {
+router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) => {
   const { match_id, caption, team_id } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
@@ -116,20 +118,97 @@ router.post('/upload', verifyToken, upload.array('files', 10), (req, res) => {
     return res.status(400).json({ ok: false, error: 'Geen bestanden ontvangen' });
   }
 
-  // Create a parent post
+  // Normalise team_id — frontend may send the string "undefined" when not set
+  const rawTeamId = (team_id && team_id !== 'undefined') ? parseInt(team_id) : null;
+
+  // Resolve effective team scope for anonymisation:
+  // 1. Use team_id from request if provided
+  // 2. Fall back to the uploading user's own team memberships
+  //    (photos are almost always uploaded for one's own team)
+  let effectiveTeamId = rawTeamId;
+  if (!effectiveTeamId) {
+    const userTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(req.user.id);
+    const anonTeam  = userTeams.find(t => teamHasAnonymousMembers(t.team_id));
+    if (anonTeam) {
+      effectiveTeamId = anonTeam.team_id;
+      console.log(`[upload] No team_id from frontend → using uploader's team ${effectiveTeamId} for anon scope`);
+    }
+  }
+
+  const needsAnonymisation = effectiveTeamId ? teamHasAnonymousMembers(effectiveTeamId) : false;
+  console.log(`[upload] team_id="${team_id}" effective=${effectiveTeamId} needsAnon=${needsAnonymisation} files=${req.files.length}`);
+
+  if (!needsAnonymisation) {
+    if (!effectiveTeamId) console.log('[upload] No team context — skipping blur');
+    else console.log(`[upload] Team ${effectiveTeamId} has no anonymous members — skipping blur`);
+  }
+
+  // Phase 1: EXIF normalize + (if needed) quality check + face blur per image.
+  // qualityFlagsByIndex[i] = warnings array (empty = OK, non-empty = skip blur)
+  const qualityFlagsByIndex = req.files.map(() => []);
+  const blurRegionsByIndex  = req.files.map(() => null); // stored face regions for re-blur
+  for (let i = 0; i < req.files.length; i++) {
+    const file = req.files[i];
+    if (!file.mimetype.startsWith('image/')) continue;
+    try {
+      const tmpPath = file.path + '.rot.tmp';
+      await sharp(file.path).rotate().toFile(tmpPath);
+      fs.renameSync(tmpPath, file.path);
+    } catch (err) {
+      console.error('[upload] EXIF rotation failed, keeping original:', err.message);
+    }
+    if (!needsAnonymisation) continue; // no anon members → nothing more to do
+
+    try {
+      const quality = await checkUploadedPhotoQuality(file.path);
+      qualityFlagsByIndex[i] = quality.warnings || [];
+      // Store measurements for debug response (keyed by original filename)
+      if (quality.measurements) {
+        req._qualityDebug = req._qualityDebug || [];
+        req._qualityDebug.push({
+          file: file.originalname,
+          ...quality.measurements,
+          thresholds: quality.thresholds,
+          passed: quality.warnings.length === 0,
+        });
+      }
+    } catch (err) {
+      console.error('[upload] Quality check failed (non-blocking):', err.message);
+    }
+    if (qualityFlagsByIndex[i].length === 0) {
+      try {
+        const result = await blurFacesIfNeeded(file.path, effectiveTeamId);
+        if (result && result.regions) blurRegionsByIndex[i] = result.regions;
+      } catch (err) {
+        console.error('[upload] Face blur failed, continuing without blur:', err.message);
+      }
+    } else {
+      console.log(`[upload] Skipping face blur for ${file.originalname} — quality: ${qualityFlagsByIndex[i].join('; ')}`);
+    }
+  }
+
+  // Create a parent post — use effectiveTeamId so team_id is never null when blur was applied
   const postResult = db.prepare(
     'INSERT INTO posts (user_id, club_id, team_id, match_id, type, body) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(req.user.id, user.club_id || null, team_id || null, match_id || null, 'media', caption || null);
+  ).run(req.user.id, user.club_id || null, effectiveTeamId || null, match_id || null, 'media', caption || null);
 
   const postId = postResult.lastInsertRowid;
 
-  const mediaItems = req.files.map(file => {
+  const mediaItems = req.files.map((file, i) => {
     const isVideo = file.mimetype.startsWith('video/');
     const relativePath = '/uploads/' + file.path.split(/[/\\]public[/\\]uploads[/\\]/)[1].replace(/\\/g, '/');
     const result = db.prepare(
       'INSERT INTO match_media (post_id, user_id, match_id, file_path, file_type, caption) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(postId, req.user.id, match_id || null, relativePath, isVideo ? 'video' : 'image', caption || null);
-    return db.prepare('SELECT * FROM match_media WHERE id = ?').get(result.lastInsertRowid);
+    const item = db.prepare('SELECT * FROM match_media WHERE id = ?').get(result.lastInsertRowid);
+    // Persist blur regions so re-blur can skip face detection entirely
+    if (blurRegionsByIndex[i]) {
+      db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?')
+        .run(JSON.stringify(blurRegionsByIndex[i]), item.id);
+      item.blur_regions = JSON.stringify(blurRegionsByIndex[i]);
+    }
+    item._qualityWarnings = qualityFlagsByIndex[i] || [];
+    return item;
   });
 
   // Badge rewards for photos
@@ -137,8 +216,17 @@ router.post('/upload', verifyToken, upload.array('files', 10), (req, res) => {
   awardBadgeIfNew(req.user.id, 'photo_uploader');
   if (totalPhotos.n >= 5) awardBadgeIfNew(req.user.id, 'five_photos');
 
+  // Build per-media quality issue list for the frontend
+  const qualityIssues = mediaItems
+    .filter(m => m._qualityWarnings?.length)
+    .map(m => ({ mediaId: m.id, file_path: m.file_path, warnings: m._qualityWarnings }));
+
+  // Strip internal field before sending
+  mediaItems.forEach(m => delete m._qualityWarnings);
+
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
-  res.status(201).json({ ok: true, post, media: mediaItems });
+  const debugEnabled = (process.env.FACE_BLUR_DEBUG || '').trim() === 'true';
+  res.status(201).json({ ok: true, post, media: mediaItems, qualityIssues, qualityDebug: debugEnabled ? (req._qualityDebug || []) : [] });
 });
 
 // GET /api/social/match/:matchId/media — all media for a match (with counts + like status)
@@ -258,6 +346,100 @@ router.delete('/media/:id', verifyToken, (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+// GET /api/social/media/:id/has-original — check if a .orig backup exists and if team has anon members
+router.get('/media/:id/has-original', verifyToken, (req, res) => {
+  const item = db.prepare(`
+    SELECT mm.*, p.team_id as post_team_id
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    WHERE mm.id = ?
+  `).get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const fullPath   = path.join(__dirname, '../../public', item.file_path);
+  const hasOriginal = !!getOriginalBackupPath(fullPath);
+
+  // Check if team has anonymous members.
+  // If post_team_id is null (frontend sent "undefined"), fall back to uploader's own teams.
+  let teamHasAnon = false;
+  if (item.post_team_id) {
+    teamHasAnon = teamHasAnonymousMembers(item.post_team_id);
+  } else {
+    const uploaderTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(item.user_id);
+    teamHasAnon = uploaderTeams.some(t => teamHasAnonymousMembers(t.team_id));
+  }
+
+  res.json({ ok: true, hasOriginal, teamHasAnon });
+});
+
+// POST /api/social/media/:id/revert-blur — restore original (pre-blur) file
+router.post('/media/:id/revert-blur', verifyToken, (req, res) => {
+  const item = db.prepare('SELECT * FROM match_media WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  // Only uploader or super-admin may revert
+  const isSuperAdmin = db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(req.user.id);
+  if (item.user_id !== req.user.id && !isSuperAdmin) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const reverted = revertBlur(fullPath);
+  if (!reverted) {
+    return res.status(404).json({ ok: false, error: 'Geen originele versie beschikbaar (foto is niet geblurd of backup ontbreekt)' });
+  }
+
+  res.json({ ok: true });
+});
+
+// POST /api/social/media/:id/reblur — re-run face blur on the current file
+router.post('/media/:id/reblur', verifyToken, async (req, res) => {
+  const item = db.prepare(`
+    SELECT mm.*, p.team_id as post_team_id
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    WHERE mm.id = ?
+  `).get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  const isSuperAdmin = db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(req.user.id);
+  if (item.user_id !== req.user.id && !isSuperAdmin) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  if (!require('fs').existsSync(fullPath)) {
+    return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
+  }
+
+  try {
+    let blurred = false;
+    if (item.blur_regions) {
+      // Fast path: we already know which regions to blur — skip all face detection and matching
+      const regions = JSON.parse(item.blur_regions);
+      const ok = await applyBlurRegions(fullPath, regions);
+      blurred = !!ok;
+      console.log(`[reblur] media ${item.id}: used stored regions (${regions.length} face(s)), blurred=${blurred}`);
+    } else {
+      // Fall-back: full face detection + matching (older uploads without stored regions)
+      const result = await blurFacesIfNeeded(fullPath, item.post_team_id || null);
+      blurred = !!(result && result.blurred);
+      if (result && result.regions) {
+        db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?')
+          .run(JSON.stringify(result.regions), item.id);
+      }
+      console.log(`[reblur] media ${item.id}: full detection fallback, blurred=${blurred}`);
+    }
+    res.json({ ok: true, blurred });
+  } catch (err) {
+    console.error('[reblur] Error:', err.message);
+    res.status(500).json({ ok: false, error: 'Blur mislukt: ' + err.message });
+  }
 });
 
 // POST /api/social/follow — follow a user/team/club
@@ -420,7 +602,7 @@ router.get('/home-summary', verifyToken, (req, res) => {
       LEFT JOIN clubs c ON c.id = p.club_id
       WHERE ${whereClause}
       ORDER BY mm.created_at DESC
-      LIMIT 6
+      LIMIT 10
     `).all(userId, ...args);
   }
 
@@ -443,6 +625,62 @@ router.get('/home-summary', verifyToken, (req, res) => {
     recentMedia,
     newFollowers,
   });
+});
+
+// GET /api/social/media-feed — paginated media for reel viewer
+router.get('/media-feed', verifyToken, (req, res) => {
+  const userId = req.user.id;
+  const limit  = Math.min(parseInt(req.query.limit)  || 20, 50);
+  const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json({ ok: false });
+
+  const memberTeams   = db.prepare(`
+    SELECT tm.team_id, t.club_id FROM team_memberships tm
+    JOIN teams t ON t.id = tm.team_id WHERE tm.user_id = ?
+  `).all(userId);
+  const followedTeams = db.prepare(`
+    SELECT uf.followee_id AS team_id, t.club_id FROM user_follows uf
+    JOIN teams t ON t.id = uf.followee_id
+    WHERE uf.follower_id = ? AND uf.followee_type = 'team'
+  `).all(userId);
+
+  const relevantTeamIds = [...new Set([...memberTeams.map(t => t.team_id), ...followedTeams.map(t => t.team_id)])];
+  const relevantClubIds = [...new Set([user.club_id, ...memberTeams.map(t => t.club_id), ...followedTeams.map(t => t.club_id)].filter(Boolean))];
+
+  if (!relevantTeamIds.length && !relevantClubIds.length) return res.json({ ok: true, media: [] });
+
+  const teamPH = relevantTeamIds.length > 0 ? relevantTeamIds.map(() => '?').join(',') : null;
+  const clubPH = relevantClubIds.length > 0 ? relevantClubIds.map(() => '?').join(',') : null;
+  const whereClause = [
+    teamPH ? `p.team_id IN (${teamPH})` : null,
+    clubPH ? `p.club_id IN (${clubPH})` : null,
+  ].filter(Boolean).join(' OR ');
+  const args = [
+    ...(relevantTeamIds.length > 0 ? relevantTeamIds : []),
+    ...(relevantClubIds.length > 0 ? relevantClubIds : []),
+  ];
+
+  const media = db.prepare(`
+    SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
+      (SELECT COUNT(*) FROM media_likes ml  WHERE ml.media_id  = mm.id) AS like_count,
+      (SELECT COUNT(*) FROM media_views mv  WHERE mv.media_id  = mm.id) AS view_count,
+      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
+      (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
+      t.display_name AS team_name,
+      c.name AS club_name_media
+    FROM match_media mm
+    JOIN users u ON u.id = mm.user_id
+    LEFT JOIN posts p ON p.id = mm.post_id
+    LEFT JOIN teams t ON t.id = p.team_id
+    LEFT JOIN clubs c ON c.id = p.club_id
+    WHERE ${whereClause}
+    ORDER BY mm.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, ...args, limit, offset);
+
+  res.json({ ok: true, media });
 });
 
 // GET /api/social/followers/:userId — followers of a user

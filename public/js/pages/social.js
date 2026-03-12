@@ -1,4 +1,4 @@
-import { api, state, renderAvatar, relativeTime, showToast } from '../app.js';
+import { api, state, renderAvatar, relativeTime, showToast, showQualityWarningModal } from '../app.js';
 import { FilePicker } from '../file-picker.js';
 
 let currentTab = 'feed';
@@ -154,15 +154,20 @@ async function renderSocialPage(container, tab) {
           const fd = new FormData();
           files.forEach(f => fd.append('files', f));
           if (text) fd.append('caption', text);
-          await fetch('/api/social/upload', {
+          const resp = await fetch('/api/social/upload', {
             method: 'POST',
             headers: { Authorization: `Bearer ${state.token}` },
             body: fd,
           });
+          const data = await resp.json().catch(() => ({}));
+          showToast('Bericht geplaatst! 📣', 'success');
+          if (data.qualityIssues?.length) {
+            showQualityWarningModal(data.qualityIssues, () => renderSocialPage(container, 'feed'));
+          }
         } else {
           await api('/api/social/post', { method: 'POST', body: { body: text, team_id: user.team_id || null } });
+          showToast('Bericht geplaatst! 📣', 'success');
         }
-        showToast('Bericht geplaatst! 📣', 'success');
         renderSocialPage(container, 'feed');
       } catch (err) {
         showToast(err.message, 'error');

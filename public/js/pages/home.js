@@ -271,7 +271,7 @@ function loadMedia(recentMedia) {
         <button class="hm-reel-more" onclick="navigate('social')">Alle media →</button>
       </div>
       <div class="hm-reel" id="hm-reel-track">
-        ${recentMedia.slice(0, 8).map((m, i) => `
+        ${recentMedia.map((m, i) => `
           <div class="hm-reel-card" data-index="${i}">
             ${m.file_type === 'video'
               ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
@@ -296,7 +296,13 @@ function loadMedia(recentMedia) {
       const clickedIdx = parseInt(card.dataset.index);
       // Pass the already-playing video element so the viewer can reuse it
       const existingVideo = card.querySelector('video.hm-reel-media');
-      openReelViewer(recentMedia, clickedIdx, { sourceVideo: existingVideo });
+      openReelViewer(recentMedia, clickedIdx, {
+        sourceVideo: existingVideo,
+        fetchMore: async (offset) => {
+          const data = await api(`/api/social/media-feed?offset=${offset}&limit=20`);
+          return data.media || [];
+        },
+      });
     });
   });
 
