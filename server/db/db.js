@@ -97,6 +97,10 @@ const migrations = [
     fetched_at INTEGER NOT NULL,
     ttl_ms     INTEGER NOT NULL
   )`,
+  // Player profile fields (PII — only accessible by admins and the user themselves)
+  `ALTER TABLE users ADD COLUMN shirt_number  INTEGER`,
+  `ALTER TABLE users ADD COLUMN position      TEXT`,
+  `ALTER TABLE users ADD COLUMN birth_date    TEXT`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

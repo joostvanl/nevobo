@@ -216,7 +216,7 @@ export function registerRoute(name, fn) {
 const PAGE_TITLES = {
   home:     'Home',
   matches:  'Wedstrijden',
-  carpool:  'Carpool',
+  carpool:  'Carpool',  // kept for deep links from match pages
   badges:   'Badges & Doelen',
   social:   'Sociaal',
   profile:  'Mijn Profiel',
@@ -361,6 +361,7 @@ async function boot() {
     import('./pages/profile.js'),
     import('./pages/team.js'),
     import('./pages/admin.js'),
+    import('./pages/privacy.js'),
   ]);
 
   if (token && user) {
@@ -383,7 +384,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, privacyPage] = await pagesPromise;
 
   registerRoute('home',    homePage.render);
   registerRoute('matches', matchesPage.render);
@@ -393,6 +394,7 @@ async function boot() {
   registerRoute('profile', profilePage.render);
   registerRoute('team',    teamPage.render);
   registerRoute('admin',   adminPage.render);
+  registerRoute('privacy', privacyPage.render);
 
   // Bottom nav clicks
   document.querySelectorAll('.nav-item[data-route]').forEach(btn => {

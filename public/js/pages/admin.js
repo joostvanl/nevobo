@@ -204,35 +204,57 @@ async function renderTeamAdminTab(panel, teamId) {
   try {
     const { members, team } = await api(`/api/admin/teams/${teamId}/members`);
 
-    const players = members.filter(m => m.membership_type === 'player');
-    const parents = members.filter(m => m.membership_type === 'parent');
+    const groups = [
+      { key: 'player', label: '🏐 Spelers',         list: members.filter(m => m.membership_type === 'player') },
+      { key: 'coach',  label: '📋 Trainer / Coach',  list: members.filter(m => m.membership_type === 'coach') },
+      { key: 'staff',  label: '🎽 Begeleiding',       list: members.filter(m => m.membership_type === 'staff') },
+      { key: 'parent', label: '👨‍👩‍👧 Ouders / Contacten', list: members.filter(m => m.membership_type === 'parent') },
+    ];
 
     panel.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
         <span class="text-muted text-small">${team?.club_name || ''} · ${members.length} leden</span>
         <button class="btn btn-primary btn-sm" id="add-member-btn">+ Lid toevoegen</button>
       </div>
-
-      <div class="section-header mb-1"><span class="section-title">Spelers (${players.length})</span></div>
-      <div id="players-list">
-        ${players.length
-          ? players.map(m => memberRow(m, teamId)).join('')
-          : `<p class="text-muted text-small" style="padding:0.5rem">Geen spelers.</p>`}
-      </div>
-
-      <div class="section-header mt-3 mb-1"><span class="section-title">Ouders / Contacten (${parents.length})</span></div>
-      <div id="parents-list">
-        ${parents.length
-          ? parents.map(m => memberRow(m, teamId)).join('')
-          : `<p class="text-muted text-small" style="padding:0.5rem">Geen ouders/contacten.</p>`}
-      </div>`;
+      ${groups.map(g => `
+        <div class="section-header mt-3 mb-1">
+          <span class="section-title">${g.label} (${g.list.length})</span>
+        </div>
+        <div id="group-${g.key}">
+          ${g.list.length
+            ? g.list.map(m => memberRow(m, teamId)).join('')
+            : `<p class="text-muted text-small" style="padding:0.35rem 0.5rem">Geen ${g.label.replace(/^[^ ]+ /, '').toLowerCase()}.</p>`}
+        </div>`).join('')}`;
 
     panel.querySelector('#add-member-btn').addEventListener('click', () => {
       showAddMemberModal(teamId, () => renderTeamAdminTab(panel, teamId));
     });
 
+    panel.querySelectorAll('.edit-member-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        showEditPlayerModal({
+          userId:    btn.dataset.userid,
+          name:      btn.dataset.name,
+          email:     btn.dataset.email,
+          shirt:     btn.dataset.shirt,
+          position:  btn.dataset.position,
+          birthDate: btn.dataset.birthdate,
+        }, () => renderTeamAdminTab(panel, teamId));
+      });
+    });
+
+    panel.querySelectorAll('.change-role-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        showChangeRoleModal(teamId, btn.dataset.userid, btn.dataset.name, btn.dataset.role,
+          () => renderTeamAdminTab(panel, teamId));
+      });
+    });
+
     panel.querySelectorAll('.remove-member-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
         if (!confirm('Lid verwijderen uit team?')) return;
         try {
           await api(`/api/admin/teams/${teamId}/members/${btn.dataset.userid}`, { method: 'DELETE' });
@@ -263,14 +285,44 @@ function adminRoleRow(r, currentClubId) {
     </div>`;
 }
 
+const ROLE_LABELS = {
+  player: 'Speler',
+  coach:  'Trainer/Coach',
+  staff:  'Begeleiding',
+  parent: 'Ouder',
+};
+
 function memberRow(m, teamId) {
+  const posLabel   = m.position     ? `<span class="chip chip-neutral" style="font-size:0.62rem">${escHtml(m.position)}</span>` : '';
+  const shirtLabel = m.shirt_number != null ? `<span class="chip chip-neutral" style="font-size:0.62rem">#${m.shirt_number}</span>` : '';
+  const roleLabel  = ROLE_LABELS[m.membership_type] || m.membership_type;
   return `
-    <div class="admin-user-row">
-      <div class="admin-user-info">
-        <strong>${escHtml(m.name)}</strong>
+    <div class="admin-user-row" data-member-id="${m.user_id}">
+      <div class="admin-user-info" style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+          <strong>${escHtml(m.name)}</strong>
+          ${shirtLabel}${posLabel}
+        </div>
         <span class="text-muted text-small">${escHtml(m.email)}</span>
       </div>
-      <button class="btn btn-secondary btn-sm remove-member-btn" data-userid="${m.user_id}" data-team="${teamId}">Verwijderen</button>
+      <div class="flex gap-1 items-center" style="flex-shrink:0">
+        <button class="btn btn-ghost btn-sm change-role-btn"
+          data-userid="${m.user_id}"
+          data-name="${escAttr(m.name)}"
+          data-role="${m.membership_type}"
+          style="font-size:0.72rem;color:var(--accent);padding:0.2rem 0.45rem;border:1px solid var(--border);border-radius:999px"
+          title="Rol wijzigen">${roleLabel} ▾</button>
+        <button class="btn btn-ghost btn-sm edit-member-btn"
+          data-userid="${m.user_id}"
+          data-name="${escAttr(m.name)}"
+          data-email="${escAttr(m.email)}"
+          data-shirt="${m.shirt_number ?? ''}"
+          data-position="${escAttr(m.position || '')}"
+          data-birthdate="${escAttr(m.birth_date || '')}"
+          data-team="${teamId}"
+          style="color:var(--primary)">✏️</button>
+        <button class="btn btn-secondary btn-sm remove-member-btn" data-userid="${m.user_id}" data-team="${teamId}">✕</button>
+      </div>
     </div>`;
 }
 
@@ -403,9 +455,11 @@ function showAddMemberModal(teamId, onSuccess) {
         <input type="email" id="member-email" class="form-input" placeholder="naam@voorbeeld.nl" />
       </div>
       <div class="form-group">
-        <label class="form-label">Type</label>
+        <label class="form-label">Rol</label>
         <select id="member-type" class="form-input">
           <option value="player">Speler</option>
+          <option value="coach">Trainer / Coach</option>
+          <option value="staff">Begeleiding</option>
           <option value="parent">Ouder / Contact</option>
         </select>
       </div>
@@ -426,6 +480,109 @@ function showAddMemberModal(teamId, onSuccess) {
       showToast('Lid toegevoegd', 'success');
       onSuccess();
     } catch (err) { showToast(err.message, 'error'); }
+  });
+}
+
+function showChangeRoleModal(teamId, userId, userName, currentRole, onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:320px">
+      <h3 style="margin-bottom:0.5rem">Rol wijzigen</h3>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:1rem"><strong>${escHtml(userName)}</strong></p>
+      <div class="form-group">
+        <label class="form-label">Rol</label>
+        <select id="cr-role" class="form-input">
+          <option value="player"  ${currentRole === 'player'  ? 'selected' : ''}>🏐 Speler</option>
+          <option value="coach"   ${currentRole === 'coach'   ? 'selected' : ''}>📋 Trainer / Coach</option>
+          <option value="staff"   ${currentRole === 'staff'   ? 'selected' : ''}>🎽 Begeleiding</option>
+          <option value="parent"  ${currentRole === 'parent'  ? 'selected' : ''}>👨‍👩‍👧 Ouder / Contact</option>
+        </select>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button class="btn btn-secondary" style="flex:1" id="cr-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="cr-confirm">Opslaan</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#cr-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#cr-confirm').addEventListener('click', async () => {
+    const membership_type = overlay.querySelector('#cr-role').value;
+    try {
+      await api(`/api/admin/teams/${teamId}/members/${userId}`, { method: 'PATCH', body: { membership_type } });
+      overlay.remove();
+      showToast('Rol bijgewerkt', 'success');
+      onSuccess();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+}
+
+function showEditPlayerModal({ userId, name, email, shirt, position, birthDate }, onSuccess) {
+  const POSITIONS = ['Libero', 'Setter', 'Outside hitter', 'Opposite', 'Middle blocker', 'Defensive specialist'];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:380px">
+      <h3 style="margin-bottom:0.25rem">✏️ Speler bewerken</h3>
+      <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1.25rem">
+        ℹ️ Persoonlijke gegevens — alleen zichtbaar voor beheerders
+      </p>
+      <div class="form-group">
+        <label class="form-label">Naam</label>
+        <input type="text" id="ep-name" class="form-input" value="${escAttr(name)}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">E-mailadres</label>
+        <input type="email" id="ep-email" class="form-input" value="${escAttr(email)}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Shirtnummer</label>
+        <input type="number" id="ep-shirt" class="form-input" value="${escAttr(shirt)}" min="1" max="99" placeholder="Bijv. 7" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Positie</label>
+        <select id="ep-position" class="form-input">
+          <option value="">— Geen —</option>
+          ${POSITIONS.map(p => `<option value="${p}"${position === p ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Geboortedatum</label>
+        <input type="date" id="ep-birthdate" class="form-input" value="${escAttr(birthDate)}" />
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button class="btn btn-secondary" style="flex:1" id="ep-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="ep-save">Opslaan</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('#ep-cancel').addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#ep-save').addEventListener('click', async () => {
+    const saveBtn = overlay.querySelector('#ep-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Bezig…';
+    try {
+      await api(`/api/admin/users/${userId}/profile`, {
+        method: 'POST',
+        body: {
+          name:         overlay.querySelector('#ep-name').value.trim(),
+          email:        overlay.querySelector('#ep-email').value.trim(),
+          shirt_number: overlay.querySelector('#ep-shirt').value,
+          position:     overlay.querySelector('#ep-position').value,
+          birth_date:   overlay.querySelector('#ep-birthdate').value,
+        },
+      });
+      overlay.remove();
+      showToast('Profiel bijgewerkt', 'success');
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      showToast(err.message || 'Opslaan mislukt', 'error');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Opslaan';
+    }
   });
 }
 

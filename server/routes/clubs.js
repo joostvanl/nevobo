@@ -191,11 +191,19 @@ router.get('/:id/teams/:teamId', async (req, res) => {
 
   const members = db.prepare(`
     SELECT DISTINCT u.id, u.name, u.avatar_url, u.level, u.xp,
-      COALESCE(tm.membership_type, u.role) AS role
+      COALESCE(tm.membership_type, u.role) AS membership_type
     FROM users u
     LEFT JOIN team_memberships tm ON tm.user_id = u.id AND tm.team_id = ?
     WHERE u.team_id = ? OR tm.team_id = ?
-    ORDER BY u.xp DESC
+    ORDER BY
+      CASE COALESCE(tm.membership_type, u.role)
+        WHEN 'player' THEN 1
+        WHEN 'coach'  THEN 2
+        WHEN 'staff'  THEN 3
+        WHEN 'parent' THEN 4
+        ELSE 5
+      END,
+      u.xp DESC
   `).all(team.id, team.id, team.id);
 
   const followerCount = db.prepare(

@@ -114,7 +114,7 @@ function renderPage(container, opts) {
             <h1 class="team-hero-name">${displayName}</h1>
             <div class="team-hero-club">${clubName}</div>
             <div class="team-hero-stats">
-              <span>👥 ${members.length} speler${members.length !== 1 ? 's' : ''}</span>
+              <span>👥 ${members.filter(u => !u.membership_type || u.membership_type === 'player' || u.membership_type === 'coach' || u.membership_type === 'staff').length} leden</span>
               <span>📣 ${followerCount} volger${followerCount !== 1 ? 's' : ''}</span>
               ${totalPlayed > 0 ? `<span>🏐 ${totalPlayed} gespeeld</span>` : ''}
             </div>
@@ -199,28 +199,48 @@ function renderPage(container, opts) {
         </div>
       </div>
 
-      <!-- Members -->
-      ${members.length > 0 ? `
-        <div class="card mb-3">
-          <div class="card-header"><h3>👥 Spelers (${members.length})</h3></div>
-          <div class="card-body" style="padding:0.5rem">
-            ${members.map(u => {
-              const roleLabel = { coach: 'Trainer/Coach', trainer: 'Trainer/Coach', parent: 'Ouder' }[u.role] || null;
-              return `
-              <div class="team-member-row">
-                ${renderAvatar(u.name, u.avatar_url, 'sm')}
-                <div class="team-member-info">
-                  <div class="team-member-name">${u.name}
-                    ${roleLabel ? `<span class="chip chip-primary" style="font-size:0.65rem;margin-left:0.25rem">${roleLabel}</span>` : ''}
+      <!-- Members: players first, then coaching staff -->
+      ${(() => {
+        const players = members.filter(u => !u.membership_type || u.membership_type === 'player');
+        const staff   = members.filter(u => u.membership_type === 'coach' || u.membership_type === 'staff');
+        // parents are intentionally excluded from public view
+        const ROLE_LABEL = { coach: 'Trainer/Coach', staff: 'Begeleiding' };
+        const memberCard = (u) => `
+          <div class="team-member-row">
+            ${renderAvatar(u.name, u.avatar_url, 'sm')}
+            <div class="team-member-info">
+              <div class="team-member-name">${u.name}</div>
+              <div class="text-muted text-small">Level ${u.level} · ${u.xp} XP</div>
+            </div>
+            <div class="team-member-level">Lvl ${u.level}</div>
+          </div>`;
+        const sections = [];
+        if (players.length > 0) sections.push(`
+          <div class="card mb-3">
+            <div class="card-header"><h3>🏐 Spelers (${players.length})</h3></div>
+            <div class="card-body" style="padding:0.5rem">
+              ${players.map(memberCard).join('')}
+            </div>
+          </div>`);
+        if (staff.length > 0) sections.push(`
+          <div class="card mb-3">
+            <div class="card-header"><h3>📋 Trainer / Coach &amp; Begeleiding</h3></div>
+            <div class="card-body" style="padding:0.5rem">
+              ${staff.map(u => `
+                <div class="team-member-row">
+                  ${renderAvatar(u.name, u.avatar_url, 'sm')}
+                  <div class="team-member-info">
+                    <div class="team-member-name">${u.name}
+                      <span class="chip chip-primary" style="font-size:0.62rem;margin-left:0.35rem">${ROLE_LABEL[u.membership_type] || u.membership_type}</span>
+                    </div>
+                    <div class="text-muted text-small">Level ${u.level} · ${u.xp} XP</div>
                   </div>
-                  <div class="text-muted text-small">Level ${u.level} · ${u.xp} XP</div>
-                </div>
-                <div class="team-member-level">Lvl ${u.level}</div>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-      ` : ''}
+                  <div class="team-member-level">Lvl ${u.level}</div>
+                </div>`).join('')}
+            </div>
+          </div>`);
+        return sections.join('');
+      })()}
 
     </div>`;
 

@@ -14,6 +14,9 @@
 
   <!-- CDN Libraries -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Cookie Consent (vanilla-cookieconsent v3 — GDPR/AVG compliant) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vanilla-cookieconsent@3/dist/cookieconsent.css" />
 </head>
 <body>
 
@@ -47,10 +50,6 @@
     <button class="nav-item" data-route="team-own">
       <span class="nav-icon">👕</span>
       <span>Team</span>
-    </button>
-    <button class="nav-item" data-route="carpool">
-      <span class="nav-icon">🚗</span>
-      <span>Carpool</span>
     </button>
     <button class="nav-item" data-route="social">
       <span class="nav-icon">💬</span>
@@ -119,6 +118,82 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
   }
+</script>
+
+<!-- Cookie Consent initialisation (loaded last so app renders first) -->
+<script src="https://cdn.jsdelivr.net/npm/vanilla-cookieconsent@3/dist/cookieconsent.umd.js"></script>
+<script>
+  CookieConsent.run({
+    // Persist consent for 365 days
+    cookie: { name: 'volleyapp_cc', expiresAfterDays: 365 },
+
+    guiOptions: {
+      consentModal: {
+        layout: 'box inline',
+        position: 'bottom right',
+        equalWeightButtons: false,
+        flipButtons: false,
+      },
+      preferencesModal: {
+        layout: 'box',
+        equalWeightButtons: true,
+        flipButtons: false,
+      },
+    },
+
+    categories: {
+      necessary: {
+        // Functional cookies are always on — no opt-out under AVG art. 5(3) e-Privacyrichtlijn
+        enabled: true,
+        readOnly: true,
+      },
+    },
+
+    language: {
+      default: 'nl',
+      autoDetect: 'browser',
+      translations: {
+        nl: {
+          consentModal: {
+            title: '🍪 Deze app gebruikt cookies',
+            description:
+              'We gebruiken uitsluitend <strong>functionele cookies</strong> — noodzakelijk om in te loggen en de app te laten werken. ' +
+              'Er worden geen tracking- of advertentiecookies geplaatst. ' +
+              '<a href="#" onclick="navigate(\'privacy\');CookieConsent.hide();return false;" style="color:var(--primary)">Lees ons privacybeleid</a>.',
+            acceptAllBtn: 'Begrepen',
+            showPreferencesBtn: 'Meer informatie',
+          },
+          preferencesModal: {
+            title: 'Cookievoorkeuren',
+            acceptAllBtn: 'Alles accepteren',
+            savePreferencesBtn: 'Opslaan',
+            closeIconLabel: 'Sluiten',
+            sections: [
+              {
+                title: 'Wat zijn cookies?',
+                description:
+                  'Cookies zijn kleine tekstbestanden die worden opgeslagen in uw browser. ' +
+                  'Deze app plaatst uitsluitend technisch noodzakelijke cookies voor de werking van de applicatie.',
+              },
+              {
+                title: 'Functionele cookies <span class="pm__badge">Altijd actief</span>',
+                description:
+                  'Deze cookies zijn vereist om in te loggen, uw sessie bij te houden en de app te laten functioneren. ' +
+                  'Zonder deze cookies werkt de app niet. Er worden geen persoonsgegevens gedeeld met derden.',
+                linkedCategory: 'necessary',
+              },
+              {
+                title: 'Meer informatie',
+                description:
+                  'Vragen over ons cookiebeleid? Bekijk ons <a href="#" onclick="navigate(\'privacy\');CookieConsent.hide();return false;" style="color:var(--primary)">privacybeleid</a> ' +
+                  'of neem contact op met de clubbeheerder.',
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
 </script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 import { api, state, formatDate, formatTime, showToast, navigate } from '../app.js';
 import { FilePicker } from '../file-picker.js';
+import { openReelViewer } from '../reel-viewer.js';
 
 let currentTab    = 'schedule';
 let currentFilter = 'my-team'; // 'my-team' | 'club' | 'followed'
@@ -218,18 +219,8 @@ async function renderMatchList(container, club, myTeams, followedTeams, tab) {
         <div id="own-matches-list-0"><div class="spinner"></div></div>`;
       loadMatchSection(contentEl.querySelector('#own-matches-list-0'), club, null, tab, false);
     } else {
-      // One section per team the user belongs to
-      contentEl.innerHTML = myTeams.map((t, i) => `
-        ${i > 0 ? '<div class="team-section-spacer"></div>' : ''}
-        <div class="team-section-header">
-          <span style="font-weight:700;font-size:0.9rem">👕 ${t.display_name}</span>
-          <button class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:0.3rem 0.7rem;font-size:0.8rem"
-            onclick="navigate('team',{teamId:${t.id},clubId:${club.id}})">Team info →</button>
-        </div>
-        <div id="own-matches-list-${i}"><div class="spinner"></div></div>`).join('');
-      myTeams.forEach((t, i) => {
-        loadMatchSection(contentEl.querySelector(`#own-matches-list-${i}`), club, t, tab, true);
-      });
+      contentEl.innerHTML = `<div id="own-matches-combined"><div class="spinner"></div></div>`;
+      loadAllMyTeamsSection(contentEl.querySelector('#own-matches-combined'), club, myTeams, tab);
     }
 
   } else if (filter === 'club') {
@@ -312,7 +303,7 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const idx = parseInt(card.dataset.matchIdx);
-        renderMatchDetail(listEl.closest('.container').parentElement, matches[idx], club, tab, canInteract);
+        renderMatchDetail(listEl.closest('.container').parentElement, matches[idx], club, tab, canInteract, team ? [team] : []);
       });
     });
 
@@ -324,6 +315,80 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
         });
       });
     }
+  } catch (err) {
+    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${err.message}</p></div>`;
+  }
+}
+
+async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
+  if (!listEl) return;
+  loadOpponentClubs(club.nevobo_code);
+  try {
+    const endpoint = tab === 'schedule'
+      ? `/api/nevobo/club/${club.nevobo_code}/schedule`
+      : `/api/nevobo/club/${club.nevobo_code}/results`;
+
+    const data = await api(endpoint);
+    const allMatches = data.matches || [];
+
+    // Collect matches for all user's teams combined, deduplicated, sorted by date
+    const seen = new Set();
+    const matches = [];
+    for (const team of myTeams) {
+      const name = team.display_name.toLowerCase();
+      for (const m of allMatches) {
+        const key = encodeMatchId(m);
+        if (seen.has(key)) continue;
+        const home = (m.home_team || '').toLowerCase();
+        const away = (m.away_team || '').toLowerCase();
+        if (home === name || away === name || home.endsWith(name) || away.endsWith(name) || home.includes(name) || away.includes(name)) {
+          seen.add(key);
+          matches.push({ ...m, _matchingTeam: team });
+        }
+      }
+    }
+
+    const sorted = sortByDate(matches, tab);
+
+    if (sorted.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state" style="padding:1.25rem 0">
+          <div class="empty-icon" style="font-size:1.8rem">${tab === 'schedule' ? '📅' : '🏐'}</div>
+          <p style="font-size:0.875rem">${tab === 'schedule' ? 'Geen geplande wedstrijden.' : 'Nog geen resultaten.'}</p>
+        </div>`;
+      return;
+    }
+
+    let carpoolMap = new Map();
+    if (tab === 'schedule') {
+      carpoolMap = await fetchCarpoolSummaries(sorted.map(m => encodeMatchId(m)));
+    }
+
+    listEl.innerHTML = sorted.map((m, i) => renderMatchCard(m, i, tab, true, club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, club.name || '')).join('');
+
+    listEl.querySelectorAll('.team-name-link').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        const teamName = el.dataset.teamname;
+        const code = resolveClubCode(teamName, el.dataset.nevobocode) || el.dataset.nevobocode;
+        navigate('team', { teamName, nevoboCode: code });
+      });
+    });
+
+    listEl.querySelectorAll('.match-card[data-match-idx]').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
+        const m = sorted[parseInt(card.dataset.matchIdx)];
+        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, true, myTeams);
+      });
+    });
+
+    listEl.querySelectorAll('.match-carpool-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        navigate('carpool', { matchId: btn.dataset.matchid });
+      });
+    });
   } catch (err) {
     listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${err.message}</p></div>`;
   }
@@ -404,7 +469,7 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
-        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, canInteractFor(m));
+        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, canInteractFor(m), myTeams);
       });
     });
 
@@ -551,7 +616,7 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
     ? `<span class="chip chip-neutral" style="font-size:0.65rem;padding:0.1rem 0.4rem">👁️ volgend</span>`
     : '';
 
-  const carpoolBadge = !isResult && !isHomeGame && carpoolSeats !== null
+  const carpoolBadge = canInteract && !isResult && !isHomeGame && carpoolSeats !== null
     ? carpoolSeats > 0
       ? `<span class="chip chip-success" style="font-size:0.65rem;padding:0.1rem 0.4rem">🚗 ${carpoolSeats} plaats${carpoolSeats === 1 ? '' : 'en'}</span>`
       : `<span class="chip chip-neutral" style="font-size:0.65rem;padding:0.1rem 0.4rem">🚗 Geen plaatsen</span>`
@@ -608,7 +673,7 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
     </div>`;
 }
 
-function renderMatchDetail(container, match, club, fromTab, canInteract = true) {
+function renderMatchDetail(container, match, club, fromTab, canInteract = true, myTeams = []) {
   const isResult = match.status === 'gespeeld';
   const matchId = encodeMatchId(match);
 
@@ -720,16 +785,34 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true) 
       <div class="card mb-3" id="gallery-card">
         <div class="card-header">
           <h3>📸 Foto's &amp; Video's</h3>
-          ${canInteract ? `<button class="btn btn-ghost btn-sm" id="upload-btn" style="margin-left:auto">+ Uploaden</button>` : ''}
+          ${canInteract ? `
+            <div class="match-media-actions" style="margin-left:auto">
+              <button class="mma-btn" id="photo-btn" title="Foto maken">
+                <span class="mma-icon">📷</span>
+                <span class="mma-label">Foto</span>
+              </button>
+              <button class="mma-btn" id="video-btn" title="Video opnemen">
+                <span class="mma-icon">🎥</span>
+                <span class="mma-label">Video</span>
+              </button>
+              <button class="mma-btn mma-btn--dim" id="live-btn" title="Live uitzending (binnenkort)">
+                <span class="mma-icon">🔴</span>
+                <span class="mma-label">Live</span>
+              </button>
+              <button class="mma-btn" id="upload-btn" title="Bestand uploaden">
+                <span class="mma-icon">⬆️</span>
+                <span class="mma-label">Upload</span>
+              </button>
+            </div>` : ''}
         </div>
-        <div id="gallery-body"><div class="spinner" style="padding:1.5rem;text-align:center"></div></div>
+        <div id="gallery-body" style="padding:0.5rem 0"><div class="spinner" style="padding:1.5rem;text-align:center"></div></div>
       </div>
-      <!-- Carpool — only for away games -->
-      ${!isResult && !isHomeGame ? `
+      <!-- Carpool — only for away games and team members -->
+      ${canInteract && !isResult && !isHomeGame ? `
         <div class="card mb-3" id="carpool-detail-card">
           <div class="card-header">
             <h3>🚗 Carpool</h3>
-            ${canInteract ? `<button class="btn btn-accent btn-sm" id="carpool-offer-btn" style="margin-left:auto">+ Ik kan rijden</button>` : ''}
+            <button class="btn btn-accent btn-sm" id="carpool-offer-btn" style="margin-left:auto">+ Ik kan rijden</button>
           </div>
           <div id="carpool-detail-body"><div class="spinner" style="padding:1rem;text-align:center"></div></div>
         </div>` : ''}
@@ -769,17 +852,38 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true) 
   }
 
   if (canInteract) {
+    // Determine which of the user's teams is playing in this match
+    const matchingTeam = myTeams.find(t => {
+      const dn = (t.display_name || '').toLowerCase();
+      return (match.home_team || '').toLowerCase().includes(dn)
+          || (match.away_team || '').toLowerCase().includes(dn);
+    }) || myTeams[0] || null;
+    const uploadTeamId = matchingTeam?.id || null;
+
+    document.getElementById('photo-btn')?.addEventListener('click', () => {
+      sessionStorage.setItem('vb_upload_intent', matchId);
+      openCapturePicker('image/*', matchId, uploadTeamId);
+    });
+
+    document.getElementById('video-btn')?.addEventListener('click', () => {
+      sessionStorage.setItem('vb_upload_intent', matchId);
+      openCapturePicker('video/*', matchId, uploadTeamId);
+    });
+
+    document.getElementById('live-btn')?.addEventListener('click', () => {
+      showToast('Live uitzending komt binnenkort! 🔴', 'info');
+    });
+
     document.getElementById('upload-btn')?.addEventListener('click', () => {
       sessionStorage.setItem('vb_upload_intent', matchId);
-      showUploadModal(matchId);
+      showUploadModal(matchId, uploadTeamId);
     });
 
     // Re-open upload modal if the page reloaded mid-upload (e.g. after camera capture)
     const savedIntent = sessionStorage.getItem('vb_upload_intent');
     if (savedIntent && savedIntent === matchId) {
       sessionStorage.removeItem('vb_upload_intent');
-      // Small delay so the page finishes rendering first
-      setTimeout(() => showUploadModal(matchId), 400);
+      setTimeout(() => showUploadModal(matchId, uploadTeamId, { capture: false }), 400);
     }
   }
 }
@@ -903,303 +1007,119 @@ async function loadMatchMap(address, fromAddress = null) {
   }
 }
 
-// ─── Media gallery (Insta/TikTok style) ──────────────────────────────────────
-
-let _galleryItems = [];   // shared across preview + fullscreen viewer
-let _galleryMatchId = '';
-let _galleryCanInteract = false;
+// ─── Media gallery (reel style, matches homepage) ────────────────────────────
 
 async function loadMatchGallery(matchId, canInteract = true) {
-  _galleryMatchId = matchId;
-  _galleryCanInteract = canInteract;
   const el = document.getElementById('gallery-body');
   if (!el) return;
   try {
     const userId = state.user?.id || null;
     const { media } = await api(`/api/social/match/${matchId}/media${userId ? `?userId=${userId}` : ''}`);
-    _galleryItems = media || [];
+    const items = media || [];
 
-    if (_galleryItems.length === 0) {
+    if (items.length === 0) {
       el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">${
         canInteract ? 'Nog geen foto\'s. Wees de eerste! 📸' : 'Nog geen foto\'s gedeeld voor deze wedstrijd.'
       }</div>`;
       return;
     }
 
-    renderGalleryPreview(el);
+    renderMatchReel(el, items, canInteract);
   } catch (_) {
     const el2 = document.getElementById('gallery-body');
     if (el2) el2.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">Foto's konden niet worden geladen.</div>`;
   }
 }
 
-function renderGalleryPreview(el) {
-  const m = _galleryItems[0];
-  const rest = _galleryItems.length - 1;
-
-  const thumbsHtml = _galleryItems.slice(1, 4).map((t, i) => `
-    <div class="gallery-thumb ${i === 2 && rest > 3 ? 'gallery-thumb-more' : ''}"
-         data-idx="${i + 1}" style="flex:1;aspect-ratio:1;overflow:hidden;position:relative;cursor:pointer;border-radius:6px;background:#000">
-      ${t.file_type === 'video'
-        ? `<video src="${t.file_path}" style="width:100%;height:100%;object-fit:cover" muted playsinline></video><div class="gallery-play-badge">▶</div>`
-        : `<img src="${t.file_path}" alt="" style="width:100%;height:100%;object-fit:cover" loading="lazy" />`}
-      ${i === 2 && rest > 3 ? `<div class="gallery-more-overlay">+${rest - 2}</div>` : ''}
-    </div>`).join('');
+function renderMatchReel(el, items, canInteract) {
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
   el.innerHTML = `
-    <div class="gallery-preview" data-idx="0">
-      <div class="gallery-main" style="position:relative;cursor:pointer;background:#000">
-        ${m.file_type === 'video'
-          ? `<video src="${m.file_path}" style="width:100%;max-height:340px;object-fit:contain;display:block" muted playsinline></video><div class="gallery-play-badge gallery-play-badge-lg">▶</div>`
-          : `<img src="${m.file_path}" alt="" style="width:100%;max-height:340px;object-fit:contain;display:block" loading="lazy" />`}
-        <div class="gallery-meta-bar">
-          <span class="gallery-stat">👁 ${m.view_count || 0}</span>
-          <span class="gallery-stat">❤️ ${m.like_count || 0}</span>
-          <span class="gallery-stat">💬 ${m.comment_count || 0}</span>
-          ${_galleryItems.length > 1 ? `<span class="gallery-count-badge">${_galleryItems.length}</span>` : ''}
-        </div>
-      </div>
-      ${rest > 0 ? `<div class="gallery-thumbs">${thumbsHtml}</div>` : ''}
-    </div>`;
-
-  el.querySelectorAll('[data-idx]').forEach(node => {
-    node.addEventListener('click', () => openMediaViewer(parseInt(node.dataset.idx)));
-  });
-}
-
-function openMediaViewer(startIdx = 0) {
-  let currentIdx = startIdx;
-  let startX = 0;
-
-  const overlay = document.createElement('div');
-  overlay.id = 'media-viewer';
-  overlay.innerHTML = `
-    <div class="mv-backdrop"></div>
-    <button class="mv-close" aria-label="Sluiten">✕</button>
-    <div class="mv-track"></div>
-    <div class="mv-footer">
-      <div class="mv-uploader-row">
-        <img class="mv-avatar" src="" alt="" />
-        <span class="mv-uploader-name"></span>
-        <span class="mv-dot">·</span>
-        <span class="mv-caption"></span>
-      </div>
-      <div class="mv-actions">
-        <button class="mv-action-btn mv-like-btn" data-liked="false">
-          <span class="mv-like-icon">🤍</span>
-          <span class="mv-like-count">0</span>
-        </button>
-        <button class="mv-action-btn mv-comment-btn">💬 <span class="mv-comment-count">0</span></button>
-        <span class="mv-views">👁 <span class="mv-view-count">0</span></span>
-        <button class="mv-action-btn mv-delete-btn" style="display:none;margin-left:auto;color:#f87171" title="Verwijderen">🗑</button>
-      </div>
-      <div class="mv-dots"></div>
-    </div>
-    <div class="mv-comments-panel" id="mv-comments-panel" style="display:none">
-      <div class="mv-comments-header">
-        <span>Reacties</span>
-        <button class="mv-close-comments">✕</button>
-      </div>
-      <div class="mv-comments-list" id="mv-comments-list"></div>
-      ${state.token ? `
-        <form class="mv-comment-form" id="mv-comment-form">
-          <input type="text" class="mv-comment-input" id="mv-comment-input" placeholder="Schrijf een reactie…" />
-          <button type="submit" class="mv-comment-submit">➤</button>
-        </form>` : `<p style="padding:0.75rem;font-size:0.8rem;color:#aaa">Log in om te reageren</p>`}
-    </div>`;
-  document.body.appendChild(overlay);
-  document.body.style.overflow = 'hidden';
-
-  const track = overlay.querySelector('.mv-track');
-  const likeBtn = overlay.querySelector('.mv-like-btn');
-  const commentBtn = overlay.querySelector('.mv-comment-btn');
-  const deleteBtn = overlay.querySelector('.mv-delete-btn');
-  const commentsPanel = overlay.querySelector('#mv-comments-panel');
-
-  function buildTrack() {
-    track.innerHTML = _galleryItems.map((m, i) => `
-      <div class="mv-slide" data-idx="${i}">
-        ${m.file_type === 'video'
-          ? `<video src="${m.file_path}" class="mv-media" controls autoplay loop muted playsinline></video>`
-          : `<img src="${m.file_path}" class="mv-media" alt="" />`}
-      </div>`).join('');
-  }
-
-  function goTo(idx) {
-    currentIdx = Math.max(0, Math.min(idx, _galleryItems.length - 1));
-    track.style.transform = `translateX(-${currentIdx * 100}%)`;
-
-    // Pause all videos, autoplay current
-    track.querySelectorAll('video').forEach((v, i) => {
-      if (i === currentIdx) {
-        v.currentTime = 0;
-        v.play().catch(() => {});
-      } else {
-        v.pause();
-      }
-    });
-
-    updateFooter();
-    recordView();
-  }
-
-  function updateFooter() {
-    const m = _galleryItems[currentIdx];
-    const avatar = overlay.querySelector('.mv-avatar');
-    avatar.src = m.uploader_avatar || '/img/default-avatar.png';
-    overlay.querySelector('.mv-uploader-name').textContent = m.uploader_name || '';
-    overlay.querySelector('.mv-caption').textContent = m.caption || '';
-    overlay.querySelector('.mv-like-count').textContent = m.like_count || 0;
-    overlay.querySelector('.mv-comment-count').textContent = m.comment_count || 0;
-    overlay.querySelector('.mv-view-count').textContent = m.view_count || 0;
-    likeBtn.dataset.liked = m.liked_by_me ? 'true' : 'false';
-    overlay.querySelector('.mv-like-icon').textContent = m.liked_by_me ? '❤️' : '🤍';
-
-    // Delete button — only visible to uploader
-    deleteBtn.style.display = (state.user?.id && m.user_id === state.user.id) ? 'flex' : 'none';
-
-    // Dots
-    const dots = overlay.querySelector('.mv-dots');
-    if (_galleryItems.length > 1) {
-      dots.innerHTML = _galleryItems.map((_, i) =>
-        `<span class="mv-dot-item${i === currentIdx ? ' active' : ''}"></span>`
-      ).join('');
-    } else {
-      dots.innerHTML = '';
-    }
-  }
-
-  async function recordView() {
-    try {
-      const m = _galleryItems[currentIdx];
-      const userId = state.user?.id || null;
-      const data = await fetch(`/api/social/media/${m.id}/view`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      }).then(r => r.json());
-      if (data.ok) {
-        m.view_count = data.view_count;
-        overlay.querySelector('.mv-view-count').textContent = data.view_count;
-      }
-    } catch (_) {}
-  }
-
-  async function toggleLike() {
-    if (!state.token) { showToast('Log in om te liken', 'info'); return; }
-    const m = _galleryItems[currentIdx];
-    try {
-      const data = await api(`/api/social/media/${m.id}/like`, { method: 'POST' });
-      m.like_count = data.like_count;
-      m.liked_by_me = data.liked;
-      overlay.querySelector('.mv-like-count').textContent = data.like_count;
-      overlay.querySelector('.mv-like-icon').textContent = data.liked ? '❤️' : '🤍';
-      likeBtn.dataset.liked = data.liked ? 'true' : 'false';
-    } catch (_) {}
-  }
-
-  async function openComments() {
-    const m = _galleryItems[currentIdx];
-    commentsPanel.style.display = 'flex';
-    const listEl = document.getElementById('mv-comments-list');
-    listEl.innerHTML = '<div style="padding:0.75rem;font-size:0.85rem;color:#aaa">Laden…</div>';
-    try {
-      const { comments } = await api(`/api/social/media/${m.id}/comments`);
-      if (!comments.length) {
-        listEl.innerHTML = '<div style="padding:0.75rem;font-size:0.85rem;color:#aaa">Nog geen reacties. Schrijf de eerste!</div>';
-      } else {
-        listEl.innerHTML = comments.map(c => `
-          <div class="mv-comment">
-            <img src="${c.author_avatar || '/img/default-avatar.png'}" class="mv-comment-avatar" alt="" />
-            <div>
-              <span class="mv-comment-author">${escapeHtml(c.author_name)}</span>
-              <span class="mv-comment-body">${escapeHtml(c.body)}</span>
+    <div class="hm-reel" id="match-reel-track" style="padding:0 0.75rem 0.75rem">
+      ${items.map((m, i) => `
+        <div class="hm-reel-card" data-index="${i}">
+          ${m.file_type === 'video'
+            ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
+               <div class="hm-reel-play-icon">▶</div>`
+            : `<img class="hm-reel-media" src="${esc(m.file_path)}" alt="Media" loading="lazy" />`}
+          <div class="hm-reel-gradient"></div>
+          <div class="hm-reel-info">
+            <div class="hm-reel-stats">
+              ${m.like_count > 0 ? `<span>❤️ ${m.like_count}</span>` : ''}
+              ${m.comment_count > 0 ? `<span>💬 ${m.comment_count}</span>` : ''}
             </div>
-          </div>`).join('');
-      }
-    } catch (_) {
-      listEl.innerHTML = '<div style="padding:0.75rem;font-size:0.85rem;color:#aaa">Laden mislukt.</div>';
-    }
-  }
+          </div>
+        </div>`).join('')}
+    </div>`;
 
-  function closeViewer() {
-    document.body.style.overflow = '';
-    overlay.remove();
-    // Refresh the preview counts
-    const el = document.getElementById('gallery-body');
-    if (el) renderGalleryPreview(el);
-  }
+  const reelTrack = el.querySelector('#match-reel-track');
 
-  // Touch / mouse swipe
-  overlay.addEventListener('touchstart', e => { startX = e.touches[0].clientX; }, { passive: true });
-  overlay.addEventListener('touchend', e => {
-    const dx = e.changedTouches[0].clientX - startX;
-    if (Math.abs(dx) > 50) goTo(currentIdx + (dx < 0 ? 1 : -1));
-  });
-
-  // Close
-  overlay.querySelector('.mv-close').addEventListener('click', closeViewer);
-  overlay.querySelector('.mv-backdrop').addEventListener('click', e => {
-    if (e.target === overlay.querySelector('.mv-backdrop')) closeViewer();
-  });
-
-  likeBtn.addEventListener('click', toggleLike);
-  commentBtn.addEventListener('click', openComments);
-  deleteBtn.addEventListener('click', async () => {
-    const m = _galleryItems[currentIdx];
-    if (!confirm('Wil je dit item verwijderen?')) return;
-    try {
-      const data = await api(`/api/social/media/${m.id}`, { method: 'DELETE' });
-      if (!data.ok) { showToast('Verwijderen mislukt', 'error'); return; }
-      _galleryItems.splice(currentIdx, 1);
-      if (_galleryItems.length === 0) {
-        closeViewer();
-        const el = document.getElementById('gallery-body');
-        if (el) el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">Nog geen foto's. Wees de eerste! 📸</div>`;
-      } else {
-        buildTrack();
-        goTo(Math.min(currentIdx, _galleryItems.length - 1));
-      }
-      showToast('Verwijderd', 'success');
-    } catch (_) { showToast('Verwijderen mislukt', 'error'); }
-  });
-  overlay.querySelector('.mv-close-comments').addEventListener('click', () => { commentsPanel.style.display = 'none'; });
-
-  const commentForm = overlay.querySelector('#mv-comment-form');
-  if (commentForm) {
-    commentForm.addEventListener('submit', async e => {
-      e.preventDefault();
-      const input = document.getElementById('mv-comment-input');
-      const body = input.value.trim();
-      if (!body) return;
-      try {
-        const m = _galleryItems[currentIdx];
-        const data = await api(`/api/social/media/${m.id}/comments`, {
-          method: 'POST',
-          body: JSON.stringify({ body }),
-        });
-        m.comment_count = (m.comment_count || 0) + 1;
-        overlay.querySelector('.mv-comment-count').textContent = m.comment_count;
-        input.value = '';
-        openComments();
-      } catch (_) { showToast('Reactie plaatsen mislukt', 'error'); }
+  // Tap → open shared fullscreen reel viewer
+  reelTrack.querySelectorAll('.hm-reel-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const idx = parseInt(card.dataset.index);
+      const existingVideo = card.querySelector('video.hm-reel-media');
+      const myUserId = state.user?.id;
+      openReelViewer(items, idx, {
+        sourceVideo: existingVideo,
+        canDelete: (item) => canInteract && myUserId && item.user_id === myUserId,
+        onDelete: async (item, afterDelete) => {
+          try {
+            await api(`/api/social/media/${item.id}`, { method: 'DELETE' });
+            items.splice(items.indexOf(item), 1);
+            if (items.length === 0) {
+              el.innerHTML = `<div style="padding:1.5rem;text-align:center;color:var(--text-muted);font-size:0.9rem">Nog geen foto's. Wees de eerste! 📸</div>`;
+              afterDelete(null);
+            } else {
+              renderMatchReel(el, items, canInteract);
+              afterDelete(null);
+            }
+          } catch (_) { showToast('Verwijderen mislukt', 'error'); }
+        },
+      });
     });
-  }
+  });
 
-  buildTrack();
-  goTo(startIdx);
+  // Auto-play videos when scrolled into view
+  const videos = reelTrack.querySelectorAll('video.hm-reel-media');
+  if (!videos.length) return;
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      const vid = e.target;
+      if (e.isIntersecting) {
+        vid.play().catch(() => {});
+        vid.closest('.hm-reel-card')?.querySelector('.hm-reel-play-icon')?.style.setProperty('display','none');
+      } else {
+        vid.pause();
+      }
+    });
+  }, { threshold: 0.6 });
+  videos.forEach(v => obs.observe(v));
 }
 
-function escapeHtml(str) {
-  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function openCapturePicker(accept, matchId, teamId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = accept;
+  input.capture = 'environment';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    input.remove();
+    if (!files.length) { sessionStorage.removeItem('vb_upload_intent'); return; }
+    showCaptionModal(matchId, teamId, files);
+  });
+  input.click();
 }
 
-function showUploadModal(matchId) {
+function showUploadModal(matchId, teamId = null) {
+  // Standard file-picker modal
   const overlay = document.createElement('div');
   overlay.className = 'badge-unlock-overlay';
   overlay.innerHTML = `
     <div class="badge-unlock-card" style="max-width:360px">
-      <h3 style="margin-bottom:1rem">📸 Foto's & video's uploaden</h3>
+      <h3 style="margin-bottom:1rem">📸 Foto's &amp; video's uploaden</h3>
       <form id="upload-form">
         <div id="fp-wrap" class="form-group"></div>
         <div class="form-group">
@@ -1214,44 +1134,83 @@ function showUploadModal(matchId) {
     </div>`;
   document.body.appendChild(overlay);
 
-  document.getElementById('upload-cancel').addEventListener('click', () => {
+  overlay.querySelector('#upload-cancel').addEventListener('click', () => {
     sessionStorage.removeItem('vb_upload_intent');
     overlay.remove();
   });
 
-  const picker = new FilePicker(document.getElementById('fp-wrap'), {
+  const picker = new FilePicker(overlay.querySelector('#fp-wrap'), {
     accept: 'image/*,video/*',
     multiple: true,
     maxFiles: 10,
   });
 
-  document.getElementById('upload-form').addEventListener('submit', async e => {
+  overlay.querySelector('#upload-form').addEventListener('submit', async e => {
     e.preventDefault();
     const files = picker.getFiles();
     if (files.length === 0) { showToast('Kies eerst bestanden', 'error'); return; }
-
-    const btn = document.getElementById('upload-submit');
-    btn.disabled = true; btn.textContent = 'Bezig…';
-    const fd = new FormData();
-    files.forEach(f => fd.append('files', f));
-    const caption = document.getElementById('upload-caption').value;
-    if (caption) fd.append('caption', caption);
-    fd.append('match_id', matchId);
-    try {
-      await fetch('/api/social/upload', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${state.token}` },
-        body: fd,
-      });
-      sessionStorage.removeItem('vb_upload_intent');
-      overlay.remove();
-      showToast("Foto's geüpload! 📸", 'success');
-      loadMatchGallery(matchId, true);
-    } catch (err) {
-      showToast('Upload mislukt', 'error');
-      btn.disabled = false; btn.textContent = 'Uploaden';
-    }
+    overlay.remove();
+    await doUpload(matchId, teamId, files, overlay.querySelector('#upload-caption')?.value || '');
   });
+}
+
+function showCaptionModal(matchId, teamId, files) {
+  // Show thumbnail preview of captured file(s)
+  const preview = files.map(f => {
+    const url = URL.createObjectURL(f);
+    return f.type.startsWith('video/')
+      ? `<video src="${url}" style="width:100%;max-height:180px;border-radius:10px;object-fit:cover" muted playsinline></video>`
+      : `<img src="${url}" style="width:100%;max-height:180px;border-radius:10px;object-fit:cover" />`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:360px">
+      <h3 style="margin-bottom:0.75rem">📸 Zojuist gemaakt</h3>
+      <div style="margin-bottom:0.75rem;border-radius:10px;overflow:hidden">${preview}</div>
+      <div class="form-group">
+        <label class="form-label">Onderschrift (optioneel)</label>
+        <input type="text" id="cap-input" class="form-input" placeholder="Wat een geweldige wedstrijd!" />
+      </div>
+      <div class="flex gap-2 mt-2">
+        <button class="btn btn-secondary" style="flex:1" id="cap-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="cap-submit">Plaatsen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#cap-cancel').addEventListener('click', () => {
+    sessionStorage.removeItem('vb_upload_intent');
+    overlay.remove();
+  });
+
+  overlay.querySelector('#cap-submit').addEventListener('click', async () => {
+    const caption = overlay.querySelector('#cap-input').value;
+    overlay.remove();
+    await doUpload(matchId, teamId, files, caption);
+  });
+}
+
+async function doUpload(matchId, teamId, files, caption = '') {
+  const toast = showToast('Uploaden…', 'info');
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  if (caption) fd.append('caption', caption);
+  fd.append('match_id', matchId);
+  if (teamId) fd.append('team_id', teamId);
+  try {
+    await fetch('/api/social/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.token}` },
+      body: fd,
+    });
+    sessionStorage.removeItem('vb_upload_intent');
+    showToast('Geplaatst! 📸', 'success');
+    loadMatchGallery(matchId, true);
+  } catch (_) {
+    showToast('Upload mislukt', 'error');
+  }
 }
 
 function showOfferModal(matchId, onSuccess) {

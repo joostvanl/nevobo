@@ -1,4 +1,5 @@
-import { api, state, renderAvatar, renderClubLogo, showToast, navigate } from '../app.js';
+import { api, state, renderAvatar, showToast, navigate } from '../app.js';
+import { openReelViewer } from '../reel-viewer.js';
 
 export async function render(container) {
   container.innerHTML = '<div class="spinner"></div>';
@@ -24,179 +25,44 @@ export async function render(container) {
     const clubs = clubsData.clubs || [];
     const nextLevel = meData.nextLevel;
     const currentLevel = meData.currentLevel;
-
     const xpProgress = nextLevel && currentLevel
       ? Math.min(100, Math.round(((me.xp - currentLevel.xp_required) / (nextLevel.xp_required - currentLevel.xp_required)) * 100))
       : 100;
 
-    const memberships = me.memberships || [];
-
     container.innerHTML = `
       <div class="page-hero">
         <div class="container">
-          <div class="flex items-center gap-3">
+          <div style="display:flex;align-items:center;gap:1rem">
             ${renderAvatar(me.name, me.avatar_url, 'lg')}
-            <div>
-              <h1 style="color:#fff;font-size:1.4rem">${me.name}</h1>
-              <div class="flex gap-2 mt-1">
+            <div style="flex:1;min-width:0">
+              <h1 style="color:#fff;font-size:1.4rem;margin:0">${esc(me.name)}</h1>
+              <div style="display:flex;gap:0.5rem;margin-top:0.35rem;flex-wrap:wrap">
                 <span class="chip" style="background:rgba(255,255,255,0.2);color:#fff">Level ${me.level}</span>
                 <span class="chip" style="background:rgba(255,255,255,0.2);color:#fff">${me.xp} XP</span>
               </div>
             </div>
+            <button id="edit-profile-btn" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:50%;width:36px;height:36px;font-size:1rem;cursor:pointer;flex-shrink:0" title="Profiel bewerken">✏️</button>
           </div>
         </div>
       </div>
 
-      <div class="container">
+      <div class="container" style="padding-bottom:5rem">
 
-        <!-- Admin shortcut -->
-        ${me.roles?.length > 0 ? `
-          <div class="card mb-3" style="margin-top:-0.5rem;border:2px solid var(--primary)">
-            <div class="card-body flex items-center gap-3">
-              <span style="font-size:1.4rem">⚙️</span>
-              <div style="flex:1">
-                <div style="font-weight:700;font-size:0.9rem">Beheerderspaneel</div>
-                <div style="font-size:0.8rem;color:var(--text-muted)">${me.roles.map(r => r.role === 'super_admin' ? 'Opperbeheerder' : r.role === 'club_admin' ? `Clubbeheerder ${r.club_name || ''}` : `Teambeheerder ${r.team_name || ''}`).join(' · ')}</div>
-              </div>
-              <button class="btn btn-primary btn-sm" onclick="navigate('admin')">Beheer →</button>
-            </div>
-          </div>` : ''}
-
-        <!-- XP bar -->
-        <div class="xp-bar-wrap mb-3" style="margin-top:-0.5rem">
-          <div class="xp-bar-header">
-            <span class="xp-level-label">${currentLevel?.label || 'Niveau ' + me.level}</span>
-            ${nextLevel ? `<span class="text-muted" style="font-size:0.8rem">${nextLevel.xp_required - me.xp} XP nodig</span>` : ''}
-          </div>
-          <div class="xp-bar-track">
-            <div class="xp-bar-fill" id="xp-fill" style="width:0%"></div>
-          </div>
+        <!-- Action row: admin + logout -->
+        <div style="display:flex;gap:0.75rem;margin-top:1rem;margin-bottom:1rem">
+          ${me.roles?.length > 0 ? `
+            <button class="btn btn-secondary" style="flex:1;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="admin-btn">
+              ⚙️ Gebruikersbeheer
+            </button>` : ''}
+          <button class="btn btn-secondary" style="flex:1" id="logout-btn">Uitloggen</button>
         </div>
 
-        <!-- Badges -->
-        ${badges.length > 0 ? `
-          <div class="section">
-            <div class="section-header">
-              <span class="section-title">Verdiende badges (${badges.length})</span>
-              <button class="btn btn-ghost btn-sm" onclick="navigate('badges')">Alles →</button>
-            </div>
-            <div class="scroll-x">
-              ${badges.map(b => `
-                <div style="display:flex;flex-direction:column;align-items:center;gap:0.25rem;min-width:64px">
-                  <div style="font-size:2rem">${b.icon_emoji}</div>
-                  <span style="font-size:0.65rem;font-weight:700;text-align:center;color:var(--text-muted)">${b.label}</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Profile settings -->
+        <!-- Media section -->
         <div class="section">
-          <div class="section-header"><span class="section-title">Profiel bewerken</span></div>
-          <div class="card">
-            <div class="card-body">
-              <form id="profile-form">
-                <div class="form-group">
-                  <label class="form-label">Naam</label>
-                  <input type="text" id="prof-name" class="form-input" value="${escapeHtml(me.name)}" required />
-                </div>
-                <div class="form-group">
-                  <label class="form-label">Club</label>
-                  <select class="form-select" id="prof-club">
-                    <option value="">— Geen club —</option>
-                    ${clubs.map(c => `<option value="${c.id}" ${c.id === me.club_id ? 'selected' : ''}>${c.name}</option>`).join('')}
-                  </select>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block" id="prof-save">Opslaan</button>
-              </form>
-            </div>
+          <div class="section-header">
+            <span class="section-title">📸 Mijn media</span>
           </div>
-        </div>
-
-        <!-- Team memberships -->
-        <div class="section">
-          <div class="section-header"><span class="section-title">👥 Mijn teams</span></div>
-          <div class="card">
-            <div id="memberships-list">
-              ${memberships.length === 0
-                ? `<div class="card-body"><p class="text-muted text-small">Je bent nog aan geen enkel team gekoppeld.</p></div>`
-                : memberships.map(m => membershipRow(m)).join('')}
-            </div>
-            <!-- Add membership form -->
-            <div class="card-body" style="border-top:1px solid var(--border)">
-              <div style="font-weight:600;font-size:0.85rem;margin-bottom:0.75rem">Team toevoegen</div>
-              <div class="form-group" style="margin-bottom:0.5rem">
-                <select class="form-select" id="add-mem-club">
-                  <option value="">— Selecteer club —</option>
-                  ${clubs.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
-                </select>
-              </div>
-              <div class="form-group" style="margin-bottom:0.5rem">
-                <select class="form-select" id="add-mem-team" disabled>
-                  <option value="">— Selecteer eerst een club —</option>
-                </select>
-              </div>
-              <div class="form-group" style="margin-bottom:0.75rem">
-                <select class="form-select" id="add-mem-role">
-                  <option value="player">Speler</option>
-                  <option value="coach">Trainer/Coach</option>
-                  <option value="parent">Ouder</option>
-                </select>
-              </div>
-              <button class="btn btn-secondary btn-block" id="add-mem-btn" disabled>Team toevoegen</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Add club section -->
-        <div class="section">
-          <div class="section-header"><span class="section-title">Club toevoegen</span></div>
-          <div class="card">
-            <div class="card-body">
-              <form id="club-form">
-                <div class="form-group">
-                  <label class="form-label">Clubnaam</label>
-                  <input type="text" id="club-name" class="form-input" placeholder="bijv. VTC Woerden" required />
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">Nevobo-code</label>
-                  <div class="flex gap-2">
-                    <input type="text" id="club-code" class="form-input" placeholder="bijv. ckl9x7n" required style="flex:1;text-transform:lowercase" />
-                    <button type="button" class="btn btn-secondary" id="validate-code-btn" title="Code valideren">✓</button>
-                  </div>
-                  <p class="form-hint" id="code-hint">Voer de Nevobo-code in en klik ✓ om te valideren</p>
-                </div>
-
-                <!-- How to find code guide -->
-                <div style="background:rgba(33,150,243,0.07);border-radius:var(--radius);padding:0.875rem;margin-bottom:1rem;border:1px solid rgba(33,150,243,0.2)">
-                  <div style="font-weight:700;font-size:0.85rem;color:var(--accent);margin-bottom:0.5rem">📖 Hoe vind je je Nevobo-code?</div>
-                  <ol style="font-size:0.8rem;color:var(--text-muted);padding-left:1.25rem;line-height:1.8">
-                    <li>Ga naar <a href="https://www.volleybal.nl" target="_blank" style="color:var(--accent)">volleybal.nl</a></li>
-                    <li>Zoek jouw club of team</li>
-                    <li>Klik op <strong>Programma</strong></li>
-                    <li>Scroll naar beneden → klik <strong>"Exporteren"</strong></li>
-                    <li>Klik rechts op <strong>RSS Feed</strong> → "Link kopiëren"</li>
-                    <li>De code staat in de URL: <code style="background:var(--border);padding:1px 4px;border-radius:4px;font-size:0.75rem">/vereniging/<strong>ckl9x7n</strong>/</code></li>
-                  </ol>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">Regio</label>
-                  <select class="form-select" id="club-region">
-                    <option value="">— Selecteer regio (optioneel) —</option>
-                    <option>regio-noord</option>
-                    <option>regio-oost</option>
-                    <option>regio-west</option>
-                    <option>regio-zuid</option>
-                    <option>nationale-competitie</option>
-                  </select>
-                </div>
-                <button type="submit" class="btn btn-secondary btn-block" id="club-save">Club toevoegen</button>
-              </form>
-            </div>
-          </div>
+          <div id="my-media-grid"><div class="spinner"></div></div>
         </div>
 
         <!-- Leaderboard -->
@@ -204,16 +70,47 @@ export async function render(container) {
           <div class="section">
             <div class="section-header"><span class="section-title">🏅 Ranglijst club</span></div>
             <div id="leaderboard"><div class="spinner"></div></div>
-          </div>
-        ` : ''}
+          </div>` : ''}
 
-        <!-- Logout -->
+        <!-- Badges & XP -->
         <div class="section">
-          <button class="btn btn-secondary btn-block" id="logout-btn">Uitloggen</button>
+          <div class="section-header">
+            <span class="section-title">⚡ XP & Badges</span>
+            <button class="btn btn-ghost btn-sm" onclick="navigate('badges')">Alles →</button>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="xp-bar-header" style="display:flex;justify-content:space-between;margin-bottom:0.4rem">
+                <span style="font-size:0.85rem;font-weight:700">${currentLevel?.label || 'Niveau ' + me.level}</span>
+                ${nextLevel ? `<span class="text-muted" style="font-size:0.78rem">${nextLevel.xp_required - me.xp} XP nodig</span>` : ''}
+              </div>
+              <div class="xp-bar-track"><div class="xp-bar-fill" id="xp-fill" style="width:0%"></div></div>
+              ${badges.length > 0 ? `
+                <div class="scroll-x" style="margin-top:1rem">
+                  ${badges.map(b => `
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:0.25rem;min-width:56px">
+                      <div style="font-size:1.75rem">${b.icon_emoji}</div>
+                      <span style="font-size:0.6rem;font-weight:700;text-align:center;color:var(--text-muted)">${b.label}</span>
+                    </div>`).join('')}
+                </div>` : `<p class="text-muted text-small" style="margin-top:0.75rem">Nog geen badges verdiend.</p>`}
+            </div>
+          </div>
         </div>
 
-      </div>
-    `;
+        <!-- Privacy & Legal -->
+        <div class="section">
+          <div class="card">
+            <div class="card-body" style="padding:0">
+              <button class="btn btn-ghost" style="width:100%;text-align:left;padding:0.85rem 1rem;border-radius:var(--radius);display:flex;align-items:center;justify-content:space-between"
+                id="privacy-link-btn">
+                <span>🔒 Privacy & AVG (GDPR)</span>
+                <span style="font-size:0.8rem;color:var(--text-muted)">→</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>`;
 
     // Animate XP bar
     setTimeout(() => {
@@ -221,150 +118,17 @@ export async function render(container) {
       if (fill) fill.style.width = xpProgress + '%';
     }, 100);
 
+    // Load media grid
+    loadMyMedia(me.id, container);
+
     // Load leaderboard
-    if (me.club_id) {
-      loadLeaderboard(me.club_id, me.id);
-    }
+    if (me.club_id) loadLeaderboard(me.club_id, me.id);
 
-    // Profile form (name + primary club only)
-    document.getElementById('profile-form')?.addEventListener('submit', async e => {
-      e.preventDefault();
-      const btn = document.getElementById('prof-save');
-      btn.disabled = true; btn.textContent = 'Opslaan…';
-      try {
-        const body = {
-          name: document.getElementById('prof-name').value,
-          club_id: document.getElementById('prof-club').value || null,
-        };
-        const data = await api('/api/auth/profile', { method: 'PATCH', body });
-        state.user = { ...data.user, memberships: me.memberships, roles: me.roles };
-        localStorage.setItem('vb_user', JSON.stringify(state.user));
-        showToast('Profiel opgeslagen! ✅', 'success');
-        render(container);
-      } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false; btn.textContent = 'Opslaan';
-      }
-    });
+    // Admin button
+    document.getElementById('admin-btn')?.addEventListener('click', () => navigate('admin'));
 
-    // Membership manager — club picker loads teams
-    document.getElementById('add-mem-club')?.addEventListener('change', async function () {
-      const clubId = this.value;
-      const teamSel = document.getElementById('add-mem-team');
-      const addBtn  = document.getElementById('add-mem-btn');
-      if (!clubId) {
-        teamSel.innerHTML = '<option value="">— Selecteer eerst een club —</option>';
-        teamSel.disabled = true; addBtn.disabled = true; return;
-      }
-      teamSel.innerHTML = '<option value="">Laden…</option>';
-      teamSel.disabled = true; addBtn.disabled = true;
-      try {
-        const data = await api(`/api/clubs/${clubId}/teams?userId=${me.id}`);
-        const list = data.teams || [];
-        teamSel.innerHTML = '<option value="">— Selecteer team —</option>'
-          + list.map(t => `<option value="${t.id}">${t.display_name}</option>`).join('');
-        teamSel.disabled = false;
-        teamSel.addEventListener('change', () => {
-          addBtn.disabled = !teamSel.value;
-        });
-      } catch (_) {
-        teamSel.innerHTML = '<option value="">Laden mislukt</option>';
-      }
-    });
-
-    // Add membership
-    document.getElementById('add-mem-btn')?.addEventListener('click', async () => {
-      const teamId = document.getElementById('add-mem-team')?.value;
-      const role   = document.getElementById('add-mem-role')?.value;
-      if (!teamId) return;
-      const btn = document.getElementById('add-mem-btn');
-      btn.disabled = true; btn.textContent = 'Bezig…';
-      try {
-        const data = await api('/api/auth/memberships', {
-          method: 'POST',
-          body: { team_id: parseInt(teamId), membership_type: role },
-        });
-        // Update state
-        const meRefresh = await api('/api/auth/me');
-        state.user = meRefresh.user;
-        localStorage.setItem('vb_user', JSON.stringify(state.user));
-        showToast('Team toegevoegd! ✅', 'success');
-        render(container);
-      } catch (err) {
-        showToast(err.message || 'Toevoegen mislukt', 'error');
-        btn.disabled = false; btn.textContent = 'Team toevoegen';
-      }
-    });
-
-    // Remove membership (delegated)
-    document.getElementById('memberships-list')?.addEventListener('click', async e => {
-      const btn = e.target.closest('.mem-remove-btn');
-      if (!btn) return;
-      const teamId = btn.dataset.teamId;
-      btn.disabled = true; btn.textContent = '…';
-      try {
-        await api(`/api/auth/memberships/${teamId}`, { method: 'DELETE' });
-        const meRefresh = await api('/api/auth/me');
-        state.user = meRefresh.user;
-        localStorage.setItem('vb_user', JSON.stringify(state.user));
-        showToast('Team verwijderd', 'success');
-        render(container);
-      } catch (err) {
-        showToast(err.message || 'Verwijderen mislukt', 'error');
-        btn.disabled = false; btn.textContent = '✕';
-      }
-    });
-
-    // Club form
-    document.getElementById('club-form')?.addEventListener('submit', async e => {
-      e.preventDefault();
-      const btn = document.getElementById('club-save');
-      btn.disabled = true; btn.textContent = 'Bezig…';
-      try {
-        const clubResp = await api('/api/clubs', {
-          method: 'POST',
-          body: {
-            name: document.getElementById('club-name').value,
-            nevobo_code: document.getElementById('club-code').value.trim().toLowerCase(),
-            region: document.getElementById('club-region').value,
-          },
-        });
-        showToast('Club toegevoegd! Teams worden gesynchroniseerd 🏐', 'success');
-        // Reload page so the new club appears in the dropdown and teams are loaded
-        setTimeout(() => render(container), 800);
-      } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false; btn.textContent = 'Club toevoegen';
-      }
-    });
-
-    // Validate Nevobo code button
-    document.getElementById('validate-code-btn')?.addEventListener('click', async () => {
-      const code = document.getElementById('club-code').value.trim();
-      const hint = document.getElementById('code-hint');
-      const btn = document.getElementById('validate-code-btn');
-      if (!code) { showToast('Voer een code in', 'error'); return; }
-      btn.disabled = true; btn.textContent = '⏳';
-      hint.textContent = 'Code wordt gecontroleerd…';
-      hint.style.color = 'var(--text-muted)';
-      try {
-        await api('/api/nevobo/validate', { method: 'POST', body: { code } });
-        hint.textContent = '✅ Geldige Nevobo-code! Je kunt de club nu toevoegen.';
-        hint.style.color = 'var(--success)';
-        btn.textContent = '✓';
-      } catch (err) {
-        hint.textContent = '❌ ' + (err.message || 'Ongeldige code — controleer de code op volleybal.nl');
-        hint.style.color = 'var(--danger)';
-        btn.textContent = '✗';
-      } finally {
-        btn.disabled = false;
-      }
-    });
-
-    // Live lowercase transform for code input
-    document.getElementById('club-code')?.addEventListener('input', function() {
-      this.value = this.value.toLowerCase();
-    });
+    // Privacy
+    document.getElementById('privacy-link-btn')?.addEventListener('click', () => navigate('privacy'));
 
     // Logout
     document.getElementById('logout-btn')?.addEventListener('click', () => {
@@ -375,26 +139,226 @@ export async function render(container) {
       window.location.reload();
     });
 
+    // Edit profile overlay
+    document.getElementById('edit-profile-btn')?.addEventListener('click', () => {
+      showEditOverlay(me, clubs, container);
+    });
+
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
   }
 }
 
+/* ─── Media grid ─────────────────────────────────────────────────────────── */
+async function loadMyMedia(userId, container) {
+  const el = document.getElementById('my-media-grid');
+  if (!el) return;
+  try {
+    const data = await api(`/api/social/my-media`);
+    const items = data.media || [];
+    if (!items.length) {
+      el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
+      return;
+    }
+
+    // Normalise field so viewer works (liked_by_me, counts)
+    items.forEach(m => {
+      m.like_count    = m.like_count    || 0;
+      m.comment_count = m.comment_count || 0;
+      m.view_count    = m.view_count    || 0;
+      m.liked_by_me   = false;
+    });
+
+    el.innerHTML = `
+      <div class="prof-media-grid">
+        ${items.map((m, i) => `
+          <div class="prof-media-item" data-idx="${i}">
+            ${m.file_type === 'video'
+              ? `<video src="${esc(m.file_path)}" muted playsinline preload="metadata" class="prof-media-thumb"></video>
+                 <span class="prof-media-type-icon">▶</span>`
+              : `<img src="${esc(m.file_path)}" class="prof-media-thumb" loading="lazy" />`}
+          </div>`).join('')}
+      </div>`;
+
+    // Click → open fullscreen viewer with delete option
+    el.querySelectorAll('.prof-media-item').forEach(card => {
+      card.addEventListener('click', () => {
+        const startIdx = parseInt(card.dataset.idx);
+        openReelViewer(items, startIdx, {
+          canDelete: () => true,
+          onDelete: async (m) => {
+            await api(`/api/social/media/${m.id}`, { method: 'DELETE' });
+            showToast('Verwijderd', 'success');
+            // Remove from grid
+            const gridCard = el.querySelector(`.prof-media-item[data-idx="${items.indexOf(m)}"]`);
+            gridCard?.remove();
+            // Re-index remaining cards
+            el.querySelectorAll('.prof-media-item').forEach((c, i) => c.dataset.idx = i);
+            if (!el.querySelector('.prof-media-item')) {
+              el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
+            }
+            return true;
+          },
+        });
+      });
+    });
+  } catch (_) {
+    el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Media kon niet worden geladen.</p></div></div>`;
+  }
+}
+
+/* ─── Edit profile overlay ───────────────────────────────────────────────── */
+function showEditOverlay(me, clubs, container) {
+  const memberships = me.memberships || [];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:420px;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem">
+        <h3 style="margin:0">Profiel bewerken</h3>
+        <button id="edit-close" style="background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--text-muted)">✕</button>
+      </div>
+
+      <!-- Name & club -->
+      <form id="profile-form">
+        <div class="form-group">
+          <label class="form-label">Naam</label>
+          <input type="text" id="prof-name" class="form-input" value="${esc(me.name)}" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Primaire club</label>
+          <select class="form-select" id="prof-club">
+            <option value="">— Geen club —</option>
+            ${clubs.map(c => `<option value="${c.id}" ${c.id === me.club_id ? 'selected' : ''}>${c.name}</option>`).join('')}
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" id="prof-save">Opslaan</button>
+      </form>
+
+      <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--border)" />
+
+      <!-- Add club -->
+      <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.75rem">🏐 Club toevoegen</div>
+      <form id="club-form">
+        <div class="form-group">
+          <label class="form-label">Clubnaam</label>
+          <input type="text" id="club-name" class="form-input" placeholder="bijv. VTC Woerden" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nevobo-code</label>
+          <div class="flex gap-2">
+            <input type="text" id="club-code" class="form-input" placeholder="bijv. ckl9x7n" required style="flex:1;text-transform:lowercase" />
+            <button type="button" class="btn btn-secondary" id="validate-code-btn" title="Code valideren">✓</button>
+          </div>
+          <p class="form-hint" id="code-hint">Voer de Nevobo-code in en klik ✓ om te valideren</p>
+        </div>
+        <div style="background:rgba(33,150,243,0.07);border-radius:var(--radius);padding:0.75rem;margin-bottom:0.75rem;border:1px solid rgba(33,150,243,0.2);font-size:0.78rem;color:var(--text-muted)">
+          Ga naar <a href="https://www.volleybal.nl" target="_blank" style="color:var(--accent)">volleybal.nl</a>, zoek je club, klik Programma → RSS Feed. De code staat in de URL: <code>/vereniging/<strong>ckl9x7n</strong>/</code>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Regio</label>
+          <select class="form-select" id="club-region">
+            <option value="">— Optioneel —</option>
+            <option>regio-noord</option><option>regio-oost</option><option>regio-west</option>
+            <option>regio-zuid</option><option>nationale-competitie</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-secondary btn-block" id="club-save">Club toevoegen</button>
+      </form>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  // Close
+  overlay.querySelector('#edit-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  // Profile form
+  overlay.querySelector('#profile-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = overlay.querySelector('#prof-save');
+    btn.disabled = true; btn.textContent = 'Opslaan…';
+    try {
+      const data = await api('/api/auth/profile', {
+        method: 'PATCH',
+        body: {
+          name: overlay.querySelector('#prof-name').value,
+          club_id: overlay.querySelector('#prof-club').value || null,
+        },
+      });
+      const meRefresh = await api('/api/auth/me');
+      state.user = meRefresh.user;
+      localStorage.setItem('vb_user', JSON.stringify(state.user));
+      showToast('Profiel opgeslagen! ✅', 'success');
+      overlay.remove();
+      render(container);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false; btn.textContent = 'Opslaan';
+    }
+  });
+
+  // Club form
+  overlay.querySelector('#club-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = overlay.querySelector('#club-save');
+    btn.disabled = true; btn.textContent = 'Bezig…';
+    try {
+      await api('/api/clubs', {
+        method: 'POST',
+        body: {
+          name: overlay.querySelector('#club-name').value,
+          nevobo_code: overlay.querySelector('#club-code').value.trim().toLowerCase(),
+          region: overlay.querySelector('#club-region').value,
+        },
+      });
+      showToast('Club toegevoegd! 🏐', 'success');
+      overlay.remove();
+      setTimeout(() => render(container), 500);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false; btn.textContent = 'Club toevoegen';
+    }
+  });
+
+  // Validate Nevobo code
+  overlay.querySelector('#validate-code-btn').addEventListener('click', async () => {
+    const code = overlay.querySelector('#club-code').value.trim();
+    const hint = overlay.querySelector('#code-hint');
+    const btn  = overlay.querySelector('#validate-code-btn');
+    if (!code) { showToast('Voer een code in', 'error'); return; }
+    btn.disabled = true; btn.textContent = '⏳';
+    hint.textContent = 'Controleren…'; hint.style.color = 'var(--text-muted)';
+    try {
+      await api('/api/nevobo/validate', { method: 'POST', body: { code } });
+      hint.textContent = '✅ Geldige code!'; hint.style.color = 'var(--success)';
+      btn.textContent = '✓';
+    } catch (err) {
+      hint.textContent = '❌ Ongeldige code'; hint.style.color = 'var(--danger)';
+      btn.textContent = '✗';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  overlay.querySelector('#club-code').addEventListener('input', function () { this.value = this.value.toLowerCase(); });
+}
+
+/* ─── Backend: my-media endpoint ─────────────────────────────────────────── */
+
+/* ─── Leaderboard ────────────────────────────────────────────────────────── */
 async function loadLeaderboard(clubId, myId) {
   const el = document.getElementById('leaderboard');
   if (!el) return;
   try {
     const { users } = await api(`/api/gamification/leaderboard/${clubId}`);
-    if (!users || users.length === 0) {
-      el.innerHTML = '<p class="text-muted text-small">Nog geen spelers op de ranglijst.</p>';
-      return;
-    }
+    if (!users?.length) { el.innerHTML = '<p class="text-muted text-small">Nog geen spelers op de ranglijst.</p>'; return; }
     el.innerHTML = users.map((u, i) => {
-      const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
       const rankIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : String(i + 1);
       return `
         <div class="leaderboard-item" style="${u.id === myId ? 'border-color:var(--primary);background:rgba(255,87,34,0.03)' : ''}">
-          <div class="leaderboard-rank ${rankClass}">${rankIcon}</div>
+          <div class="leaderboard-rank">${rankIcon}</div>
           ${renderAvatar(u.name, u.avatar_url, 'sm')}
           <div style="flex:1">
             <div style="font-weight:700;font-size:0.9rem">${u.name}${u.id === myId ? ' <span class="chip chip-primary" style="font-size:0.65rem">Jij</span>' : ''}</div>
@@ -408,23 +372,8 @@ async function loadLeaderboard(clubId, myId) {
   }
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+/* ─── Helpers ────────────────────────────────────────────────────────────── */
+function esc(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-const ROLE_LABELS = { player: 'Speler', coach: 'Trainer/Coach', trainer: 'Trainer/Coach', parent: 'Ouder' };
-
-function membershipRow(m) {
-  return `
-    <div class="team-member-row" style="padding:0.75rem 1rem">
-      ${renderClubLogo(m.nevobo_code, m.club_name, 'sm')}
-      <div style="flex:1;min-width:0;margin-left:0.625rem">
-        <div style="font-weight:600;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(m.team_name)}</div>
-        <div style="font-size:0.78rem;color:var(--text-muted)">${escapeHtml(m.club_name)}</div>
-      </div>
-      <span class="chip chip-primary" style="font-size:0.72rem;white-space:nowrap">${ROLE_LABELS[m.membership_type] || m.membership_type}</span>
-      <button class="mem-remove-btn btn btn-ghost btn-sm" data-team-id="${m.team_id}"
-        style="color:var(--danger);padding:0.25rem 0.5rem;margin-left:0.25rem;flex-shrink:0" title="Verwijderen">✕</button>
-    </div>`;
-}

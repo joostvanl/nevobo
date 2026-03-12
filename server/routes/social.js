@@ -216,6 +216,22 @@ router.post('/media/:id/comments', verifyToken, (req, res) => {
   res.json({ ok: true, comment });
 });
 
+// GET /api/social/my-media — all media uploaded by the current user
+router.get('/my-media', verifyToken, (req, res) => {
+  const items = db.prepare(`
+    SELECT mm.*,
+      (SELECT COUNT(*) FROM media_likes ml WHERE ml.media_id = mm.id) AS like_count,
+      (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
+      t.display_name AS team_name
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    LEFT JOIN teams t ON t.id = p.team_id
+    WHERE mm.user_id = ?
+    ORDER BY mm.created_at DESC
+  `).all(req.user.id);
+  res.json({ ok: true, media: items });
+});
+
 // DELETE /api/social/media/:id — delete own media item
 router.delete('/media/:id', verifyToken, (req, res) => {
   const item = db.prepare('SELECT * FROM match_media WHERE id = ?').get(req.params.id);
@@ -340,6 +356,93 @@ router.get('/following', verifyToken, (req, res) => {
   });
 
   res.json({ ok: true, follows: enriched });
+});
+
+// GET /api/social/home-summary — aggregated data for the homepage
+router.get('/home-summary', verifyToken, (req, res) => {
+  const userId = req.user.id;
+  const user   = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+
+  // All team IDs the user is a member of
+  const memberTeams = db.prepare(`
+    SELECT tm.team_id, t.display_name, t.club_id, c.name AS club_name, c.nevobo_code
+    FROM team_memberships tm
+    JOIN teams t ON t.id = tm.team_id
+    JOIN clubs c ON c.id = t.club_id
+    WHERE tm.user_id = ?
+  `).all(userId);
+
+  // Team IDs the user follows
+  const followedTeamRows = db.prepare(`
+    SELECT uf.followee_id AS team_id, t.display_name, t.club_id,
+           c.name AS club_name, c.nevobo_code
+    FROM user_follows uf
+    JOIN teams t ON t.id = uf.followee_id
+    JOIN clubs c ON c.id = t.club_id
+    WHERE uf.follower_id = ? AND uf.followee_type = 'team'
+  `).all(userId);
+
+  // Recent media: photos/videos from the user's club or followed teams
+  // Posts often have club_id set but team_id=null, so we query by both
+  const relevantTeamIds = [
+    ...new Set([...memberTeams.map(t => t.team_id), ...followedTeamRows.map(t => t.team_id)])
+  ];
+  const relevantClubIds = [
+    ...new Set([
+      user.club_id,
+      ...memberTeams.map(t => t.club_id),
+      ...followedTeamRows.map(t => t.club_id),
+    ].filter(Boolean))
+  ];
+
+  let recentMedia = [];
+  if (relevantClubIds.length > 0 || relevantTeamIds.length > 0) {
+    const teamPlaceholders  = relevantTeamIds.length  > 0 ? relevantTeamIds.map(() => '?').join(',')  : null;
+    const clubPlaceholders  = relevantClubIds.length  > 0 ? relevantClubIds.map(() => '?').join(',')  : null;
+    const whereClause = [
+      teamPlaceholders ? `p.team_id IN (${teamPlaceholders})` : null,
+      clubPlaceholders ? `p.club_id IN (${clubPlaceholders})` : null,
+    ].filter(Boolean).join(' OR ');
+    const args = [...(relevantTeamIds.length > 0 ? relevantTeamIds : []), ...(relevantClubIds.length > 0 ? relevantClubIds : [])];
+    recentMedia = db.prepare(`
+      SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
+        (SELECT COUNT(*) FROM media_likes ml WHERE ml.media_id = mm.id) AS like_count,
+        (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
+        (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
+        (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
+        t.display_name AS team_name,
+        c.name AS club_name_media
+      FROM match_media mm
+      JOIN users u ON u.id = mm.user_id
+      LEFT JOIN posts p ON p.id = mm.post_id
+      LEFT JOIN teams t ON t.id = p.team_id
+      LEFT JOIN clubs c ON c.id = p.club_id
+      WHERE ${whereClause}
+      ORDER BY mm.created_at DESC
+      LIMIT 6
+    `).all(userId, ...args);
+  }
+
+  // New followers who started following the current user in the last 30 days
+  const newFollowers = db.prepare(`
+    SELECT u.id, u.name, u.avatar_url, uf.created_at AS followed_at, c.name AS club_name
+    FROM user_follows uf
+    JOIN users u ON u.id = uf.follower_id
+    LEFT JOIN clubs c ON c.id = u.club_id
+    WHERE uf.followee_type = 'user' AND uf.followee_id = ?
+      AND uf.created_at >= datetime('now', '-30 days')
+    ORDER BY uf.created_at DESC
+    LIMIT 5
+  `).all(userId);
+
+  res.json({
+    ok: true,
+    memberTeams,
+    followedTeams: followedTeamRows,
+    recentMedia,
+    newFollowers,
+  });
 });
 
 // GET /api/social/followers/:userId — followers of a user
