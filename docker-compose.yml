@@ -35,15 +35,15 @@ services:
       - app
 
   # ─── Cloudflare Tunnel ───────────────────────────────────────────────────────
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   container_name: volleyapp-tunnel
-  #   restart: unless-stopped
-  #   command: tunnel --no-autoupdate run
-  #   environment:
-  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-  #   depends_on:
-  #     - nginx
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: volleyapp-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
 
 volumes:
   uploads:
