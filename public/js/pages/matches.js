@@ -379,7 +379,8 @@ async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
-        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, true, myTeams);
+        // Use the already-resolved _matchingTeam so uploads get the right team_id
+        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, true, m._matchingTeam ? [m._matchingTeam] : myTeams);
       });
     });
 
@@ -464,12 +465,25 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       });
     });
 
+    // Pre-resolve which of the user's teams each match belongs to
+    sorted.forEach(m => {
+      if (m._matchingTeam) return;
+      const found = (Array.isArray(myTeams) ? myTeams : []).find(t => {
+        const n = (t.display_name || '').toLowerCase();
+        if (!n) return false;
+        const h = (m.home_team || '').toLowerCase();
+        const a = (m.away_team || '').toLowerCase();
+        return h === n || a === n || h.endsWith(n) || a.endsWith(n) || h.includes(n) || a.includes(n);
+      });
+      if (found) m._matchingTeam = found;
+    });
+
     // Card click → detail
     listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
         if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
-        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, canInteractFor(m), myTeams);
+        if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, canInteractFor(m), m._matchingTeam ? [m._matchingTeam] : myTeams);
       });
     });
 
@@ -849,12 +863,17 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
   }
 
   if (canInteract) {
-    // Determine which of the user's teams is playing in this match
-    const matchingTeam = myTeams.find(t => {
-      const dn = (t.display_name || '').toLowerCase();
-      return (match.home_team || '').toLowerCase().includes(dn)
-          || (match.away_team || '').toLowerCase().includes(dn);
-    }) || myTeams[0] || null;
+    // Determine which of the user's teams is playing in this match.
+    // Prefer _matchingTeam already resolved by the list view; fall back to name matching.
+    // Do NOT fall back to myTeams[0] — that would store the wrong team for multi-team users.
+    const matchingTeam = (match._matchingTeam && myTeams.find(t => t.id === match._matchingTeam.id))
+      || myTeams.find(t => {
+          const dn = (t.display_name || '').toLowerCase();
+          if (!dn || dn.length < 3) return false;
+          return (match.home_team || '').toLowerCase().includes(dn)
+              || (match.away_team || '').toLowerCase().includes(dn);
+        })
+      || null;
     const uploadTeamId = matchingTeam?.id || null;
 
     document.getElementById('photo-btn')?.addEventListener('click', () => {
