@@ -52,7 +52,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
     <div class="rv-style-picker" id="rv-style-picker">
       <button class="rv-style-btn rv-style-btn--active" data-style="blur" title="Blur">🙈</button>
-      <button class="rv-style-btn" data-style="pixel" title="Pixel">🔲</button>
+      <button class="rv-style-btn" data-style="love" title="Hartjesogen">😍</button>
       <button class="rv-style-btn" data-style="heart" title="Hart">❤️</button>
       <button class="rv-style-btn" data-style="smile" title="Smile">😊</button>
       <button class="rv-style-btn" data-style="star" title="Ster">⭐</button>
@@ -111,9 +111,12 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   function positionStylePicker() {
     const btnRect     = revertBtn.getBoundingClientRect();
     const overlayRect = overlay.getBoundingClientRect();
+    // Align vertically with the blur button centre
     stylePicker.style.top       = (btnRect.top - overlayRect.top + btnRect.height / 2) + 'px';
-    stylePicker.style.right     = (overlayRect.right - btnRect.left + 8) + 'px';
-    stylePicker.style.transform = 'translateX(80px) translateY(-50%)';
+    stylePicker.style.right     = '';
+    // Position so the right edge of the picker sits 12px left of the blur button
+    stylePicker.style.left      = (btnRect.left - overlayRect.left - 12) + 'px';
+    stylePicker.style.transform = 'translateX(-100%) translateY(-50%)';
   }
 
   async function enterBlurMode(m) {

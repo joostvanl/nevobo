@@ -258,6 +258,20 @@ function makeStickerSvg(style, w, h) {
       `</svg>`
     );
   }
+  if (style === 'love') {
+    // Smiley face with heart-shaped eyes
+    return Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}">` +
+      `<circle cx="50" cy="50" r="48" fill="#f1c40f" stroke="#d4ac0d" stroke-width="2"/>` +
+      // Left heart eye
+      `<path d="M35 44 C35 44 24 37 24 30 C24 25 28 22 32 22 C33.5 22 35 23.5 35 23.5 C35 23.5 36.5 22 38 22 C42 22 46 25 46 30 C46 37 35 44 35 44Z" fill="#e74c3c"/>` +
+      // Right heart eye
+      `<path d="M65 44 C65 44 54 37 54 30 C54 25 58 22 62 22 C63.5 22 65 23.5 65 23.5 C65 23.5 66.5 22 68 22 C72 22 76 25 76 30 C76 37 65 44 65 44Z" fill="#e74c3c"/>` +
+      // Smile
+      `<path d="M28 62 Q50 82 72 62" stroke="#2c3e50" stroke-width="5" fill="none" stroke-linecap="round"/>` +
+      `</svg>`
+    );
+  }
   if (style === 'smile') {
     return Buffer.from(
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}">` +
@@ -281,7 +295,7 @@ function makeStickerSvg(style, w, h) {
 
 /**
  * Applies per-region effects to the given bounding-box regions.
- * Supports styles: 'blur' (default), 'pixel', 'heart', 'smile', 'star'.
+ * Supports styles: 'blur' (default), 'pixel', 'heart', 'love', 'smile', 'star'.
  * Saves a .orig backup before overwriting. Returns true on success.
  * @param {string} absoluteFilePath
  * @param {Array<{x,y,width,height,style?}>} regions — in EXIF-rotated pixel space
@@ -308,7 +322,7 @@ async function applyBlurRegions(absoluteFilePath, regions) {
       const style = box.style || 'blur';
 
       // Sticker styles: composite an SVG directly over the face region
-      if (style === 'heart' || style === 'smile' || style === 'star') {
+      if (style === 'heart' || style === 'love' || style === 'smile' || style === 'star') {
         const svgBuf = makeStickerSvg(style, w, h);
         if (!svgBuf) return null;
         return { input: svgBuf, left, top };
@@ -379,12 +393,14 @@ async function applyBlurRegions(absoluteFilePath, regions) {
     } else {
       // No composites to apply — just normalise EXIF rotation and save
       if (!fs.existsSync(origPath)) fs.copyFileSync(absoluteFilePath, origPath);
+      if (fs.existsSync(absoluteFilePath)) fs.unlinkSync(absoluteFilePath);
       fs.copyFileSync(normPath, absoluteFilePath);
       fs.unlinkSync(normPath);
       return false;
     }
     // Only save .orig on the very first blur (don't overwrite with an already-blurred version)
     if (!fs.existsSync(origPath)) fs.copyFileSync(absoluteFilePath, origPath);
+    if (fs.existsSync(absoluteFilePath)) fs.unlinkSync(absoluteFilePath);
     fs.copyFileSync(tmpPath, absoluteFilePath);
     fs.unlinkSync(tmpPath);
     return true;
@@ -446,6 +462,7 @@ function getOriginalBackupPath(absoluteFilePath) {
 function revertBlur(absoluteFilePath) {
   const origPath = absoluteFilePath + '.orig';
   if (!fs.existsSync(origPath)) return false;
+  if (fs.existsSync(absoluteFilePath)) fs.unlinkSync(absoluteFilePath);
   fs.copyFileSync(origPath, absoluteFilePath);
   // Keep the .orig backup intact so we can always revert again
   console.log(`[faceBlur] Reverted blur for ${path.basename(absoluteFilePath)}`);

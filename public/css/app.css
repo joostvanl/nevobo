@@ -2670,15 +2670,15 @@ img.hl-avatar {
   flex-direction: row;
   gap: 8px;
   align-items: center;
-  transform: translateX(80px) translateY(-50%);
   opacity: 0;
   pointer-events: none;
-  transition: transform 0.28s cubic-bezier(.4,0,.2,1), opacity 0.2s;
+  transition: opacity 0.2s, clip-path 0.28s cubic-bezier(.4,0,.2,1);
+  clip-path: inset(0 0 0 100%);
 }
 .rv-style-picker--visible {
-  transform: translateX(0) translateY(-50%);
   opacity: 1;
   pointer-events: auto;
+  clip-path: inset(0 0 0 0%);
 }
 .rv-style-btn {
   background: rgba(30,30,30,0.7);
