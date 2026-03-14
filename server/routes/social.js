@@ -4,7 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const db = require('../db/db');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
 const sharp = require('sharp');
 const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
@@ -826,7 +826,42 @@ router.get('/media-feed', verifyToken, (req, res) => {
   res.json({ ok: true, media });
 });
 
-// GET /api/social/followers/:userId — followers of a user
+// GET /api/social/team-media/:teamId — media for a specific team (public, no auth required)
+router.get('/team-media/:teamId', optionalToken, (req, res) => {
+  const teamId = parseInt(req.params.teamId);
+  const limit  = Math.min(parseInt(req.query.limit)  || 20, 50);
+  const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+  const userId = req.user?.id || null;
+
+  const media = db.prepare(`
+    SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
+      (SELECT COUNT(*) FROM media_likes ml  WHERE ml.media_id  = mm.id) AS like_count,
+      (SELECT COUNT(*) FROM media_views mv  WHERE mv.media_id  = mm.id) AS view_count,
+      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
+      (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
+      COALESCE(t.display_name, cl.name) AS team_name,
+      cl.name AS club_name_media
+    FROM match_media mm
+    LEFT JOIN users u ON u.id = mm.user_id
+    LEFT JOIN posts p ON p.id = mm.post_id
+    LEFT JOIN teams t ON t.id = p.team_id
+    LEFT JOIN clubs cl ON cl.id = p.club_id
+    WHERE p.team_id = ?
+       OR (
+         mm.match_id IS NOT NULL
+         AND mm.match_id IN (
+           SELECT DISTINCT p2.match_id FROM posts p2
+           WHERE p2.team_id = ? AND p2.match_id IS NOT NULL
+         )
+       )
+    ORDER BY mm.created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(userId, teamId, teamId, limit, offset);
+
+  res.json({ ok: true, media });
+});
+
+
 router.get('/followers/:userId', (req, res) => {
   const followers = db.prepare(`
     SELECT uf.*, u.name, u.avatar_url, u.level FROM user_follows uf

@@ -334,6 +334,7 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
         <button class="hm-reel-more" onclick="navigate('social')">Alle media →</button>
       </div>
       <div class="hm-reel" id="hm-reel-track">
+        <div class="hm-reel-spacer"></div>
         ${recentMedia.map((m, i) => `
           <div class="hm-reel-card" data-index="${i}">
             ${m.file_type === 'video'
@@ -349,6 +350,7 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
               </div>
             </div>
           </div>`).join('')}
+        <div class="hm-reel-spacer"></div>
       </div>
     </div>`;
 

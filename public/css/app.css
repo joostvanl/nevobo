@@ -1304,6 +1304,8 @@ p  { line-height: 1.6; }
 }
 
 /* ─── Team page ───────────────────────────────────────────────────────────────── */
+/* ── Nevobo lazy-load skeleton removed — uses .spinner instead ── */
+
 .team-hero {
   background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 55%, var(--accent) 100%);
   color: #fff;
@@ -2480,12 +2482,16 @@ img.hl-avatar {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  scroll-snap-type: x mandatory;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 0 0.85rem 0.5rem;
+  padding: 0.85rem 0 0.5rem 0;
 }
 .hm-reel::-webkit-scrollbar { display: none; }
+.hm-reel-spacer {
+  flex-shrink: 0;
+  width: 0.85rem;
+  scroll-snap-align: none;
+}
 
 .hm-reel-card {
   position: relative;
@@ -2496,7 +2502,6 @@ img.hl-avatar {
   border-radius: 16px;
   overflow: hidden;
   background: #111;
-  scroll-snap-align: start;
   cursor: pointer;
   box-shadow: 0 4px 18px rgba(0,0,0,0.18);
   transition: transform 0.15s;

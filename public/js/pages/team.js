@@ -1,4 +1,5 @@
 import { api, state, renderAvatar, renderClubLogo, formatDate, formatTime, showToast, navigate } from '../app.js';
+import { openReelViewer } from '../reel-viewer.js';
 
 /**
  * Params:
@@ -22,33 +23,30 @@ export async function render(container, params = {}) {
     }
 
     const { team, club, members, followerCount, isOwnTeam } = data;
-    let { isFollowing } = data;
+    const { isFollowing } = data;
 
-    // Use team-by-name so we get full results across all registered clubs
-    let teamData;
-    try {
-      const q = `name=${encodeURIComponent(team.display_name)}&code=${encodeURIComponent(club.nevobo_code)}${userId ? '&userId=' + userId : ''}`;
-      teamData = await api(`/api/nevobo/team-by-name?${q}`);
-    } catch (_) {
-      teamData = { schedule: [], results: [], wins: 0, losses: 0, draws: 0 };
-    }
-
+    // Render immediately with DB data — Nevobo loads lazily
     renderPage(container, {
       displayName: team.display_name,
       clubName: club.name,
       nevoboCode: club.nevobo_code,
-      homeAddress: deriveHomeAddress(team.display_name, teamData.schedule || [], teamData.results || []) || club.home_address || null,
+      homeAddress: club.home_address || null,
       members,
       followerCount,
       isOwnTeam,
       isFollowing,
-      schedule: (teamData.schedule || []).slice(0, 5),
-      results:  (teamData.results  || []),
-      wins: teamData.wins, losses: teamData.losses, draws: teamData.draws,
-      pouleCodes: teamData.pouleCodes || [],
+      schedule: null,   // null = still loading
+      results:  null,
+      wins: null, losses: null, draws: null,
       teamId: team.id,
       teamName: null,
     });
+
+    // Fetch Nevobo data in background and fill in placeholders
+    const q = `name=${encodeURIComponent(team.display_name)}&code=${encodeURIComponent(club.nevobo_code)}${userId ? '&userId=' + userId : ''}`;
+    api(`/api/nevobo/team-by-name?${q}`)
+      .then(teamData => fillNevoboData(container, teamData, team.display_name, club.nevobo_code))
+      .catch(() => fillNevoboData(container, null, team.display_name, club.nevobo_code));
     return;
   }
 
@@ -80,8 +78,6 @@ export async function render(container, params = {}) {
     schedule: (data.schedule || []).slice(0, 5),
     results:  (data.results  || []),
     wins: data.wins, losses: data.losses, draws: data.draws,
-    pouleCodes: data.pouleCodes || [],
-    // For follow: prefer DB id, otherwise use name+code
     teamId: data.dbTeam?.id || null,
     teamName: data.dbTeam ? null : teamName,
     clubNameForFollow: data.dbTeam?.club_name || effectiveCode,
@@ -92,16 +88,22 @@ export async function render(container, params = {}) {
 function renderPage(container, opts) {
   const {
     displayName, clubName, members, followerCount,
-    isOwnTeam, schedule, results, wins, losses, draws,
+    isOwnTeam,
     nevoboCode, clubNameForFollow, pouleCodes = [],
     homeAddress = null,
   } = opts;
   let { isFollowing, teamId, teamName } = opts;
 
-  const initials = displayName.split(/\s+/)
-    .filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  const loading = opts.schedule === null;
+  const schedule = opts.schedule || [];
+  const results  = opts.results  || [];
+  const wins     = opts.wins     || 0;
+  const losses   = opts.losses   || 0;
+  const draws    = opts.draws    || 0;
 
   const totalPlayed = wins + losses + draws;
+
+  const nevoboSkeleton = `<div class="spinner"></div>`;
 
   container.innerHTML = `
     <div class="team-hero">
@@ -137,65 +139,83 @@ function renderPage(container, opts) {
       </div>
     </div>
 
+    <!-- Team media reel — loads async, shown before other content -->
+    <div id="team-media"></div>
+
     <div class="container">
 
-      <!-- Season record -->
-      ${totalPlayed > 0 ? `
-        <div class="card mb-3">
-          <div class="card-header"><h3>📊 Seizoensrecord</h3></div>
-          <div class="card-body">
-            <div class="team-record">
-              <div class="record-item win">
-                <div class="record-num">${wins}</div>
-                <div class="record-lbl">Gewonnen</div>
-              </div>
-              <div class="record-divider"></div>
-              <div class="record-item loss">
-                <div class="record-num">${losses}</div>
-                <div class="record-lbl">Verloren</div>
-              </div>
-              ${draws > 0 ? `
+      <!-- Season record — skeleton while loading -->
+      <div id="team-record">
+        ${loading ? `
+          <div class="card mb-3">
+            <div class="card-header"><h3>📊 Seizoensrecord</h3></div>
+            <div class="card-body">${nevoboSkeleton}</div>
+          </div>` : totalPlayed > 0 ? `
+          <div class="card mb-3">
+            <div class="card-header"><h3>📊 Seizoensrecord</h3></div>
+            <div class="card-body">
+              <div class="team-record">
+                <div class="record-item win">
+                  <div class="record-num">${wins}</div>
+                  <div class="record-lbl">Gewonnen</div>
+                </div>
                 <div class="record-divider"></div>
-                <div class="record-item draw">
-                  <div class="record-num">${draws}</div>
-                  <div class="record-lbl">Gelijk</div>
-                </div>` : ''}
+                <div class="record-item loss">
+                  <div class="record-num">${losses}</div>
+                  <div class="record-lbl">Verloren</div>
+                </div>
+                ${draws > 0 ? `
+                  <div class="record-divider"></div>
+                  <div class="record-item draw">
+                    <div class="record-num">${draws}</div>
+                    <div class="record-lbl">Gelijk</div>
+                  </div>` : ''}
+              </div>
             </div>
-          </div>
-        </div>
-      ` : ''}
+          </div>` : ''}
+      </div>
 
-      <!-- Poule standings — loaded async -->
-      <div id="poule-stands"></div>
-
-      <!-- Upcoming matches -->
+      <!-- Upcoming matches — skeleton while loading -->
       <div class="card mb-3">
-        <div class="card-header"><h3>📅 Aankomende wedstrijden</h3></div>
+        <div class="card-header">
+          <h3>📅 Aankomende wedstrijden</h3>
+        </div>
         <div class="card-body" style="padding:0" id="schedule-list">
-          ${schedule.length === 0
-            ? `<p class="text-muted text-small" style="padding:1rem">Geen geplande wedstrijden gevonden.</p>`
-            : schedule.map((m, i) => renderCompactMatch(m, false, displayName, nevoboCode, i)).join('')}
+          ${loading ? nevoboSkeleton
+            : schedule.length === 0
+              ? `<p class="text-muted text-small" style="padding:1rem">Geen geplande wedstrijden gevonden.</p>`
+              : schedule.map((m, i) => renderCompactMatch(m, false, displayName, nevoboCode, i)).join('')}
         </div>
       </div>
 
-      <!-- Results — show all, collapsible after 5 -->
+      <!-- Results — skeleton while loading -->
       <div class="card mb-3">
         <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-          <h3>🏐 Uitslagen (${results.length})</h3>
-          ${!isOwnTeam ? `<span class="chip chip-secondary" style="font-size:0.65rem" title="Gebaseerd op clubs die ook deze app gebruiken">geregistreerde clubs</span>` : ''}
+          <h3 id="results-header">🏐 Uitslagen${loading ? '' : ` (${results.length})`}</h3>
+          ${!loading && !isOwnTeam ? `<span class="chip chip-secondary" style="font-size:0.65rem" title="Gebaseerd op clubs die ook deze app gebruiken">geregistreerde clubs</span>` : ''}
         </div>
-        <div class="card-body" style="padding:0">
-          ${results.length === 0
-            ? `<p class="text-muted text-small" style="padding:1rem">Nog geen resultaten gevonden${isOwnTeam ? '' : ' — dit team heeft nog niet gespeeld tegen andere clubs in de app'}.</p>`
-            : results.slice(0, 5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')
-          }
-          ${results.length > 5 ? `
+        <div class="card-body" style="padding:0" id="results-list">
+          ${loading ? nevoboSkeleton
+            : results.length === 0
+              ? `<p class="text-muted text-small" style="padding:1rem">Nog geen resultaten gevonden${isOwnTeam ? '' : ' — dit team heeft nog niet gespeeld tegen andere clubs in de app'}.</p>`
+              : results.slice(0, 5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
+          ${!loading && results.length > 5 ? `
             <div id="results-more" style="display:none">
               ${results.slice(5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
             </div>
             <button id="results-toggle" class="btn btn-ghost btn-sm" style="width:100%;padding:0.6rem;border-top:1px solid var(--border);border-radius:0">
               Toon alle ${results.length} uitslagen ↓
             </button>` : ''}
+        </div>
+      </div>
+
+      <!-- Poule standings — loaded async, shown between results and members -->
+      <div id="poule-stands">
+        <div class="card mb-3">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <h3>🏆 Competitiestand</h3>
+            <div class="spinner" style="width:16px;height:16px;border-width:2px"></div>
+          </div>
         </div>
       </div>
 
@@ -261,15 +281,19 @@ function renderPage(container, opts) {
     });
   });
 
+  // ── Load team media async ──────────────────────────────────────────────────
+  console.log('[team-media] opts.teamId=', opts.teamId);
+  if (opts.teamId) {
+    loadTeamMedia(opts.teamId, displayName, nevoboCode);
+  } else {
+    // No DB team id — hide the media placeholder
+    const mediaEl = document.getElementById('team-media');
+    if (mediaEl) mediaEl.remove();
+  }
+
   // ── Load poule standings async ─────────────────────────────────────────────
   const standsEl = document.getElementById('poule-stands');
   if (standsEl && nevoboCode) {
-    standsEl.innerHTML = `
-      <div class="card mb-3">
-        <div class="card-header"><h3>🏆 Competitiestand</h3></div>
-        <div class="card-body"><div class="spinner"></div></div>
-      </div>`;
-
     (async () => {
       try {
         const q = `teamName=${encodeURIComponent(displayName)}&nevoboCode=${encodeURIComponent(nevoboCode)}`;
@@ -404,6 +428,198 @@ function renderPage(container, opts) {
         btn.disabled = false;
       }
     });
+  }
+}
+
+// ─── Fill Nevobo placeholders after lazy load ─────────────────────────────────
+function fillNevoboData(container, teamData, displayName, nevoboCode) {
+  const schedule = (teamData?.schedule || []).slice(0, 5);
+  const results  = teamData?.results  || [];
+  const wins     = teamData?.wins     || 0;
+  const losses   = teamData?.losses   || 0;
+  const draws    = teamData?.draws    || 0;
+  const totalPlayed = wins + losses + draws;
+  const isOwnTeam = container.querySelector('.team-own-badge') !== null;
+
+  // Season record
+  const recordEl = container.querySelector('#team-record');
+  if (recordEl) {
+    if (totalPlayed > 0) {
+      recordEl.innerHTML = `
+        <div class="card mb-3">
+          <div class="card-header"><h3>📊 Seizoensrecord</h3></div>
+          <div class="card-body">
+            <div class="team-record">
+              <div class="record-item win">
+                <div class="record-num">${wins}</div>
+                <div class="record-lbl">Gewonnen</div>
+              </div>
+              <div class="record-divider"></div>
+              <div class="record-item loss">
+                <div class="record-num">${losses}</div>
+                <div class="record-lbl">Verloren</div>
+              </div>
+              ${draws > 0 ? `
+                <div class="record-divider"></div>
+                <div class="record-item draw">
+                  <div class="record-num">${draws}</div>
+                  <div class="record-lbl">Gelijk</div>
+                </div>` : ''}
+            </div>
+          </div>
+        </div>`;
+    } else {
+      recordEl.innerHTML = '';
+    }
+  }
+
+  // Schedule
+  const scheduleHeader = container.querySelector('#schedule-list')?.previousElementSibling;
+  if (scheduleHeader) {
+    const spinner = scheduleHeader.querySelector('.spinner');
+    if (spinner) spinner.remove();
+  }
+  const scheduleList = container.querySelector('#schedule-list');
+  if (scheduleList) {
+    scheduleList.innerHTML = schedule.length === 0
+      ? `<p class="text-muted text-small" style="padding:1rem">Geen geplande wedstrijden gevonden.</p>`
+      : schedule.map((m, i) => renderCompactMatch(m, false, displayName, nevoboCode, i)).join('');
+
+    // Re-attach match row click handlers for new schedule rows
+    scheduleList.querySelectorAll('.compact-match-row.clickable-row').forEach(row => {
+      row.addEventListener('click', () => {
+        navigate('matches', { matchId: row.dataset.matchId, teamName: row.dataset.teamName, nevoboCode: row.dataset.nevoboCode });
+      });
+    });
+
+    // Load meetup times if own team
+    if (isOwnTeam && schedule.length > 0) {
+      const homeAddress = deriveHomeAddress(displayName, schedule, results);
+      loadMeetupTimes(scheduleList, schedule, displayName, homeAddress);
+    }
+  }
+
+  // Results
+  const resultsHeader = container.querySelector('#results-header');
+  if (resultsHeader) resultsHeader.textContent = `🏐 Uitslagen (${results.length})`;
+
+  const resultsHeaderRow = resultsHeader?.closest('.card-header');
+  if (resultsHeaderRow) {
+    const spinner = resultsHeaderRow.querySelector('.spinner');
+    if (spinner) spinner.remove();
+    if (!isOwnTeam && results.length > 0) {
+      resultsHeaderRow.insertAdjacentHTML('beforeend',
+        `<span class="chip chip-secondary" style="font-size:0.65rem" title="Gebaseerd op clubs die ook deze app gebruiken">geregistreerde clubs</span>`);
+    }
+  }
+
+  const resultsList = container.querySelector('#results-list');
+  if (resultsList) {
+    resultsList.innerHTML = results.length === 0
+      ? `<p class="text-muted text-small" style="padding:1rem">Nog geen resultaten gevonden${isOwnTeam ? '' : ' — dit team heeft nog niet gespeeld tegen andere clubs in de app'}.</p>`
+      : results.slice(0, 5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('');
+
+    if (results.length > 5) {
+      resultsList.insertAdjacentHTML('beforeend', `
+        <div id="results-more" style="display:none">
+          ${results.slice(5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
+        </div>
+        <button id="results-toggle" class="btn btn-ghost btn-sm" style="width:100%;padding:0.6rem;border-top:1px solid var(--border);border-radius:0">
+          Toon alle ${results.length} uitslagen ↓
+        </button>`);
+
+      document.getElementById('results-toggle')?.addEventListener('click', () => {
+        const more = document.getElementById('results-more');
+        const btn  = document.getElementById('results-toggle');
+        const expanded = more.style.display !== 'none';
+        more.style.display = expanded ? 'none' : '';
+        btn.textContent = expanded ? `Toon alle ${results.length} uitslagen ↓` : 'Minder tonen ↑';
+      });
+    }
+
+    resultsList.querySelectorAll('.compact-match-row.clickable-row').forEach(row => {
+      row.addEventListener('click', () => {
+        navigate('matches', { matchId: row.dataset.matchId, teamName: row.dataset.teamName, nevoboCode: row.dataset.nevoboCode });
+      });
+    });
+  }
+}
+
+// ─── Team media reel ──────────────────────────────────────────────────────────
+async function loadTeamMedia(teamId, displayName, nevoboCode) {
+  const el = document.getElementById('team-media');
+  console.log('[team-media] loadTeamMedia called, teamId=', teamId, 'el=', el);
+  if (!el) return;
+
+  try {
+    const data = await api(`/api/social/team-media/${teamId}?limit=20`);
+    const media = data.media || [];
+    console.log('[team-media] got', media.length, 'items');
+
+    if (!media.length) {
+      el.remove();
+      return;
+    }
+
+    const esc = s => (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    el.innerHTML = `
+      <div class="hm-reel-wrap">
+        <div class="hm-reel" id="team-reel-track">
+          <div class="hm-reel-spacer"></div>
+          ${media.map((m, i) => `
+            <div class="hm-reel-card" data-index="${i}">
+              ${m.file_type === 'video'
+                ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
+                   <div class="hm-reel-play-icon">▶</div>`
+                : `<img class="hm-reel-media" src="${esc(m.file_path)}" alt="Media" loading="lazy" />`}
+              <div class="hm-reel-gradient"></div>
+              <div class="hm-reel-info">
+                <div class="hm-reel-stats">
+                  ${m.like_count > 0 ? `<span>❤️ ${m.like_count}</span>` : ''}
+                  ${m.view_count > 0 ? `<span>👁 ${m.view_count}</span>` : ''}
+                </div>
+              </div>
+            </div>`).join('')}
+          <div class="hm-reel-spacer"></div>
+        </div>
+      </div>`;
+
+    const reelTrack = document.getElementById('team-reel-track');
+
+    // tap → open fullscreen viewer
+    reelTrack.querySelectorAll('.hm-reel-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const idx = parseInt(card.dataset.index);
+        const existingVideo = card.querySelector('video.hm-reel-media');
+        openReelViewer(media, idx, {
+          sourceVideo: existingVideo,
+          fetchMore: async (offset) => {
+            const d = await api(`/api/social/team-media/${teamId}?limit=20&offset=${offset}`);
+            return d.media || [];
+          },
+        });
+      });
+    });
+
+    // Auto-play videos in view
+    const videos = reelTrack.querySelectorAll('video.hm-reel-media');
+    if (videos.length) {
+      const obs = new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          const vid = e.target;
+          if (e.isIntersecting) {
+            vid.play().catch(() => {});
+            vid.closest('.hm-reel-card')?.querySelector('.hm-reel-play-icon')?.style.setProperty('display', 'none');
+          } else {
+            vid.pause();
+          }
+        });
+      }, { threshold: 0.6 });
+      videos.forEach(v => obs.observe(v));
+    }
+  } catch (_) {
+    el.remove();
   }
 }
 

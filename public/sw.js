@@ -1,4 +1,4 @@
-const CACHE_NAME = 'volleyapp-v89';
+const CACHE_NAME = 'volleyapp-v99';
 const STATIC_ASSETS = [
   '/',
   '/css/app.css',
@@ -27,10 +27,27 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (event.request.url.includes('/api/')) return;
 
+  // For JS and CSS: network-first so code changes are always picked up immediately
+  const url = event.request.url;
+  const isAsset = url.includes('/js/') || url.includes('/css/') || url.endsWith('.js') || url.endsWith('.css');
+
+  if (isAsset) {
+    event.respondWith(
+      fetch(event.request).then(resp => {
+        if (resp.status === 200 && resp.type !== 'opaque') {
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // For everything else: stale-while-revalidate
   event.respondWith(
     caches.match(event.request).then(cached => {
       const fetchPromise = fetch(event.request).then(resp => {
-        // Only cache full responses — skip partial (206), opaque, or error responses
         if (resp.status === 200 && resp.type !== 'opaque') {
           const clone = resp.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
