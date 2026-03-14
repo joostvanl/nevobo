@@ -150,17 +150,19 @@ router.get('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => {
   res.json({ ok: true, members, team });
 });
 
-// POST /api/admin/teams/:teamId/members — add by email
+// POST /api/admin/teams/:teamId/members — add by userId or email
 router.post('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => {
   const teamId = parseInt(req.params.teamId);
-  const { email, membership_type = 'player' } = req.body;
-  if (!email) return res.status(400).json({ ok: false, error: 'E-mailadres is verplicht' });
+  const { email, userId, membership_type = 'player' } = req.body;
+  if (!email && !userId) return res.status(400).json({ ok: false, error: 'userId of e-mailadres is verplicht' });
   if (!['player', 'coach', 'staff', 'parent'].includes(membership_type)) {
     return res.status(400).json({ ok: false, error: 'Ongeldig lidmaatschapstype' });
   }
 
-  const user = db.prepare('SELECT id, name, email, avatar_url FROM users WHERE email = ?').get(email.trim().toLowerCase());
-  if (!user) return res.status(404).json({ ok: false, error: 'Geen gebruiker gevonden met dit e-mailadres' });
+  const user = userId
+    ? db.prepare('SELECT id, name, email, avatar_url FROM users WHERE id = ?').get(parseInt(userId))
+    : db.prepare('SELECT id, name, email, avatar_url FROM users WHERE email = ?').get(email.trim().toLowerCase());
+  if (!user) return res.status(404).json({ ok: false, error: 'Geen gebruiker gevonden' });
 
   try {
     db.prepare(

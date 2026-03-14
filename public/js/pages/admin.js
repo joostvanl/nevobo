@@ -227,7 +227,7 @@ async function renderTeamAdminTab(panel, teamId) {
         </div>`).join('')}`;
 
     panel.querySelector('#add-member-btn').addEventListener('click', () => {
-      showAddMemberModal(teamId, () => renderTeamAdminTab(panel, teamId));
+      showAddMemberModal(teamId, team.club_id, () => renderTeamAdminTab(panel, teamId));
     });
 
     panel.querySelectorAll('.edit-member-btn').forEach(btn => {
@@ -444,16 +444,18 @@ function showAddTeamAdminModal(clubId, teams, onSuccess) {
   });
 }
 
-function showAddMemberModal(teamId, onSuccess) {
+function showAddMemberModal(teamId, clubId, onSuccess) {
   const overlay = document.createElement('div');
   overlay.className = 'badge-unlock-overlay';
   overlay.innerHTML = `
     <div class="badge-unlock-card" style="max-width:360px">
       <h3 style="margin-bottom:1rem">Teamlid toevoegen</h3>
       <div class="form-group">
-        <label class="form-label">E-mailadres</label>
-        <input type="email" id="member-email" class="form-input" placeholder="naam@voorbeeld.nl" />
+        <label class="form-label">Zoek op naam</label>
+        <input type="text" id="member-search" class="form-input" placeholder="Begin met typen…" autocomplete="off" />
+        <div id="member-suggestions" style="margin-top:4px;border:1px solid var(--border);border-radius:8px;overflow:hidden;display:none;max-height:200px;overflow-y:auto;background:var(--card-bg)"></div>
       </div>
+      <div id="member-selected" style="display:none;padding:0.5rem 0.75rem;background:var(--bg-subtle,#f5f5f5);border-radius:8px;margin-bottom:0.5rem;font-size:0.9rem"></div>
       <div class="form-group">
         <label class="form-label">Rol</label>
         <select id="member-type" class="form-input">
@@ -465,17 +467,70 @@ function showAddMemberModal(teamId, onSuccess) {
       </div>
       <div class="flex gap-2 mt-3">
         <button class="btn btn-secondary" style="flex:1" id="m-cancel">Annuleren</button>
-        <button class="btn btn-primary" style="flex:1" id="m-confirm">Toevoegen</button>
+        <button class="btn btn-primary" style="flex:1" id="m-confirm" disabled>Toevoegen</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  let selectedUserId = null;
+  let debounceTimer = null;
+
+  const searchInput   = overlay.querySelector('#member-search');
+  const suggestions   = overlay.querySelector('#member-suggestions');
+  const selectedBox   = overlay.querySelector('#member-selected');
+  const confirmBtn    = overlay.querySelector('#m-confirm');
+
+  function selectUser(user) {
+    selectedUserId = user.id;
+    searchInput.value = user.name;
+    suggestions.style.display = 'none';
+    selectedBox.textContent = `${user.name} (${user.email})`;
+    selectedBox.style.display = 'block';
+    confirmBtn.disabled = false;
+  }
+
+  searchInput.addEventListener('input', () => {
+    selectedUserId = null;
+    confirmBtn.disabled = true;
+    selectedBox.style.display = 'none';
+    clearTimeout(debounceTimer);
+    const q = searchInput.value.trim();
+    if (q.length < 2) { suggestions.style.display = 'none'; return; }
+    debounceTimer = setTimeout(async () => {
+      try {
+        const data = await api(`/api/admin/clubs/${clubId}/users?q=${encodeURIComponent(q)}`);
+        const users = data.users || [];
+        if (!users.length) {
+          suggestions.innerHTML = '<div style="padding:0.5rem 0.75rem;color:var(--text-muted);font-size:0.85rem">Geen resultaten</div>';
+        } else {
+          suggestions.innerHTML = users.map(u => `
+            <div class="member-suggestion-item" data-id="${u.id}" data-name="${escAttr(u.name)}" data-email="${escAttr(u.email)}"
+              style="padding:0.5rem 0.75rem;cursor:pointer;display:flex;align-items:center;gap:0.5rem;border-bottom:1px solid var(--border)">
+              ${u.avatar_url ? `<img src="${escAttr(u.avatar_url)}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" />` : `<div style="width:28px;height:28px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:0.75rem">${escHtml(u.name.charAt(0))}</div>`}
+              <div><div style="font-size:0.9rem;font-weight:500">${escHtml(u.name)}</div><div style="font-size:0.75rem;color:var(--text-muted)">${escHtml(u.email)}</div></div>
+            </div>`).join('');
+        }
+        suggestions.style.display = 'block';
+        suggestions.querySelectorAll('.member-suggestion-item').forEach(item => {
+          item.addEventListener('mousedown', e => {
+            e.preventDefault();
+            selectUser({ id: +item.dataset.id, name: item.dataset.name, email: item.dataset.email });
+          });
+        });
+      } catch (_) {}
+    }, 220);
+  });
+
+  searchInput.addEventListener('blur', () => {
+    setTimeout(() => { suggestions.style.display = 'none'; }, 150);
+  });
+
   overlay.querySelector('#m-cancel').addEventListener('click', () => overlay.remove());
   overlay.querySelector('#m-confirm').addEventListener('click', async () => {
-    const email = overlay.querySelector('#member-email').value.trim();
+    if (!selectedUserId) { showToast('Selecteer eerst een persoon', 'error'); return; }
     const membership_type = overlay.querySelector('#member-type').value;
-    if (!email) { showToast('Voer een e-mailadres in', 'error'); return; }
     try {
-      await api(`/api/admin/teams/${teamId}/members`, { method: 'POST', body: { email, membership_type } });
+      await api(`/api/admin/teams/${teamId}/members`, { method: 'POST', body: { userId: selectedUserId, membership_type } });
       overlay.remove();
       showToast('Lid toegevoegd', 'success');
       onSuccess();
