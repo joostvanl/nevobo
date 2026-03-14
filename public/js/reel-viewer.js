@@ -33,6 +33,13 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   let allLoaded   = !fetchMore;   // true when no more items to fetch
   let loadingMore = false;
 
+  // Blur editor state
+  let blurMode       = false;
+  let selectedStyle  = 'blur';
+  let detectedFaces  = [];
+  let blurCanvas     = null;
+  let blurLoading    = false;
+
   const overlay = document.createElement('div');
   overlay.className = 'rv-overlay';
   overlay.innerHTML = `
@@ -41,6 +48,14 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     <div class="rv-frame">
       <button class="rv-close" aria-label="Sluiten">✕</button>
       <div class="rv-track" id="rv-track"></div>
+    </div>
+
+    <div class="rv-style-picker" id="rv-style-picker">
+      <button class="rv-style-btn rv-style-btn--active" data-style="blur" title="Blur">🙈</button>
+      <button class="rv-style-btn" data-style="pixel" title="Pixel">🔲</button>
+      <button class="rv-style-btn" data-style="heart" title="Hart">❤️</button>
+      <button class="rv-style-btn" data-style="smile" title="Smile">😊</button>
+      <button class="rv-style-btn" data-style="star" title="Ster">⭐</button>
     </div>
 
     <div class="rv-actions" id="rv-actions">
@@ -57,7 +72,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         <span class="rv-act-label" id="rv-view-count">0</span>
       </span>
       <button class="rv-delete-btn" id="rv-delete" style="display:none" title="Verwijderen">🗑</button>
-      <button class="rv-revert-btn" id="rv-revert" style="display:none" title="Blur aan/uit"></button>
+      <button class="rv-revert-btn" id="rv-revert" style="display:none" title="Blur editor">🙈</button>
       <button class="rv-mute-btn" id="rv-mute" style="display:none" title="Geluid aan/uit">🔊</button>
     </div>
 
@@ -88,7 +103,240 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   const deleteBtn  = overlay.querySelector('#rv-delete');
   const revertBtn  = overlay.querySelector('#rv-revert');
   const muteBtn    = overlay.querySelector('#rv-mute');
+  const stylePicker = overlay.querySelector('#rv-style-picker');
   let isMuted = false; // standaard: geluid aan
+
+  /* ─── Blur editor ─────────────────────────────────────────────────────── */
+
+  function positionStylePicker() {
+    const btnRect     = revertBtn.getBoundingClientRect();
+    const overlayRect = overlay.getBoundingClientRect();
+    stylePicker.style.top   = (btnRect.top - overlayRect.top + btnRect.height / 2) + 'px';
+    stylePicker.style.right = (overlayRect.right - btnRect.left + 8) + 'px';
+  }
+
+  async function enterBlurMode(m) {
+    if (!canRevertBlur || !canRevertBlur(m) || m.file_type !== 'image') return;
+    blurMode = true;
+    revertBtn.classList.add('rv-revert-btn--editing');
+    revertBtn.title = 'Sluit blur-editor';
+    overlay.classList.add('rv-blur-mode');
+    positionStylePicker();
+    stylePicker.classList.add('rv-style-picker--visible');
+
+    const slide = track.querySelector(`#rv-slide-${idx}`);
+    const img   = slide?.querySelector('img');
+    if (!img) return;
+
+    // Show loading state on canvas while detecting
+    showCanvasLoading(slide, img);
+
+    try {
+      const data = await api(`/api/social/media/${m.id}/detect-faces`);
+      detectedFaces = data.faces || [];
+      renderFaceOverlays(slide, img, detectedFaces, data.blurRegions || [], !!data.debugOverlay);
+      if (!data.debugOverlay) showToast('Tik op een gezicht om te blurren of ontblurren', 'info');
+    } catch (err) {
+      removeBlurCanvas();
+      showToast('Gezichtsdetectie mislukt', 'error');
+      exitBlurMode();
+    }
+  }
+
+  function exitBlurMode() {
+    blurMode = false;
+    revertBtn.classList.remove('rv-revert-btn--editing');
+    revertBtn.title = 'Blur editor';
+    overlay.classList.remove('rv-blur-mode');
+    stylePicker.classList.remove('rv-style-picker--visible');
+    removeBlurCanvas();
+    detectedFaces = [];
+  }
+
+  function removeBlurCanvas() {
+    if (blurCanvas) { blurCanvas.remove(); blurCanvas = null; }
+  }
+
+  function showCanvasLoading(slide, img) {
+    removeBlurCanvas();
+    const c = document.createElement('canvas');
+    c.className = 'rv-face-canvas rv-face-canvas--loading';
+    slide.appendChild(c);
+    c.width  = c.offsetWidth  || img.offsetWidth;
+    c.height = c.offsetHeight || img.offsetHeight;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.round(c.height * 0.035)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Gezichten detecteren…', c.width / 2, c.height / 2);
+    blurCanvas = c;
+  }
+
+  function renderFaceOverlays(slide, img, faces, blurRegions, debugOverlay = false) {
+    removeBlurCanvas();
+
+    const doRender = () => {
+      const c = document.createElement('canvas');
+      c.className = 'rv-face-canvas';
+      slide.appendChild(c);
+      c.width  = c.offsetWidth  || img.offsetWidth;
+      c.height = c.offsetHeight || img.offsetHeight;
+      blurCanvas = c;
+
+      const ctx    = c.getContext('2d');
+      const natW   = img.naturalWidth  || img.offsetWidth;
+      const natH   = img.naturalHeight || img.offsetHeight;
+      const canW   = c.width;
+      const canH   = c.height;
+      // object-fit: cover scale + offsets
+      const scale  = Math.max(canW / natW, canH / natH);
+      const xOff   = (natW * scale - canW) / 2;
+      const yOff   = (natH * scale - canH) / 2;
+
+      function toCanvas(ix, iy) {
+        return [ix * scale - xOff, iy * scale - yOff];
+      }
+
+      function isFaceBlurred(face) {
+        const fx = face.x + face.width  / 2;
+        const fy = face.y + face.height / 2;
+        return blurRegions.some(r => {
+          const rx = r.x + r.width  / 2;
+          const ry = r.y + r.height / 2;
+          return Math.hypot(fx - rx, fy - ry) < Math.max(face.width, face.height) * 0.45;
+        });
+      }
+
+      if (faces.length === 0) {
+        // Only show "no faces" message in debug mode; in production silently do nothing
+        if (debugOverlay) {
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.fillRect(0, 0, canW, canH);
+          ctx.fillStyle = '#fff';
+          ctx.font      = `${Math.round(canH * 0.03)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('Geen gezichten gevonden', canW / 2, canH / 2);
+        }
+        return;
+      }
+
+      if (debugOverlay) {
+        const EXPAND = 0.25;
+        faces.forEach((face) => {
+          const blurred = isFaceBlurred(face);
+          const padX = face.width  * EXPAND;
+          const padY = face.height * EXPAND;
+          const fx = face.x - padX;
+          const fy = face.y - padY;
+          const fw = face.width  + padX * 2;
+          const fh = face.height + padY * 2;
+
+          const [cx, cy] = toCanvas(fx + fw / 2, fy + fh / 2);
+          const rx = (fw / 2) * scale;
+          const ry = (fh / 2) * scale;
+
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, Math.max(3, rx), Math.max(3, ry), 0, 0, Math.PI * 2);
+          ctx.fillStyle   = blurred ? 'rgba(231,76,60,0.28)' : 'rgba(46,204,113,0.22)';
+          ctx.strokeStyle = blurred ? 'rgba(231,76,60,0.9)'  : 'rgba(46,204,113,0.9)';
+          ctx.fill();
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+
+          // Status dot at the top of the ellipse
+          const dotR = Math.max(6, Math.round(ry * 0.16));
+          ctx.beginPath();
+          ctx.arc(cx, cy - ry + dotR + 2, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = blurred ? '#e74c3c' : '#2ecc71';
+          ctx.fill();
+        });
+      }
+
+      // Click: find nearest face and toggle (always active regardless of debug)
+      c.addEventListener('click', async (e) => {
+        e.stopPropagation(); // prevent double-tap-to-like on the frame
+        if (blurLoading) return;
+        const rect   = c.getBoundingClientRect();
+        const canvasX = (e.clientX - rect.left) * (c.width  / rect.width);
+        const canvasY = (e.clientY - rect.top)  * (c.height / rect.height);
+        const imgX   = (canvasX + xOff) / scale;
+        const imgY   = (canvasY + yOff) / scale;
+
+        let bestIdx  = -1;
+        let bestDist = Infinity;
+        faces.forEach((face, i) => {
+          const d = Math.hypot(imgX - (face.x + face.width / 2), imgY - (face.y + face.height / 2));
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        });
+        if (bestIdx === -1) return;
+
+        const m = list[idx];
+        blurLoading = true;
+        c.style.cursor = 'wait';
+
+        // Show loading spinner on the slide (always, regardless of debugOverlay)
+        const slide2 = track.querySelector(`#rv-slide-${idx}`);
+        let spinner = slide2?.querySelector('.rv-blur-spinner');
+        if (!spinner && slide2) {
+          spinner = document.createElement('div');
+          spinner.className = 'rv-blur-spinner';
+          slide2.appendChild(spinner);
+        }
+
+        if (debugOverlay) {
+          // Dim the selected face while loading (debug only)
+          ctx.beginPath();
+          const face   = faces[bestIdx];
+          const EXPAND2 = 0.25;
+          const [cbx, cby] = toCanvas(
+            face.x + face.width  / 2,
+            face.y + face.height / 2
+          );
+          ctx.ellipse(cbx, cby, (face.width / 2 + face.width * EXPAND2) * scale, (face.height / 2 + face.height * EXPAND2) * scale, 0, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.fill();
+        }
+
+        try {
+          const data = await api(`/api/social/media/${m.id}/toggle-face-blur`, {
+            method: 'POST',
+            body: JSON.stringify({ faceIndex: bestIdx, style: selectedStyle }),
+          });
+          if (data.ok) {
+            // Reload image from server with cache-buster
+            const cacheBuster = '?t=' + Date.now();
+            const imgEl = slide.querySelector('img');
+            if (imgEl) imgEl.src = m.file_path.split('?')[0] + cacheBuster;
+            // Persist updated path on the list item so re-opening shows the latest version
+            m.file_path = m.file_path.split('?')[0] + cacheBuster;
+            // Redraw overlays with updated regions
+            blurRegions = data.regions || [];
+            renderFaceOverlays(slide, imgEl || img, faces, blurRegions, debugOverlay);
+            // Update blur state on item
+            m._blurred = blurRegions.length > 0;
+            updateRevertBtn(m);
+          }
+        } catch (err) {
+          showToast('Actie mislukt', 'error');
+          if (debugOverlay) renderFaceOverlays(slide, img, faces, blurRegions, debugOverlay);
+        } finally {
+          blurLoading = false;
+          c.style.cursor = 'crosshair';
+          spinner?.remove();
+        }
+      });
+    };
+
+    if (img.complete && img.naturalWidth) {
+      doRender();
+    } else {
+      img.addEventListener('load', doRender, { once: true });
+    }
+  }
 
   function buildSlides() {
     track.innerHTML = list.map((m, i) => `
@@ -177,6 +425,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   }
 
   function goTo(i, animate = true) {
+    // Exit blur editor when navigating away
+    if (blurMode) exitBlurMode();
     // Infinite wrap-around once all items are loaded
     if (allLoaded && list.length > 0) {
       if (i >= list.length) i = 0;
@@ -245,13 +495,14 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         && (m._teamHasAnon || m._blurred)) {
       revertBtn.style.display = 'flex';
       revertBtn.textContent = '🙈';
-      if (m._blurred) {
-        // Blur is active — icon full opacity
-        revertBtn.title = 'Toon origineel (blur verwijderen)';
+      if (blurMode) {
+        revertBtn.title = 'Sluit blur-editor';
+        revertBtn.classList.remove('rv-revert-btn--faded');
+      } else if (m._blurred) {
+        revertBtn.title = 'Blur editor openen';
         revertBtn.classList.remove('rv-revert-btn--faded');
       } else {
-        // Showing original — icon greyed out
-        revertBtn.title = 'Blur opnieuw toepassen';
+        revertBtn.title = 'Blur editor openen';
         revertBtn.classList.add('rv-revert-btn--faded');
       }
     } else {
@@ -315,33 +566,14 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
   async function revertCurrentBlur() {
     const m = list[idx];
-    const isBlurred = !!m._blurred;
-    const confirmMsg = isBlurred
-      ? 'Originele (ongeblurde) versie tonen? Anonieme personen worden dan zichtbaar.'
-      : 'Blur opnieuw toepassen op deze foto?';
-    if (!confirm(confirmMsg)) return;
-
-    revertBtn.disabled = true;
-    try {
-      if (isBlurred) {
-        const data = await api(`/api/social/media/${m.id}/revert-blur`, { method: 'POST' });
-        if (!data.ok) throw new Error(data.error || 'Herstel mislukt');
-        showToast('Originele versie zichtbaar', 'success');
-      } else {
-        const data = await api(`/api/social/media/${m.id}/reblur`, { method: 'POST' });
-        if (!data.ok) throw new Error(data.error || 'Blur mislukt');
-        showToast(data.blurred ? 'Blur opnieuw toegepast' : 'Geen gezicht gevonden — blur niet toegepast', data.blurred ? 'success' : 'warning');
-      }
-      // Reload image and re-fetch authoritative state from server
-      const slide = track.querySelector(`#rv-slide-${idx}`);
-      const img = slide?.querySelector('img');
-      if (img) img.src = m.file_path + '?t=' + Date.now();
-      // Always re-check real server state — don't trust local tracking
+    if (!blurMode) {
+      // Enter blur editor mode
+      await enterBlurMode(m);
+    } else {
+      // Exit blur editor mode
+      exitBlurMode();
+      // Re-sync button state from server after any changes made in editor
       refreshRevertState(m);
-    } catch (err) {
-      showToast(err.message || 'Actie mislukt', 'error');
-    } finally {
-      revertBtn.disabled = false;
     }
   }
 
@@ -382,6 +614,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   }
 
   function close() {
+    if (blurMode) exitBlurMode();
     track.querySelectorAll('video').forEach(v => v.pause());
     if (sourceVideo) {
       const reelCard = document.querySelector(`.hm-reel-card[data-index="${startIdx}"]`);
@@ -415,8 +648,9 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   updateMeta();
   recordView();
 
-  // Klik op video → pause/resume toggle
+  // Klik op video → pause/resume toggle (not in blur mode)
   track.addEventListener('click', e => {
+    if (blurMode) return;
     const vid = e.target.closest('.rv-slide')?.querySelector('video');
     if (!vid) return;
     if (vid.paused) { vid.play().catch(() => {}); }
@@ -430,6 +664,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   }, { passive: true });
   overlay.addEventListener('touchend', e => {
     if (commentsEl.style.display !== 'none') return;
+    if (blurMode) return; // swipe disabled in blur editor
     const dx = e.changedTouches[0].clientX - touchStartX;
     const dy = e.changedTouches[0].clientY - touchStartY;
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) goTo(idx + (dx < 0 ? 1 : -1));
@@ -443,12 +678,23 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   };
   document.addEventListener('keydown', onKey);
 
-  // Double-tap to like
+  // Double-tap to like (disabled in blur mode)
   let lastTap = 0;
   overlay.querySelector('.rv-frame').addEventListener('click', e => {
+    if (blurMode) return;
     const now = Date.now();
     if (now - lastTap < 300) toggleLike();
     lastTap = now;
+  });
+
+  // Style picker — set active style when a button is clicked
+  stylePicker.querySelectorAll('.rv-style-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      selectedStyle = btn.dataset.style;
+      stylePicker.querySelectorAll('.rv-style-btn').forEach(b => b.classList.remove('rv-style-btn--active'));
+      btn.classList.add('rv-style-btn--active');
+    });
   });
 
   // Buttons

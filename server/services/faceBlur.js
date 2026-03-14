@@ -247,12 +247,44 @@ async function blurFacesIfNeeded(absoluteFilePath, teamId) {
   console.log(`[faceBlur] Blurred ${regions.length} face(s) in ${fname} (original saved as .orig)`);
   return { blurred: true, regions };
 }
+/* ─── Internal: generate SVG sticker buffer for a given style ────────────── */
+
+function makeStickerSvg(style, w, h) {
+  if (style === 'heart') {
+    return Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}">` +
+      `<path d="M50 85 C50 85 5 58 5 32 C5 18 16 8 30 8 C39 8 47 14 50 22 ` +
+      `C53 14 61 8 70 8 C84 8 95 18 95 32 C95 58 50 85 50 85Z" fill="#e74c3c" opacity="0.92"/>` +
+      `</svg>`
+    );
+  }
+  if (style === 'smile') {
+    return Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}">` +
+      `<circle cx="50" cy="50" r="48" fill="#f1c40f" stroke="#d4ac0d" stroke-width="2"/>` +
+      `<circle cx="35" cy="40" r="7" fill="#2c3e50"/>` +
+      `<circle cx="65" cy="40" r="7" fill="#2c3e50"/>` +
+      `<path d="M28 60 Q50 80 72 60" stroke="#2c3e50" stroke-width="5" fill="none" stroke-linecap="round"/>` +
+      `</svg>`
+    );
+  }
+  if (style === 'star') {
+    return Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${w}" height="${h}">` +
+      `<path d="M50 5 L61 38 L96 38 L68 59 L79 91 L50 70 L21 91 L32 59 L4 38 L39 38Z" ` +
+      `fill="#f39c12" stroke="#e67e22" stroke-width="2"/>` +
+      `</svg>`
+    );
+  }
+  return null;
+}
+
 /**
- * Applies elliptical Gaussian+pixelate blur to the given bounding-box regions.
+ * Applies per-region effects to the given bounding-box regions.
+ * Supports styles: 'blur' (default), 'pixel', 'heart', 'smile', 'star'.
  * Saves a .orig backup before overwriting. Returns true on success.
- * Used both by blurFacesIfNeeded (first blur) and reblur (stored regions, no detection needed).
  * @param {string} absoluteFilePath
- * @param {Array<{x,y,width,height}>} regions — in EXIF-rotated pixel space
+ * @param {Array<{x,y,width,height,style?}>} regions — in EXIF-rotated pixel space
  */
 async function applyBlurRegions(absoluteFilePath, regions) {
   const normPath = absoluteFilePath + '.norm.tmp';
@@ -273,6 +305,40 @@ async function applyBlurRegions(absoluteFilePath, regions) {
 
       if (w <= 0 || h <= 0) return null;
 
+      const style = box.style || 'blur';
+
+      // Sticker styles: composite an SVG directly over the face region
+      if (style === 'heart' || style === 'smile' || style === 'star') {
+        const svgBuf = makeStickerSvg(style, w, h);
+        if (!svgBuf) return null;
+        return { input: svgBuf, left, top };
+      }
+
+      // Pixel-only style: coarser pixelation, no Gaussian blur
+      if (style === 'pixel') {
+        const PIXEL_ONLY_BLOCKS = 4; // fewer, larger blocks for a more visible effect
+        const origRegion = await sharp(normPath)
+          .extract({ left, top, width: w, height: h }).png().toBuffer();
+        const bW = Math.max(2, Math.round(w / PIXEL_ONLY_BLOCKS));
+        const bH = Math.max(2, Math.round(h / PIXEL_ONLY_BLOCKS));
+        const pixBuf = await sharp(origRegion)
+          .resize(bW, bH, { kernel: 'nearest', fit: 'fill' })
+          .resize(w, h, { kernel: 'nearest', fit: 'fill' })
+          .png().toBuffer();
+        const mask = Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+          `<ellipse cx="${w/2}" cy="${h/2}" rx="${w/2}" ry="${h/2}" fill="white"/></svg>`
+        );
+        const masked = await sharp(pixBuf)
+          .composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
+        const base = await sharp(normPath)
+          .extract({ left, top, width: w, height: h }).png().toBuffer();
+        const result = await sharp(base)
+          .composite([{ input: masked, blend: 'over' }]).png().toBuffer();
+        return { input: result, left, top };
+      }
+
+      // Default 'blur': Gaussian + pixelation with elliptical mask
       const gaussBuffer = await sharp(normPath)
         .extract({ left, top, width: w, height: h })
         .blur(BLUR_SIGMA).png().toBuffer();
@@ -323,6 +389,41 @@ async function applyBlurRegions(absoluteFilePath, regions) {
     throw err;
   } finally {
     if (fs.existsSync(normPath)) fs.unlinkSync(normPath);
+  }
+}
+
+/**
+ * Detects all faces in an image and returns their bounding boxes.
+ * Does NOT perform matching — returns every detected face regardless of identity.
+ * Boxes are sorted top-to-bottom, left-to-right for consistent indexing.
+ * @param {string} absoluteFilePath
+ * @returns {Promise<Array<{x,y,width,height}>>}
+ */
+async function detectAllFaces(absoluteFilePath) {
+  if (!modelsLoaded || !faceapi) return [];
+  try {
+    const tensor = await imageToTensor(absoluteFilePath);
+    let detections;
+    try {
+      detections = await faceapi
+        .detectAllFaces(tensor, new faceapi.SsdMobilenetv1Options({ minConfidence: MIN_CONFIDENCE }))
+        .withFaceLandmarks();
+    } finally {
+      faceapi.tf.dispose(tensor);
+    }
+    if (!detections || !detections.length) return [];
+    const faces = detections.map(d => ({
+      x:      Math.round(d.detection.box.x),
+      y:      Math.round(d.detection.box.y),
+      width:  Math.round(d.detection.box.width),
+      height: Math.round(d.detection.box.height),
+    }));
+    // Stable sort: top-to-bottom, left-to-right — ensures consistent faceIndex across calls
+    faces.sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
+    return faces;
+  } catch (err) {
+    console.error('[faceBlur] detectAllFaces error:', err.message);
+    return [];
   }
 }
 
@@ -515,4 +616,4 @@ async function checkReferencePhotoQuality(absoluteFilePath) {
   return { ok: issues.length === 0, issues, hints };
 }
 
-module.exports = { loadModels, blurFacesIfNeeded, applyBlurRegions, invalidateCache, checkReferencePhotoQuality, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur };
+module.exports = { loadModels, blurFacesIfNeeded, applyBlurRegions, detectAllFaces, invalidateCache, checkReferencePhotoQuality, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur };

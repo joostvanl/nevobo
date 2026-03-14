@@ -2651,6 +2651,98 @@ img.hl-avatar {
 .rv-revert-btn--faded { filter: grayscale(1); opacity: 0.35; }
 .rv-revert-btn--faded:hover { opacity: 0.7; }
 .rv-revert-btn:disabled { opacity: 0.2; pointer-events: none; }
+/* Blur editor mode active: pulse ring */
+.rv-revert-btn--editing {
+  outline: 2px solid rgba(255,255,255,0.7);
+  outline-offset: 2px;
+  animation: rv-edit-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rv-edit-pulse {
+  0%, 100% { outline-color: rgba(255,255,255,0.7); }
+  50%       { outline-color: rgba(255,200,50,0.9); }
+}
+
+/* Style picker strip — slides in from the right, positioned via JS */
+.rv-style-picker {
+  position: absolute;
+  z-index: 11;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  transform: translateX(80px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.28s cubic-bezier(.4,0,.2,1), opacity 0.2s;
+}
+.rv-style-picker--visible {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.rv-style-btn {
+  background: rgba(30,30,30,0.7);
+  border: 1.5px solid rgba(255,255,255,0.25);
+  color: #fff;
+  font-size: 1.15rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  backdrop-filter: blur(8px);
+  transition: transform 0.12s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.rv-style-btn:active { transform: scale(0.88); }
+.rv-style-btn--active {
+  border-color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.22);
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.4);
+}
+
+/* Face-detection canvas overlay */
+.rv-face-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  cursor: crosshair;
+  touch-action: none;
+}
+.rv-face-canvas--loading { cursor: wait; }
+
+/* Spinner overlay shown on the slide while a blur/unblur action is processing */
+.rv-blur-spinner {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.rv-blur-spinner::after {
+  content: '';
+  width: 44px;
+  height: 44px;
+  border: 4px solid rgba(255,255,255,0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: rv-spin 0.7s linear infinite;
+}
+@keyframes rv-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Subtle frame glow when blur editor is active */
+.rv-blur-mode .rv-frame {
+  box-shadow: 0 0 0 3px rgba(255,200,50,0.45);
+}
 
 .rv-mute-btn {
   background: rgba(255,255,255,0.15);

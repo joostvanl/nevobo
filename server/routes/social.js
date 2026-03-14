@@ -7,7 +7,7 @@ const db = require('../db/db');
 const { verifyToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
 const sharp = require('sharp');
-const { blurFacesIfNeeded, applyBlurRegions, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
+const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
 // Multer storage: save to public/uploads/<year>/<month>/
 const storage = multer.diskStorage({
@@ -439,6 +439,123 @@ router.post('/media/:id/reblur', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('[reblur] Error:', err.message);
     res.status(500).json({ ok: false, error: 'Blur mislukt: ' + err.message });
+  }
+});
+
+// GET /api/social/media/:id/detect-faces — detect all face positions for the blur editor
+router.get('/media/:id/detect-faces', verifyToken, async (req, res) => {
+  const item = db.prepare(`
+    SELECT mm.*, p.team_id as post_team_id
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    WHERE mm.id = ?
+  `).get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  const fs = require('fs');
+  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  if (!fs.existsSync(fullPath)) {
+    return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
+  }
+
+  // Always detect on the original (unblurred) image when available
+  const origPath = fullPath + '.orig';
+  const basePath = fs.existsSync(origPath) ? origPath : fullPath;
+
+  try {
+    const faces      = await detectAllFaces(basePath);
+    const blurRegions = item.blur_regions ? JSON.parse(item.blur_regions) : [];
+    const debugOverlay = (process.env.FACE_BLUR_DEBUG || '').trim() === 'true';
+    console.log(`[detect-faces] media ${item.id}: ${faces.length} face(s) found`);
+    res.json({ ok: true, faces, blurRegions, debugOverlay });
+  } catch (err) {
+    console.error('[detect-faces] Error:', err.message);
+    res.status(500).json({ ok: false, error: 'Gezichtsdetectie mislukt: ' + err.message });
+  }
+});
+
+// POST /api/social/media/:id/toggle-face-blur — blur or unblur a single detected face
+router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
+  const item = db.prepare(`
+    SELECT mm.*, p.team_id as post_team_id
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    WHERE mm.id = ?
+  `).get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  const isSuperAdmin = db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(req.user.id);
+  if (item.user_id !== req.user.id && !isSuperAdmin) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const { faceIndex, style = 'blur' } = req.body;
+  if (faceIndex === undefined || faceIndex === null) {
+    return res.status(400).json({ ok: false, error: 'faceIndex vereist' });
+  }
+
+  const fs = require('fs');
+  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  if (!fs.existsSync(fullPath)) {
+    return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
+  }
+
+  try {
+    // Always work from the original to avoid quality degradation across multiple edits
+    const origPath = fullPath + '.orig';
+    const basePath = fs.existsSync(origPath) ? origPath : fullPath;
+
+    // Detect all faces from the original (same sort order as /detect-faces)
+    const faces = await detectAllFaces(basePath);
+    if (faceIndex < 0 || faceIndex >= faces.length) {
+      return res.status(400).json({ ok: false, error: `Ongeldig gezichtsindex ${faceIndex} (${faces.length} gevonden)` });
+    }
+    const targetFace = faces[faceIndex];
+
+    // Current blur regions from DB
+    let currentRegions = item.blur_regions ? JSON.parse(item.blur_regions) : [];
+
+    // Check if this face is already blurred (centre-proximity match)
+    const faceCx   = targetFace.x + targetFace.width  / 2;
+    const faceCy   = targetFace.y + targetFace.height / 2;
+    const maxDim   = Math.max(targetFace.width, targetFace.height);
+    const existIdx = currentRegions.findIndex(r => {
+      const rCx = r.x + r.width  / 2;
+      const rCy = r.y + r.height / 2;
+      return Math.hypot(faceCx - rCx, faceCy - rCy) < maxDim * 0.45;
+    });
+
+    let newRegions;
+    let action;
+    if (existIdx !== -1) {
+      // Face is blurred → remove it
+      newRegions = currentRegions.filter((_, i) => i !== existIdx);
+      action = 'unblurred';
+    } else {
+      // Face is not blurred → add it with the selected style
+      newRegions = [...currentRegions, { ...targetFace, style }];
+      action = 'blurred';
+    }
+
+    // Restore the original before re-applying (always start clean to avoid stacking)
+    revertBlur(fullPath); // no-op if no .orig exists; fullPath is already the original
+
+    if (newRegions.length > 0) {
+      await applyBlurRegions(fullPath, newRegions);
+    }
+    // If newRegions is empty, revertBlur already restored the clean original — nothing more needed
+
+    // Persist updated regions to DB
+    const regionsJson = newRegions.length > 0 ? JSON.stringify(newRegions) : null;
+    db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?').run(regionsJson, item.id);
+
+    console.log(`[toggle-face-blur] media ${item.id}: ${action} face ${faceIndex}, regions=${newRegions.length}`);
+    res.json({ ok: true, action, regions: newRegions });
+  } catch (err) {
+    console.error('[toggle-face-blur] Error:', err.message);
+    res.status(500).json({ ok: false, error: 'Bewerking mislukt: ' + err.message });
   }
 });
 
