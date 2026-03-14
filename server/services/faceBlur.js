@@ -385,8 +385,11 @@ async function applyBlurRegions(absoluteFilePath, regions) {
     }
     // Only save .orig on the very first blur (don't overwrite with an already-blurred version)
     if (!fs.existsSync(origPath)) fs.copyFileSync(absoluteFilePath, origPath);
+    console.log(`[applyBlurRegions] writing result to ${absoluteFilePath}`);
     fs.copyFileSync(tmpPath, absoluteFilePath);
     fs.unlinkSync(tmpPath);
+    const statAfter = fs.statSync(absoluteFilePath);
+    console.log(`[applyBlurRegions] done, size=${statAfter.size}, mtime=${statAfter.mtimeMs}`);
     return true;
   } catch (err) {
     if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);

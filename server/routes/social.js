@@ -498,6 +498,7 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
 
   const fs = require('fs');
   const fullPath = path.join(__dirname, '../../public', item.file_path);
+  console.log(`[toggle-face-blur] fullPath=${fullPath} exists=${fs.existsSync(fullPath)}`);
   if (!fs.existsSync(fullPath)) {
     return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
   }
@@ -506,6 +507,7 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
     // Always work from the original to avoid quality degradation across multiple edits
     const origPath = fullPath + '.orig';
     const basePath = fs.existsSync(origPath) ? origPath : fullPath;
+    console.log(`[toggle-face-blur] origPath exists=${fs.existsSync(origPath)}, basePath=${basePath}`);
 
     // Detect all faces from the original (same sort order as /detect-faces)
     const faces = await detectAllFaces(basePath);
@@ -540,9 +542,13 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
     }
 
     // Restore the original before re-applying (always start clean to avoid stacking)
+    console.log(`[toggle-face-blur] calling revertBlur, origPath exists=${fs.existsSync(fullPath + '.orig')}`);
     revertBlur(fullPath); // no-op if no .orig exists; fullPath is already the original
+    const statAfterRevert = fs.statSync(fullPath);
+    console.log(`[toggle-face-blur] after revert: size=${statAfterRevert.size}, mtime=${statAfterRevert.mtimeMs}`);
 
     if (newRegions.length > 0) {
+      console.log(`[toggle-face-blur] applying ${newRegions.length} region(s) to ${fullPath}`);
       await applyBlurRegions(fullPath, newRegions);
     }
     // If newRegions is empty, revertBlur already restored the clean original — nothing more needed
