@@ -882,6 +882,7 @@ router.get('/team-by-name', async (req, res) => {
     const schedule = [];
     const results  = [];
 
+    const now = Date.now();
     for (const { type, items } of feeds) {
       for (const item of items) {
         const m = parseMatchItem(item);
@@ -889,8 +890,15 @@ router.get('/team-by-name', async (req, res) => {
         const key = m.match_id || m.title || '';
         if (seen.has(key)) continue;
         seen.add(key);
-        if (type === 'schedule') schedule.push(m);
-        else results.push(m);
+        if (type === 'schedule') {
+          // If match is played or started more than 2 hours ago → treat as result
+          const isExpired = m.status === 'gespeeld' ||
+            (m.datetime && new Date(m.datetime).getTime() < now - 2 * 3600_000);
+          if (isExpired) results.push(m);
+          else schedule.push(m);
+        } else {
+          results.push(m);
+        }
       }
     }
 
