@@ -657,17 +657,13 @@ router.get('/following', verifyToken, (req, res) => {
   res.json({ ok: true, follows: enriched });
 });
 
-// Helper: build media SELECT + WHERE that filters on known team names
-// (match_home_team or match_away_team must contain a known display_name)
-// and resolves the correct team label as `team_name`.
+// Helper: build media SELECT + WHERE that filters on known club/team context.
+// For new media: filters on match_home_team/match_away_team containing a known display_name.
+// For legacy media (match_home_team=NULL): falls back to club_id or uploader's team membership.
 function buildMediaQuery({ knownTeams, relevantClubIds, userId, limit, offset }) {
-  // knownTeams: [{team_id, display_name, club_id, club_name}]
-  // Filter: include row if home or away team name contains any known display_name,
-  //         OR if the post belongs to a relevant club (legacy rows without match_home_team).
   const teamNames = knownTeams.map(t => t.display_name).filter(Boolean);
 
-  // Build CASE expression to find which known team is in this match
-  // Returns the first matching known team name, or NULL.
+  // Build CASE expression to resolve the known team label
   let knownTeamExpr = 'NULL';
   if (teamNames.length > 0) {
     const cases = teamNames.map(() =>
@@ -676,23 +672,31 @@ function buildMediaQuery({ knownTeams, relevantClubIds, userId, limit, offset })
     knownTeamExpr = `CASE ${cases} END`;
   }
 
-  // WHERE: match on known team name (in home/away), OR legacy club-based posts
+  // WHERE: 
+  // 1. New media: match_home_team or match_away_team contains a known team name
+  // 2. Legacy media: post belongs to a relevant club OR uploader is member of a relevant team
   const nameConds = teamNames.map(() =>
     `(mm.match_home_team LIKE ? OR mm.match_away_team LIKE ?)`
   );
   const clubPH = relevantClubIds.length > 0
     ? `p.club_id IN (${relevantClubIds.map(() => '?').join(',')})`
     : null;
-  const whereClause = [...nameConds, clubPH].filter(Boolean).join(' OR ');
+  // Also include media uploaded by members of relevant clubs (legacy: no match_home_team)
+  const uploaderCond = relevantClubIds.length > 0
+    ? `EXISTS (SELECT 1 FROM team_memberships tm2 JOIN teams t2 ON t2.id = tm2.team_id WHERE tm2.user_id = mm.user_id AND t2.club_id IN (${relevantClubIds.map(() => '?').join(',')}))`
+    : null;
+
+  const whereClause = [...nameConds, clubPH, uploaderCond].filter(Boolean).join(' OR ');
 
   if (!whereClause) return null;
 
   // Args for CASE expression: for each team: `%name%`, `%name%`, name
   const caseArgs = teamNames.flatMap(n => [`%${n}%`, `%${n}%`, n]);
-  // Args for WHERE name conditions: for each team: `%name%`, `%name%`
+  // Args for WHERE name conditions
   const whereNameArgs = teamNames.flatMap(n => [`%${n}%`, `%${n}%`]);
-  // Args for WHERE club conditions
+  // Args for WHERE club conditions (used twice: clubPH + uploaderCond)
   const whereClubArgs = relevantClubIds;
+  const whereUploaderArgs = relevantClubIds;
 
   const sql = `
     SELECT mm.*,
@@ -717,8 +721,8 @@ function buildMediaQuery({ knownTeams, relevantClubIds, userId, limit, offset })
     ${limit != null ? `LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset || 0)}` : 'LIMIT 10'}
   `;
 
-  // Final arg order: userId (liked_by_me), caseArgs, whereNameArgs, whereClubArgs
-  const args = [userId, ...caseArgs, ...whereNameArgs, ...whereClubArgs];
+  // Final arg order: userId (liked_by_me), caseArgs, whereNameArgs, whereClubArgs, whereUploaderArgs
+  const args = [userId, ...caseArgs, ...whereNameArgs, ...whereClubArgs, ...whereUploaderArgs];
   return { sql, args };
 }
 
