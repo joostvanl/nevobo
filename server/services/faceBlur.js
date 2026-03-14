@@ -377,12 +377,16 @@ async function applyBlurRegions(absoluteFilePath, regions) {
     if (valid.length) {
       await sharp(normPath).composite(valid).toFile(tmpPath);
     } else {
+      // No composites to apply — just normalise EXIF rotation and save
       if (!fs.existsSync(origPath)) fs.copyFileSync(absoluteFilePath, origPath);
-      fs.renameSync(normPath, absoluteFilePath);
+      fs.copyFileSync(normPath, absoluteFilePath);
+      fs.unlinkSync(normPath);
       return false;
     }
+    // Only save .orig on the very first blur (don't overwrite with an already-blurred version)
     if (!fs.existsSync(origPath)) fs.copyFileSync(absoluteFilePath, origPath);
-    fs.renameSync(tmpPath, absoluteFilePath);
+    fs.copyFileSync(tmpPath, absoluteFilePath);
+    fs.unlinkSync(tmpPath);
     return true;
   } catch (err) {
     if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
@@ -443,7 +447,7 @@ function revertBlur(absoluteFilePath) {
   const origPath = absoluteFilePath + '.orig';
   if (!fs.existsSync(origPath)) return false;
   fs.copyFileSync(origPath, absoluteFilePath);
-  fs.unlinkSync(origPath);
+  // Keep the .orig backup intact so we can always revert again
   console.log(`[faceBlur] Reverted blur for ${path.basename(absoluteFilePath)}`);
   return true;
 }
