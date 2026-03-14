@@ -162,66 +162,91 @@ export async function render(container) {
 async function loadMyMedia(userId, container) {
   const el = document.getElementById('my-media-grid');
   if (!el) return;
-  try {
-    const data = await api(`/api/social/my-media`);
-    const items = data.media || [];
-    if (!items.length) {
-      el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
-      return;
-    }
 
-    // Normalise field so viewer works (liked_by_me, counts)
-    items.forEach(m => {
-      m.like_count    = m.like_count    || 0;
-      m.comment_count = m.comment_count || 0;
-      m.view_count    = m.view_count    || 0;
-      m.liked_by_me   = false;
-    });
+  const PAGE_SIZE = 9;
+  let allItems = [];
+  let currentPage = 0;
+
+  function renderPage(page) {
+    currentPage = page;
+    const start = page * PAGE_SIZE;
+    const pageItems = allItems.slice(start, start + PAGE_SIZE);
+    const totalPages = Math.ceil(allItems.length / PAGE_SIZE);
 
     el.innerHTML = `
       <div class="prof-media-grid">
-        ${items.map((m, i) => `
-          <div class="prof-media-item" data-idx="${i}">
+        ${pageItems.map((m, i) => `
+          <div class="prof-media-item" data-idx="${i}" data-abs="${start + i}">
             ${m.file_type === 'video'
               ? `<video src="${esc(m.file_path)}" muted playsinline preload="metadata" class="prof-media-thumb"></video>
                  <span class="prof-media-type-icon">▶</span>`
               : `<img src="${esc(m.file_path)}" class="prof-media-thumb" loading="lazy" />`}
           </div>`).join('')}
-      </div>`;
+      </div>
+      ${totalPages > 1 ? `
+        <div class="prof-media-pagination">
+          <button class="btn btn-secondary btn-sm" id="pm-prev" ${page === 0 ? 'disabled' : ''}>‹ Vorige</button>
+          <span class="text-muted text-small">${page + 1} / ${totalPages}</span>
+          <button class="btn btn-secondary btn-sm" id="pm-next" ${page >= totalPages - 1 ? 'disabled' : ''}>Volgende ›</button>
+        </div>` : ''}`;
 
-    // Click → open fullscreen viewer with delete option
+    el.querySelector('#pm-prev')?.addEventListener('click', () => { renderPage(page - 1); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    el.querySelector('#pm-next')?.addEventListener('click', () => { renderPage(page + 1); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+
     el.querySelectorAll('.prof-media-item').forEach(card => {
       card.addEventListener('click', () => {
-        const startIdx = parseInt(card.dataset.idx);
-        openReelViewer(items, startIdx, {
+        const absIdx = parseInt(card.dataset.abs);
+        openReelViewer(allItems, absIdx, {
           canDelete:     () => true,
           canRevertBlur: (m) => m.file_type === 'image',
           onDelete: async (m) => {
             await api(`/api/social/media/${m.id}`, { method: 'DELETE' });
             showToast('Verwijderd', 'success');
-            // Remove from grid
-            const gridCard = el.querySelector(`.prof-media-item[data-idx="${items.indexOf(m)}"]`);
-            gridCard?.remove();
-            // Re-index remaining cards
-            el.querySelectorAll('.prof-media-item').forEach((c, i) => c.dataset.idx = i);
-            if (!el.querySelector('.prof-media-item')) {
+            allItems = allItems.filter(x => x.id !== m.id);
+            // Stay on same page, or go back if page is now empty
+            const newPage = currentPage > 0 && currentPage * PAGE_SIZE >= allItems.length
+              ? currentPage - 1 : currentPage;
+            if (!allItems.length) {
               el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
+            } else {
+              renderPage(newPage);
             }
             return true;
           },
           onClose: (updatedList) => {
-            // Refresh thumbnails so blur/unblur changes are visible
-            updatedList.forEach((item, i) => {
-              if (item.file_type !== 'image') return;
-              const card = el.querySelector(`.prof-media-item[data-idx="${i}"]`);
-              if (!card) return;
-              const img = card.querySelector('img.prof-media-thumb');
+            // Sync blur changes back into allItems and refresh thumbnails
+            updatedList.forEach((item) => {
+              const orig = allItems.find(x => x.id === item.id);
+              if (orig) orig.file_path = item.file_path;
+            });
+            const start2 = currentPage * PAGE_SIZE;
+            el.querySelectorAll('.prof-media-item').forEach((card2) => {
+              const abs = parseInt(card2.dataset.abs);
+              const item = allItems[abs];
+              if (!item || item.file_type !== 'image') return;
+              const img = card2.querySelector('img.prof-media-thumb');
               if (img) img.src = item.file_path.split('?')[0] + '?t=' + Date.now();
             });
           },
         });
       });
     });
+  }
+
+  try {
+    const data = await api(`/api/social/my-media`);
+    allItems = data.media || [];
+    if (!allItems.length) {
+      el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Je hebt nog geen media geplaatst.</p></div></div>`;
+      return;
+    }
+    allItems.forEach(m => {
+      m.like_count    = m.like_count    || 0;
+      m.comment_count = m.comment_count || 0;
+      m.view_count    = m.view_count    || 0;
+      m.liked_by_me   = false;
+    });
+    renderPage(0);
   } catch (_) {
     el.innerHTML = `<div class="card"><div class="card-body"><p class="text-muted text-small">Media kon niet worden geladen.</p></div></div>`;
   }

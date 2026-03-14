@@ -633,6 +633,13 @@ p  { line-height: 1.6; }
   grid-template-columns: repeat(3, 1fr);
   gap: 3px;
 }
+.prof-media-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.75rem 0 0.25rem;
+}
 .prof-media-item {
   position: relative;
   aspect-ratio: 1;
