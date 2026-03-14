@@ -657,6 +657,71 @@ router.get('/following', verifyToken, (req, res) => {
   res.json({ ok: true, follows: enriched });
 });
 
+// Helper: build media SELECT + WHERE that filters on known team names
+// (match_home_team or match_away_team must contain a known display_name)
+// and resolves the correct team label as `team_name`.
+function buildMediaQuery({ knownTeams, relevantClubIds, userId, limit, offset }) {
+  // knownTeams: [{team_id, display_name, club_id, club_name}]
+  // Filter: include row if home or away team name contains any known display_name,
+  //         OR if the post belongs to a relevant club (legacy rows without match_home_team).
+  const teamNames = knownTeams.map(t => t.display_name).filter(Boolean);
+
+  // Build CASE expression to find which known team is in this match
+  // Returns the first matching known team name, or NULL.
+  let knownTeamExpr = 'NULL';
+  if (teamNames.length > 0) {
+    const cases = teamNames.map(() =>
+      `WHEN (mm.match_home_team LIKE ? OR mm.match_away_team LIKE ?) THEN ?`
+    ).join(' ');
+    knownTeamExpr = `CASE ${cases} END`;
+  }
+
+  // WHERE: match on known team name (in home/away), OR legacy club-based posts
+  const nameConds = teamNames.map(() =>
+    `(mm.match_home_team LIKE ? OR mm.match_away_team LIKE ?)`
+  );
+  const clubPH = relevantClubIds.length > 0
+    ? `p.club_id IN (${relevantClubIds.map(() => '?').join(',')})`
+    : null;
+  const whereClause = [...nameConds, clubPH].filter(Boolean).join(' OR ');
+
+  if (!whereClause) return null;
+
+  // Args for CASE expression: for each team: `%name%`, `%name%`, name
+  const caseArgs = teamNames.flatMap(n => [`%${n}%`, `%${n}%`, n]);
+  // Args for WHERE name conditions: for each team: `%name%`, `%name%`
+  const whereNameArgs = teamNames.flatMap(n => [`%${n}%`, `%${n}%`]);
+  // Args for WHERE club conditions
+  const whereClubArgs = relevantClubIds;
+
+  const sql = `
+    SELECT mm.*,
+      u.name AS uploader_name, u.avatar_url AS uploader_avatar,
+      (SELECT COUNT(*) FROM media_likes ml WHERE ml.media_id = mm.id) AS like_count,
+      (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
+      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
+      (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
+      COALESCE(
+        (${knownTeamExpr}),
+        mm.match_home_team,
+        t.display_name
+      ) AS team_name,
+      COALESCE(c.name) AS club_name_media
+    FROM match_media mm
+    JOIN users u ON u.id = mm.user_id
+    LEFT JOIN posts p ON p.id = mm.post_id
+    LEFT JOIN teams t ON t.id = p.team_id
+    LEFT JOIN clubs c ON c.id = p.club_id
+    WHERE ${whereClause}
+    ORDER BY mm.created_at DESC
+    ${limit != null ? `LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset || 0)}` : 'LIMIT 10'}
+  `;
+
+  // Final arg order: userId (liked_by_me), caseArgs, whereNameArgs, whereClubArgs
+  const args = [userId, ...caseArgs, ...whereNameArgs, ...whereClubArgs];
+  return { sql, args };
+}
+
 // GET /api/social/home-summary — aggregated data for the homepage
 router.get('/home-summary', verifyToken, (req, res) => {
   const userId = req.user.id;
@@ -682,10 +747,10 @@ router.get('/home-summary', verifyToken, (req, res) => {
     WHERE uf.follower_id = ? AND uf.followee_type = 'team'
   `).all(userId);
 
-  // Recent media: photos/videos from the user's club or followed teams
-  // Posts often have club_id set but team_id=null, so we query by both
-  const relevantTeamIds = [
-    ...new Set([...memberTeams.map(t => t.team_id), ...followedTeamRows.map(t => t.team_id)])
+  const knownTeams = [
+    ...new Map(
+      [...memberTeams, ...followedTeamRows].map(t => [t.team_id, t])
+    ).values()
   ];
   const relevantClubIds = [
     ...new Set([
@@ -696,46 +761,8 @@ router.get('/home-summary', verifyToken, (req, res) => {
   ];
 
   let recentMedia = [];
-  if (relevantClubIds.length > 0 || relevantTeamIds.length > 0) {
-    const teamPlaceholders  = relevantTeamIds.length  > 0 ? relevantTeamIds.map(() => '?').join(',')  : null;
-    const clubPlaceholders  = relevantClubIds.length  > 0 ? relevantClubIds.map(() => '?').join(',')  : null;
-    const whereClause = [
-      teamPlaceholders ? `p.team_id IN (${teamPlaceholders})` : null,
-      clubPlaceholders ? `p.club_id IN (${clubPlaceholders})` : null,
-    ].filter(Boolean).join(' OR ');
-    const args = [...(relevantTeamIds.length > 0 ? relevantTeamIds : []), ...(relevantClubIds.length > 0 ? relevantClubIds : [])];
-    recentMedia = db.prepare(`
-      SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
-        (SELECT COUNT(*) FROM media_likes ml WHERE ml.media_id = mm.id) AS like_count,
-        (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
-        (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
-        (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
-        COALESCE(
-          mm.match_home_team,
-          t.display_name,
-          (SELECT t3.display_name FROM posts p3
-           JOIN teams t3 ON t3.id = p3.team_id
-           WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
-           LIMIT 1)
-        ) AS team_name,
-        COALESCE(
-          c.name,
-          (SELECT c3.name FROM posts p3
-           JOIN teams t3 ON t3.id = p3.team_id
-           JOIN clubs c3 ON c3.id = t3.club_id
-           WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
-           LIMIT 1)
-        ) AS club_name_media
-      FROM match_media mm
-      JOIN users u ON u.id = mm.user_id
-      LEFT JOIN posts p ON p.id = mm.post_id
-      LEFT JOIN teams t ON t.id = p.team_id
-      LEFT JOIN clubs c ON c.id = p.club_id
-      WHERE ${whereClause}
-      ORDER BY mm.created_at DESC
-      LIMIT 10
-    `).all(userId, ...args);
-  }
+  const q = buildMediaQuery({ knownTeams, relevantClubIds, userId, limit: 10, offset: 0 });
+  if (q) recentMedia = db.prepare(q.sql).all(...q.args);
 
   // New followers who started following the current user in the last 30 days
   const newFollowers = db.prepare(`
@@ -767,64 +794,34 @@ router.get('/media-feed', verifyToken, (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return res.status(404).json({ ok: false });
 
-  const memberTeams   = db.prepare(`
-    SELECT tm.team_id, t.club_id FROM team_memberships tm
-    JOIN teams t ON t.id = tm.team_id WHERE tm.user_id = ?
+  const memberTeams = db.prepare(`
+    SELECT tm.team_id, t.display_name, t.club_id, c.name AS club_name
+    FROM team_memberships tm
+    JOIN teams t ON t.id = tm.team_id
+    JOIN clubs c ON c.id = t.club_id
+    WHERE tm.user_id = ?
   `).all(userId);
   const followedTeams = db.prepare(`
-    SELECT uf.followee_id AS team_id, t.club_id FROM user_follows uf
+    SELECT uf.followee_id AS team_id, t.display_name, t.club_id, c.name AS club_name
+    FROM user_follows uf
     JOIN teams t ON t.id = uf.followee_id
+    JOIN clubs c ON c.id = t.club_id
     WHERE uf.follower_id = ? AND uf.followee_type = 'team'
   `).all(userId);
 
-  const relevantTeamIds = [...new Set([...memberTeams.map(t => t.team_id), ...followedTeams.map(t => t.team_id)])];
-  const relevantClubIds = [...new Set([user.club_id, ...memberTeams.map(t => t.club_id), ...followedTeams.map(t => t.club_id)].filter(Boolean))];
-
-  if (!relevantTeamIds.length && !relevantClubIds.length) return res.json({ ok: true, media: [] });
-
-  const teamPH = relevantTeamIds.length > 0 ? relevantTeamIds.map(() => '?').join(',') : null;
-  const clubPH = relevantClubIds.length > 0 ? relevantClubIds.map(() => '?').join(',') : null;
-  const whereClause = [
-    teamPH ? `p.team_id IN (${teamPH})` : null,
-    clubPH ? `p.club_id IN (${clubPH})` : null,
-  ].filter(Boolean).join(' OR ');
-  const args = [
-    ...(relevantTeamIds.length > 0 ? relevantTeamIds : []),
-    ...(relevantClubIds.length > 0 ? relevantClubIds : []),
+  const knownTeams = [
+    ...new Map(
+      [...memberTeams, ...followedTeams].map(t => [t.team_id, t])
+    ).values()
+  ];
+  const relevantClubIds = [
+    ...new Set([user.club_id, ...memberTeams.map(t => t.club_id), ...followedTeams.map(t => t.club_id)].filter(Boolean))
   ];
 
-  const media = db.prepare(`
-    SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
-      (SELECT COUNT(*) FROM media_likes ml  WHERE ml.media_id  = mm.id) AS like_count,
-      (SELECT COUNT(*) FROM media_views mv  WHERE mv.media_id  = mm.id) AS view_count,
-      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
-      (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
-      COALESCE(
-        mm.match_home_team,
-        t.display_name,
-        (SELECT t3.display_name FROM posts p3
-         JOIN teams t3 ON t3.id = p3.team_id
-         WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
-         LIMIT 1)
-      ) AS team_name,
-      COALESCE(
-        c.name,
-        (SELECT c3.name FROM posts p3
-         JOIN teams t3 ON t3.id = p3.team_id
-         JOIN clubs c3 ON c3.id = t3.club_id
-         WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
-         LIMIT 1)
-      ) AS club_name_media
-    FROM match_media mm
-    JOIN users u ON u.id = mm.user_id
-    LEFT JOIN posts p ON p.id = mm.post_id
-    LEFT JOIN teams t ON t.id = p.team_id
-    LEFT JOIN clubs c ON c.id = p.club_id
-    WHERE ${whereClause}
-    ORDER BY mm.created_at DESC
-    LIMIT ? OFFSET ?
-  `).all(userId, ...args, limit, offset);
+  const q = buildMediaQuery({ knownTeams, relevantClubIds, userId, limit, offset });
+  if (!q) return res.json({ ok: true, media: [] });
 
+  const media = db.prepare(q.sql).all(...q.args);
   res.json({ ok: true, media });
 });
 

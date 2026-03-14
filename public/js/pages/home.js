@@ -280,21 +280,11 @@ function encodeMatchId(m) {
  * the user's own teams. This corrects labels for multi-team users where the stored
  * posts.team_id might point to the wrong team.
  */
-async function resolveMediaTeamNames(recentMedia) {
-  // match_home_team is now stored in the DB at upload time and returned by the backend.
-  // Use it as the definitive team name when available.
-  for (const m of recentMedia) {
-    if (m.match_home_team) m.team_name = m.match_home_team;
-  }
-}
-
 async function loadMedia(recentMedia, memberTeams, followedTeams) {
   const el = document.getElementById('hm-media');
   if (!el) return;
   if (!recentMedia.length) { el.innerHTML = ''; return; }
 
-  // Resolve correct team names from match context before first render
-  await resolveMediaTeamNames(recentMedia);
 
   el.innerHTML = `
     <div class="hm-reel-wrap">
