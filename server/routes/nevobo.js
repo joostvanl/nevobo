@@ -894,10 +894,11 @@ router.get('/team-by-name', async (req, res) => {
         if (seen.has(key)) continue;
         seen.add(key);
         if (type === 'schedule') {
-          // Filter out already-played matches or matches that started more than 2 hours ago
-          if (m.status === 'gespeeld') continue;
-          if (m.datetime && new Date(m.datetime).getTime() < now - 2 * 3600_000) continue;
-          schedule.push(m);
+          // If match is already played or started more than 2 hours ago, treat as result
+          const isExpired = m.status === 'gespeeld' ||
+            (m.datetime && new Date(m.datetime).getTime() < now - 2 * 3600_000);
+          if (isExpired) results.push(m);
+          else schedule.push(m);
         } else {
           results.push(m);
         }
