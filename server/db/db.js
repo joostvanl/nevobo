@@ -106,6 +106,23 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN face_reference_path TEXT`,
   // Store bounding boxes of blurred faces so re-blur can skip face detection + matching
   `ALTER TABLE match_media ADD COLUMN blur_regions TEXT`,
+  // Allow match_media.user_id to be NULL so media survives user deletion
+  `CREATE TABLE IF NOT EXISTS match_media_new (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id     INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    match_id    TEXT,
+    file_path   TEXT NOT NULL,
+    file_type   TEXT NOT NULL DEFAULT 'image',
+    caption     TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    blur_regions TEXT
+  )`,
+  `INSERT OR IGNORE INTO match_media_new SELECT id, post_id, user_id, match_id, file_path, file_type, caption, created_at, blur_regions FROM match_media`,
+  `DROP TABLE IF EXISTS match_media_old`,
+  `ALTER TABLE match_media RENAME TO match_media_old`,
+  `ALTER TABLE match_media_new RENAME TO match_media`,
+  `DROP TABLE IF EXISTS match_media_old`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

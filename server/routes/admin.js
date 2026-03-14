@@ -117,15 +117,38 @@ router.get('/clubs/:clubId/admins', requireClubAdmin('clubId'), (req, res) => {
   res.json({ ok: true, club_admins: clubAdmins, team_admins: teamAdmins, teams });
 });
 
-// GET /api/admin/clubs/:clubId/users — search users associated with a club (for appointing)
+// GET /api/admin/clubs/:clubId/users — list/search users associated with a club
 router.get('/clubs/:clubId/users', requireClubAdmin('clubId'), (req, res) => {
   const clubId = parseInt(req.params.clubId);
-  const q = `%${req.query.q || ''}%`;
-  const users = db.prepare(`
-    SELECT id, name, email, avatar_url FROM users
-    WHERE club_id = ? AND (name LIKE ? OR email LIKE ?)
-    ORDER BY name ASC LIMIT 30
-  `).all(clubId, q, q);
+  const q = req.query.q !== undefined ? `%${req.query.q}%` : null;
+  let users;
+  if (q) {
+    // Search mode (for adding team members/admins)
+    users = db.prepare(`
+      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url,
+        GROUP_CONCAT(DISTINCT t.display_name) AS team_names
+      FROM users u
+      LEFT JOIN team_memberships tm ON tm.user_id = u.id
+      LEFT JOIN teams t ON t.id = tm.team_id AND t.club_id = ?
+      WHERE (u.club_id = ? OR tm.team_id IN (SELECT id FROM teams WHERE club_id = ?))
+        AND (u.name LIKE ? OR u.email LIKE ?)
+      GROUP BY u.id
+      ORDER BY u.name ASC LIMIT 30
+    `).all(clubId, clubId, clubId, q, q);
+  } else {
+    // Full list mode (for user management)
+    users = db.prepare(`
+      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url,
+        GROUP_CONCAT(DISTINCT t.display_name) AS team_names
+      FROM users u
+      LEFT JOIN team_memberships tm ON tm.user_id = u.id
+      LEFT JOIN teams t ON t.id = tm.team_id AND t.club_id = ?
+      WHERE u.club_id = ?
+         OR tm.team_id IN (SELECT id FROM teams WHERE club_id = ?)
+      GROUP BY u.id
+      ORDER BY u.name ASC
+    `).all(clubId, clubId, clubId);
+  }
   res.json({ ok: true, users });
 });
 
@@ -259,6 +282,66 @@ router.get('/my-roles', (req, res) => {
     ORDER BY ur.role, c.name, t.display_name
   `).all(userId);
   res.json({ ok: true, roles });
+});
+
+// DELETE /api/admin/users/:userId — permanently delete a user and all their data
+router.delete('/users/:userId', (req, res) => {
+  const requesterId = req.user.id;
+  const targetId = parseInt(req.params.userId);
+
+  if (targetId === requesterId) {
+    return res.status(400).json({ ok: false, error: 'Je kunt jezelf niet verwijderen' });
+  }
+
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+
+  // Authorization: super_admin OR club_admin of de club waar de user bij hoort
+  const targetClubId = target.club_id;
+  const targetTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(targetId).map(r => r.team_id);
+  const targetClubIds = [
+    targetClubId,
+    ...db.prepare(`SELECT DISTINCT club_id FROM teams WHERE id IN (${targetTeams.length ? targetTeams.map(() => '?').join(',') : 'NULL'})`).all(...targetTeams).map(r => r.club_id),
+  ].filter(Boolean);
+
+  const canDelete = hasSuperAdmin(requesterId) ||
+    targetClubIds.some(cid => hasClubAdmin(requesterId, cid));
+
+  if (!canDelete) {
+    return res.status(403).json({ ok: false, error: 'Geen rechten om deze gebruiker te verwijderen' });
+  }
+
+  // Clean up physical files before DB delete
+  const fs = require('fs');
+  const path = require('path');
+  const uploadsBase = path.join(__dirname, '../../public');
+
+  // Delete face reference files (privacy data)
+  const faceRefs = db.prepare('SELECT file_path FROM face_references WHERE user_id = ?').all(targetId);
+  for (const { file_path } of faceRefs) {
+    try {
+      const abs = path.join(uploadsBase, file_path);
+      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    } catch (_) {}
+  }
+
+  // Delete avatar if it's a local upload
+  if (target.avatar_url && target.avatar_url.startsWith('/uploads/')) {
+    try {
+      const abs = path.join(uploadsBase, target.avatar_url);
+      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    } catch (_) {}
+  }
+
+  // Disown media uploaded by this user — files stay, uploader reference becomes NULL
+  // (SQLite doesn't support ALTER COLUMN, so we do this manually before delete)
+  db.prepare('UPDATE match_media SET user_id = NULL WHERE user_id = ?').run(targetId);
+  db.prepare('UPDATE posts SET user_id = NULL WHERE user_id = ?').run(targetId);
+
+  // Delete user — all related rows cascade automatically (foreign_keys = ON)
+  db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
+
+  res.json({ ok: true, message: `Gebruiker "${target.name}" verwijderd` });
 });
 
 module.exports = router;

@@ -176,6 +176,13 @@ async function renderClubAdminTab(panel, clubId) {
         ${team_admins.length
           ? team_admins.map(r => adminRoleRow(r, clubId)).join('')
           : `<p class="text-muted text-small" style="padding:0.5rem">Geen teambeheerders.</p>`}
+      </div>
+
+      <div class="section-header mt-4 mb-2">
+        <span class="section-title">Gebruikers verwijderen</span>
+      </div>
+      <div id="club-users-list">
+        <p class="text-muted text-small" style="padding:0.5rem">Laden…</p>
       </div>`;
 
     // Wire revoke buttons
@@ -193,6 +200,37 @@ async function renderClubAdminTab(panel, clubId) {
     panel.querySelector('#add-team-admin-btn').addEventListener('click', () => {
       showAddTeamAdminModal(clubId, teams, () => renderClubAdminTab(panel, clubId));
     });
+
+    // Load users list
+    const usersEl = panel.querySelector('#club-users-list');
+    try {
+      const { users } = await api(`/api/admin/clubs/${clubId}/users`);
+      if (!users.length) {
+        usersEl.innerHTML = `<p class="text-muted text-small" style="padding:0.5rem">Geen gebruikers gevonden.</p>`;
+      } else {
+        usersEl.innerHTML = users.map(u => `
+          <div class="admin-user-row" style="display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0.25rem;border-bottom:1px solid var(--border)">
+            <div>
+              <strong style="font-size:0.9rem">${escHtml(u.name)}</strong>
+              <span class="text-muted text-small" style="display:block">${escHtml(u.email || '')}${u.team_names ? ` · ${escHtml(u.team_names)}` : ''}</span>
+            </div>
+            <button class="btn btn-danger btn-sm delete-user-btn" data-userid="${u.id}" data-username="${escAttr(u.name)}" style="flex-shrink:0;margin-left:0.5rem">🗑 Verwijder</button>
+          </div>`).join('');
+
+        usersEl.querySelectorAll('.delete-user-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm(`Gebruiker "${btn.dataset.username}" permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
+            try {
+              await api(`/api/admin/users/${btn.dataset.userid}`, { method: 'DELETE' });
+              showToast(`Gebruiker verwijderd`, 'success');
+              renderClubAdminTab(panel, clubId);
+            } catch (err) { showToast(err.message, 'error'); }
+          });
+        });
+      }
+    } catch (_) {
+      usersEl.innerHTML = `<p class="text-muted text-small" style="padding:0.5rem">Laden mislukt.</p>`;
+    }
   } catch (err) {
     panel.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
   }
