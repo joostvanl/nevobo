@@ -194,7 +194,16 @@ async function loadNextMatch(memberTeams, me) {
   const all = await Promise.allSettled(
     memberTeams.map(t =>
       api(`/api/nevobo/club/${t.nevobo_code}/schedule`)
-        .then(d => ({ team: t, matches: (d.matches||[]).filter(m => matchBelongsToTeam(m, t.display_name)) }))
+        .then(d => ({
+          team: t,
+          matches: (d.matches||[])
+            .filter(m => {
+              if (m.status === 'gespeeld') return false;
+              if (m.datetime && new Date(m.datetime).getTime() < Date.now() - 2 * 3600_000) return false;
+              return true;
+            })
+            .filter(m => matchBelongsToTeam(m, t.display_name))
+        }))
         .catch(() => ({ team: t, matches: [] }))
     )
   );
@@ -272,6 +281,9 @@ function encodeMatchId(m) {
  * posts.team_id might point to the wrong team.
  */
 async function resolveMediaTeamNames(recentMedia, memberTeams, followedTeams) {
+  // The backend now resolves team_name via COALESCE on match_id, so this is only
+  // needed to further refine for items where the DB team_name might not match the
+  // viewer's known team names (e.g. abbreviated names).
   const allTeams = [...(memberTeams || []), ...(followedTeams || [])];
   const itemsWithMatch = recentMedia.filter(m => m.match_id);
   if (!itemsWithMatch.length || !allTeams.length) return;
@@ -293,7 +305,7 @@ async function resolveMediaTeamNames(recentMedia, memberTeams, followedTeams) {
   for (const m of itemsWithMatch) {
     const match = scheduleMatches.find(nm => encodeMatchId(nm) === m.match_id);
     if (!match) continue;
-    // Find the longest-matching team name to avoid false positives on short names
+    // Find the longest-matching team name from teams the viewer knows about
     const matched = allTeams
       .filter(t => {
         const dn = (t.display_name || '').toLowerCase();
@@ -302,6 +314,7 @@ async function resolveMediaTeamNames(recentMedia, memberTeams, followedTeams) {
             || (match.away_team || '').toLowerCase().includes(dn);
       })
       .sort((a, b) => b.display_name.length - a.display_name.length)[0];
+    // Only override if we found a match — otherwise keep the DB-resolved team_name
     if (matched) m.team_name = matched.display_name;
   }
 }

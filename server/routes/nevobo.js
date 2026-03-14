@@ -235,6 +235,15 @@ function scheduleSmartTtl(matches) {
     .map(m => m.datetime ? new Date(m.datetime).getTime() : 0)
     .filter(t => t > now)
     .sort((a, b) => a - b);
+
+  // Check if any match was very recently played (within 4 hours) — refresh often so it disappears
+  const recentlyPlayed = (matches || []).some(m => {
+    if (!m.datetime) return false;
+    const t = new Date(m.datetime).getTime();
+    return t < now && t > now - 4 * 3600_000;
+  });
+  if (recentlyPlayed) return 5 * 60_000; // 5 min — need to pick up result quickly
+
   if (futureTimes.length === 0) return 24 * 3600_000; // no upcoming → 24 h
   const nextMs = futureTimes[0] - now;
   if (nextMs <  3 * 3600_000) return  5 * 60_000;    // next match within 3 h  → 5 min
@@ -1095,7 +1104,18 @@ router.get('/club/:code/schedule', async (req, res) => {
       },
       d => scheduleSmartTtl(d.matches),
     );
-    res.json({ ok: true, ...data, matches: enrichWithClubCodes(data.matches), stale });
+    // Filter out matches that have already been played or are more than 2 hours in the past
+    const now = Date.now();
+    const filtered = enrichWithClubCodes(data.matches).filter(m => {
+      if (m.status === 'gespeeld') return false;
+      if (m.datetime) {
+        const matchTime = new Date(m.datetime).getTime();
+        // Keep if match is in the future or started less than 2 hours ago
+        if (matchTime < now - 2 * 3600_000) return false;
+      }
+      return true;
+    });
+    res.json({ ok: true, ...data, matches: filtered, stale });
   } catch (err) {
     res.status(502).json({ ok: false, error: 'Nevobo API onbereikbaar of ongeldige code', detail: err.message });
   }
@@ -1131,7 +1151,13 @@ router.get('/team/:code/:type/:number/schedule', async (req, res) => {
       },
       d => scheduleSmartTtl(d.matches),
     );
-    res.json({ ok: true, ...data, matches: enrichWithClubCodes(data.matches), stale });
+    const now = Date.now();
+    const filtered = enrichWithClubCodes(data.matches).filter(m => {
+      if (m.status === 'gespeeld') return false;
+      if (m.datetime && new Date(m.datetime).getTime() < now - 2 * 3600_000) return false;
+      return true;
+    });
+    res.json({ ok: true, ...data, matches: filtered, stale });
   } catch (err) {
     res.status(502).json({ ok: false, error: 'Nevobo API onbereikbaar', detail: err.message });
   }

@@ -710,8 +710,21 @@ router.get('/home-summary', verifyToken, (req, res) => {
         (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
         (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
         (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
-        t.display_name AS team_name,
-        c.name AS club_name_media
+        COALESCE(
+          t.display_name,
+          (SELECT t3.display_name FROM posts p3
+           JOIN teams t3 ON t3.id = p3.team_id
+           WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
+           LIMIT 1)
+        ) AS team_name,
+        COALESCE(
+          c.name,
+          (SELECT c3.name FROM posts p3
+           JOIN teams t3 ON t3.id = p3.team_id
+           JOIN clubs c3 ON c3.id = t3.club_id
+           WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
+           LIMIT 1)
+        ) AS club_name_media
       FROM match_media mm
       JOIN users u ON u.id = mm.user_id
       LEFT JOIN posts p ON p.id = mm.post_id
@@ -785,8 +798,21 @@ router.get('/media-feed', verifyToken, (req, res) => {
       (SELECT COUNT(*) FROM media_views mv  WHERE mv.media_id  = mm.id) AS view_count,
       (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
       (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
-      t.display_name AS team_name,
-      c.name AS club_name_media
+      COALESCE(
+        t.display_name,
+        (SELECT t3.display_name FROM posts p3
+         JOIN teams t3 ON t3.id = p3.team_id
+         WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
+         LIMIT 1)
+      ) AS team_name,
+      COALESCE(
+        c.name,
+        (SELECT c3.name FROM posts p3
+         JOIN teams t3 ON t3.id = p3.team_id
+         JOIN clubs c3 ON c3.id = t3.club_id
+         WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
+         LIMIT 1)
+      ) AS club_name_media
     FROM match_media mm
     JOIN users u ON u.id = mm.user_id
     LEFT JOIN posts p ON p.id = mm.post_id
