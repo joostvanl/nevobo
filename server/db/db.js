@@ -106,27 +106,80 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN face_reference_path TEXT`,
   // Store bounding boxes of blurred faces so re-blur can skip face detection + matching
   `ALTER TABLE match_media ADD COLUMN blur_regions TEXT`,
-  // Allow match_media.user_id to be NULL so media survives user deletion
-  `CREATE TABLE IF NOT EXISTS match_media_new (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    post_id     INTEGER REFERENCES posts(id) ON DELETE CASCADE,
-    user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    match_id    TEXT,
-    file_path   TEXT NOT NULL,
-    file_type   TEXT NOT NULL DEFAULT 'image',
-    caption     TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    blur_regions TEXT
-  )`,
-  `INSERT OR IGNORE INTO match_media_new SELECT id, post_id, user_id, match_id, file_path, file_type, caption, created_at, blur_regions FROM match_media`,
-  `DROP TABLE IF EXISTS match_media_old`,
-  `ALTER TABLE match_media RENAME TO match_media_old`,
-  `ALTER TABLE match_media_new RENAME TO match_media`,
-  `DROP TABLE IF EXISTS match_media_old`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
 }
+
+// Allow match_media.user_id to be NULL so media survives user deletion.
+// Only run if user_id is still NOT NULL (check pragma).
+try {
+  const col = db.prepare("PRAGMA table_info(match_media)").all().find(c => c.name === 'user_id');
+  if (col && col.notnull === 1) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS match_media_new (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id     INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+        user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        match_id    TEXT,
+        file_path   TEXT NOT NULL,
+        file_type   TEXT NOT NULL DEFAULT 'image',
+        caption     TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        blur_regions TEXT
+      );
+      INSERT INTO match_media_new SELECT id, post_id, user_id, match_id, file_path, file_type, caption, created_at, blur_regions FROM match_media;
+      DROP TABLE match_media;
+      ALTER TABLE match_media_new RENAME TO match_media;
+    `);
+  }
+} catch (e) { console.error('[db] match_media nullable migration failed:', e.message); }
+
+// Fix broken foreign key references to match_media_old caused by prior rename migration.
+// media_views/likes/comments may still reference "match_media_old" instead of "match_media".
+try {
+  const needsFix = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='media_views'"
+  ).get();
+  if (needsFix && needsFix.sql && needsFix.sql.includes('match_media_old')) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE media_views_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+        user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        viewed_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO media_views_new SELECT * FROM media_views;
+      DROP TABLE media_views;
+      ALTER TABLE media_views_new RENAME TO media_views;
+
+      CREATE TABLE media_likes_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(media_id, user_id)
+      );
+      INSERT INTO media_likes_new SELECT * FROM media_likes;
+      DROP TABLE media_likes;
+      ALTER TABLE media_likes_new RENAME TO media_likes;
+
+      CREATE TABLE media_comments_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_id   INTEGER NOT NULL REFERENCES match_media(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body       TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO media_comments_new SELECT * FROM media_comments;
+      DROP TABLE media_comments;
+      ALTER TABLE media_comments_new RENAME TO media_comments;
+    `);
+    db.pragma('foreign_keys = ON');
+    console.log('[db] Fixed media_views/likes/comments references to match_media');
+  }
+} catch (e) { console.error('[db] media refs fix failed:', e.message); }
 
 // Multiple face references per anonymous user
 db.exec(`
