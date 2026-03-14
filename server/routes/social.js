@@ -111,7 +111,7 @@ router.post('/post', verifyToken, (req, res) => {
 
 // POST /api/social/upload — upload photos/videos with optional caption
 router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) => {
-  const { match_id, caption, team_id } = req.body;
+  const { match_id, caption, team_id, match_home_team, match_away_team } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
   if (!req.files || req.files.length === 0) {
@@ -198,8 +198,8 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
     const isVideo = file.mimetype.startsWith('video/');
     const relativePath = '/uploads/' + file.path.split(/[/\\]public[/\\]uploads[/\\]/)[1].replace(/\\/g, '/');
     const result = db.prepare(
-      'INSERT INTO match_media (post_id, user_id, match_id, file_path, file_type, caption) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(postId, req.user.id, match_id || null, relativePath, isVideo ? 'video' : 'image', caption || null);
+      'INSERT INTO match_media (post_id, user_id, match_id, file_path, file_type, caption, match_home_team, match_away_team) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(postId, req.user.id, match_id || null, relativePath, isVideo ? 'video' : 'image', caption || null, match_home_team || null, match_away_team || null);
     const item = db.prepare('SELECT * FROM match_media WHERE id = ?').get(result.lastInsertRowid);
     // Persist blur regions so re-blur can skip face detection entirely
     if (blurRegionsByIndex[i]) {
@@ -711,6 +711,7 @@ router.get('/home-summary', verifyToken, (req, res) => {
         (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
         (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
         COALESCE(
+          mm.match_home_team,
           t.display_name,
           (SELECT t3.display_name FROM posts p3
            JOIN teams t3 ON t3.id = p3.team_id
@@ -799,6 +800,7 @@ router.get('/media-feed', verifyToken, (req, res) => {
       (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
       (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
       COALESCE(
+        mm.match_home_team,
         t.display_name,
         (SELECT t3.display_name FROM posts p3
          JOIN teams t3 ON t3.id = p3.team_id
