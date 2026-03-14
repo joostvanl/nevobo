@@ -111,8 +111,9 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   function positionStylePicker() {
     const btnRect     = revertBtn.getBoundingClientRect();
     const overlayRect = overlay.getBoundingClientRect();
-    stylePicker.style.top   = (btnRect.top - overlayRect.top + btnRect.height / 2) + 'px';
-    stylePicker.style.right = (overlayRect.right - btnRect.left + 8) + 'px';
+    stylePicker.style.top       = (btnRect.top - overlayRect.top + btnRect.height / 2) + 'px';
+    stylePicker.style.right     = (overlayRect.right - btnRect.left + 8) + 'px';
+    stylePicker.style.transform = 'translateX(80px) translateY(-50%)';
   }
 
   async function enterBlurMode(m) {
