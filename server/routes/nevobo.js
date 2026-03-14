@@ -1348,5 +1348,17 @@ router.delete('/cache', async (req, res) => {
   res.json({ ok: true, message: 'Feed cache geleegd' });
 });
 
+// GET /api/nevobo/debug-teams?nevoboCode=ckl9x7n — show raw team list from cache/API
+router.get('/debug-teams', async (req, res) => {
+  const { nevoboCode } = req.query;
+  if (!nevoboCode) return res.status(400).json({ ok: false, error: 'nevoboCode verplicht' });
+  try {
+    const teams = await fetchClubCompetitionTeams(nevoboCode);
+    res.json({ ok: true, count: teams.length, teams: teams.map(t => ({ naam: t.naam, id: t['@id'] })) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
 module.exports.parseMatchItem = parseMatchItem;
