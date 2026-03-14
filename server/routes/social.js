@@ -833,6 +833,49 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
   const offset = Math.max(parseInt(req.query.offset) || 0,  0);
   const userId = req.user?.id || null;
 
+  // Resolve team display name and club nevobo_code to search feed_cache
+  const teamRow = db.prepare(`
+    SELECT t.display_name, c.nevobo_code, c.id AS club_id
+    FROM teams t JOIN clubs c ON c.id = t.club_id
+    WHERE t.id = ?
+  `).get(teamId);
+
+  // Collect match_ids from feed_cache where this team played
+  const cacheMatchIds = new Set();
+  if (teamRow) {
+    const teamNameLower = teamRow.display_name.toLowerCase();
+    const cacheKeys = db.prepare(
+      "SELECT cache_key, data_json FROM feed_cache WHERE cache_key LIKE ? OR cache_key LIKE ?"
+    ).all(`schedule:club:${teamRow.nevobo_code}`, `results:club:${teamRow.nevobo_code}`);
+
+    for (const row of cacheKeys) {
+      try {
+        const data = JSON.parse(row.data_json);
+        for (const m of (data.matches || [])) {
+          if (!m.match_id) continue;
+          const home = (m.home_team || '').toLowerCase();
+          const away = (m.away_team || '').toLowerCase();
+          if (home.includes(teamNameLower) || away.includes(teamNameLower)) {
+            cacheMatchIds.add(m.match_id);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  const cacheIds = [...cacheMatchIds];
+  const cachePH  = cacheIds.length > 0 ? cacheIds.map(() => '?').join(',') : null;
+
+  const whereClause = [
+    'p.team_id = ?',
+    // match_ids known from posts already linked to this team
+    '(mm.match_id IS NOT NULL AND mm.match_id IN (SELECT DISTINCT p2.match_id FROM posts p2 WHERE p2.team_id = ? AND p2.match_id IS NOT NULL))',
+    // match_ids found in the feed_cache for this team (catches old uploads without team_id)
+    cachePH ? `mm.match_id IN (${cachePH})` : null,
+  ].filter(Boolean).join(' OR ');
+
+  const args = [userId, teamId, teamId, ...cacheIds, limit, offset];
+
   const media = db.prepare(`
     SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
       (SELECT COUNT(*) FROM media_likes ml  WHERE ml.media_id  = mm.id) AS like_count,
@@ -846,17 +889,10 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
     LEFT JOIN posts p ON p.id = mm.post_id
     LEFT JOIN teams t ON t.id = p.team_id
     LEFT JOIN clubs cl ON cl.id = p.club_id
-    WHERE p.team_id = ?
-       OR (
-         mm.match_id IS NOT NULL
-         AND mm.match_id IN (
-           SELECT DISTINCT p2.match_id FROM posts p2
-           WHERE p2.team_id = ? AND p2.match_id IS NOT NULL
-         )
-       )
+    WHERE ${whereClause}
     ORDER BY mm.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(userId, teamId, teamId, limit, offset);
+  `).all(...args);
 
   res.json({ ok: true, media });
 });
