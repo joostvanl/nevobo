@@ -1097,7 +1097,7 @@ function renderMatchReel(el, items, canInteract) {
             const card = reelTrack.querySelector(`.hm-reel-card[data-index="${i}"]`);
             if (!card) return;
             const img = card.querySelector('img.hm-reel-media');
-            if (img) img.src = item.file_path + '?t=' + Date.now();
+            if (img) img.src = item.file_path.split('?')[0] + '?t=' + Date.now();
           });
         },
       });

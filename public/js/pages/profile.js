@@ -216,7 +216,7 @@ async function loadMyMedia(userId, container) {
               const card = el.querySelector(`.prof-media-item[data-idx="${i}"]`);
               if (!card) return;
               const img = card.querySelector('img.prof-media-thumb');
-              if (img) img.src = item.file_path + '?t=' + Date.now();
+              if (img) img.src = item.file_path.split('?')[0] + '?t=' + Date.now();
             });
           },
         });

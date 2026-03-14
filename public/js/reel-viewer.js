@@ -307,12 +307,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
             body: JSON.stringify({ faceIndex: bestIdx, style: selectedStyle }),
           });
           if (data.ok) {
-            // Reload image from server with cache-buster
-            const cacheBuster = '?t=' + Date.now();
+            // Reload image from server (no cache-buster needed — Nginx sends no-cache)
             const imgEl = slide.querySelector('img');
-            if (imgEl) imgEl.src = m.file_path.split('?')[0] + cacheBuster;
-            // Persist updated path on the list item so re-opening shows the latest version
-            m.file_path = m.file_path.split('?')[0] + cacheBuster;
+            if (imgEl) imgEl.src = m.file_path.split('?')[0] + '?t=' + Date.now();
+            // Reset file_path to clean path (strip any previous cache-buster)
+            m.file_path = m.file_path.split('?')[0];
             // Redraw overlays with updated regions
             blurRegions = data.regions || [];
             renderFaceOverlays(slide, imgEl || img, faces, blurRegions, debugOverlay);
