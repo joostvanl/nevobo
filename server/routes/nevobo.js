@@ -319,10 +319,7 @@ const ldHeaders = { 'User-Agent': 'VolleyballTeamApp/1.0', 'Accept': 'applicatio
 
 async function ldGet(path) {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
-    const r = await fetch(`${NEVOBO_API}${path}`, { headers: ldHeaders, signal: controller.signal });
-    clearTimeout(timer);
+    const r = await fetch(`${NEVOBO_API}${path}`, { headers: ldHeaders });
     if (!r.ok) return null;
     return await r.json();
   } catch (_) {
@@ -885,7 +882,6 @@ router.get('/team-by-name', async (req, res) => {
     const schedule = [];
     const results  = [];
 
-    const now = Date.now();
     for (const { type, items } of feeds) {
       for (const item of items) {
         const m = parseMatchItem(item);
@@ -893,15 +889,8 @@ router.get('/team-by-name', async (req, res) => {
         const key = m.match_id || m.title || '';
         if (seen.has(key)) continue;
         seen.add(key);
-        if (type === 'schedule') {
-          // If match is already played or started more than 2 hours ago, treat as result
-          const isExpired = m.status === 'gespeeld' ||
-            (m.datetime && new Date(m.datetime).getTime() < now - 2 * 3600_000);
-          if (isExpired) results.push(m);
-          else schedule.push(m);
-        } else {
-          results.push(m);
-        }
+        if (type === 'schedule') schedule.push(m);
+        else results.push(m);
       }
     }
 
@@ -1021,32 +1010,19 @@ router.get('/poule-stand', async (req, res) => {
   teamName = teamName.replace(/\\/g, '');
   try {
     // Step 1: find the team in the competition teams list
-    let competitionTeams = [];
-    try {
-      competitionTeams = await fetchClubCompetitionTeams(nevoboCode);
-    } catch (e) {
-      console.error('[poule-stand] fetchClubCompetitionTeams failed:', e.message);
-    }
+    const competitionTeams = await fetchClubCompetitionTeams(nevoboCode);
     const match = findMatchingTeam(competitionTeams, teamName);
-    if (!match) {
-      console.warn(`[poule-stand] Team "${teamName}" niet gevonden voor club ${nevoboCode} (${competitionTeams.length} teams opgehaald)`);
-      return res.status(404).json({ ok: false, error: 'Team niet gevonden in Nevobo competitie' });
-    }
+    if (!match) return res.status(404).json({ ok: false, error: 'Team niet gevonden in Nevobo competitie' });
 
     // Step 2: get ALL regular competition poules for this team
+    // Poule indelingen are cached for 6 h — they change at most once per half-season.
     const teamPath = match['@id'];
     const indelingenKey = `pouleindeling:${teamPath}`;
-    let indelingen = null;
-    try {
-      const result = await withFeedCache(
-        indelingenKey,
-        () => ldGet(`/competitie/pouleindelingen.jsonld?team=${encodeURIComponent(teamPath)}&limit=20`),
-        () => 6 * 3600_000,
-      );
-      indelingen = result.data;
-    } catch (e) {
-      console.error('[poule-stand] withFeedCache (indelingen) failed:', e.message);
-    }
+    const { data: indelingen } = await withFeedCache(
+      indelingenKey,
+      () => ldGet(`/competitie/pouleindelingen.jsonld?team=${encodeURIComponent(teamPath)}&limit=20`),
+      () => 6 * 3600_000,
+    );
     const regularMembers = (indelingen?.['hydra:member'] || [])
       .filter(ind => ind.poule && !ind.poule.includes('bekertoernooi'));
 
@@ -1058,13 +1034,15 @@ router.get('/poule-stand', async (req, res) => {
     regularMembers.sort((a, b) => {
       const diff = compPriority(b.poule) - compPriority(a.poule);
       if (diff !== 0) return diff;
-      return (a.gespeeld || 0) - (b.gespeeld || 0);
+      return (a.gespeeld || 0) - (b.gespeeld || 0); // fewer played = still active
     });
 
     // Step 3: fetch standings for each competition in parallel (cached per poulePath)
     const competitions = await Promise.all(regularMembers.map(async (member, idx) => {
       const poulePath = member.poule;
 
+      // Prefer member.omschrijving (e.g. "2e in Meiden A Hoofdklasse B Tweede helft")
+      // to derive the real competition name and position.
       const rawOmschrijving = member.omschrijving || '';
       const compName = rawOmschrijving
         ? rawOmschrijving.replace(/^\d+e\s+in\s+/i, '').trim()
@@ -1074,25 +1052,18 @@ router.get('/poule-stand', async (req, res) => {
         ? `${member.positie}e — ${member.gespeeld} gespeeld, ${member.punten} pnt`
         : '';
 
+      // Check standCache first
       const cached = standCache.get(poulePath);
-      let standRows = [], resolvedCompName = compName;
-      try {
-        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-          standRows = cached.rows;
-          resolvedCompName = cached.compTitle || compName;
-        } else {
-          const standRssUrl = `${NEVOBO_API}/export/poule/${poulePath.replace('/competitie/poules/', '')}/stand.rss`;
-          const { data: standData } = await withFeedCache(
-            `stand:${poulePath}`,
-            () => fetchStandRows(standRssUrl),
-            () => CACHE_TTL_MS,
-          );
-          standRows = standData?.rows || [];
-          resolvedCompName = standData?.compTitle || compName;
-          standCache.set(poulePath, { rows: standRows, compTitle: resolvedCompName, fetchedAt: Date.now() });
-        }
-      } catch (e) {
-        console.error(`[poule-stand] fetchStandRows failed for ${poulePath}:`, e.message);
+      let standRows, resolvedCompName = compName;
+      if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+        standRows = cached.rows;
+        resolvedCompName = cached.compTitle || compName;
+      } else {
+        const standRssUrl = `${NEVOBO_API}/export/poule/${poulePath.replace('/competitie/poules/', '')}/stand.rss`;
+        const result = await fetchStandRows(standRssUrl);
+        standRows = result.rows;
+        resolvedCompName = result.compTitle || compName;
+        standCache.set(poulePath, { rows: standRows, compTitle: result.compTitle, fetchedAt: Date.now() });
       }
 
       return {
@@ -1106,6 +1077,7 @@ router.get('/poule-stand', async (req, res) => {
       };
     }));
 
+    // For backward compat also include top-level fields (used by old frontend code)
     const active = competitions[0];
     res.json({
       ok: true,
@@ -1116,7 +1088,6 @@ router.get('/poule-stand', async (req, res) => {
       competitions,
     });
   } catch (err) {
-    console.error('[poule-stand] unexpected error:', err.message, err.stack);
     res.status(502).json({ ok: false, error: 'Nevobo API fout', detail: err.message });
   }
 });
@@ -1354,18 +1325,6 @@ router.delete('/cache', async (req, res) => {
   standCache.clear();
   try { db.prepare('DELETE FROM feed_cache').run(); } catch (_) {}
   res.json({ ok: true, message: 'Feed cache geleegd' });
-});
-
-// GET /api/nevobo/debug-teams?nevoboCode=ckl9x7n — show raw team list from cache/API
-router.get('/debug-teams', async (req, res) => {
-  const { nevoboCode } = req.query;
-  if (!nevoboCode) return res.status(400).json({ ok: false, error: 'nevoboCode verplicht' });
-  try {
-    const teams = await fetchClubCompetitionTeams(nevoboCode);
-    res.json({ ok: true, count: teams.length, teams: teams.map(t => ({ naam: t.naam, id: t['@id'] })) });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
 });
 
 module.exports = router;

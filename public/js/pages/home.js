@@ -280,11 +280,52 @@ function encodeMatchId(m) {
  * the user's own teams. This corrects labels for multi-team users where the stored
  * posts.team_id might point to the wrong team.
  */
+async function resolveMediaTeamNames(recentMedia, memberTeams, followedTeams) {
+  // The backend now resolves team_name via COALESCE on match_id, so this is only
+  // needed to further refine for items where the DB team_name might not match the
+  // viewer's known team names (e.g. abbreviated names).
+  const allTeams = [...(memberTeams || []), ...(followedTeams || [])];
+  const itemsWithMatch = recentMedia.filter(m => m.match_id);
+  if (!itemsWithMatch.length || !allTeams.length) return;
+
+  // Collect unique club nevobo codes to fetch schedules for
+  const uniqueCodes = [...new Set(allTeams.map(t => t.nevobo_code).filter(Boolean))];
+  const scheduleMatches = [];
+  for (const code of uniqueCodes) {
+    try {
+      const [s, r] = await Promise.all([
+        api(`/api/nevobo/club/${code}/schedule`).catch(() => ({ matches: [] })),
+        api(`/api/nevobo/club/${code}/results`).catch(() => ({ matches: [] })),
+      ]);
+      scheduleMatches.push(...(s.matches || []), ...(r.matches || []));
+    } catch (_) { /* ignore */ }
+  }
+  if (!scheduleMatches.length) return;
+
+  for (const m of itemsWithMatch) {
+    const match = scheduleMatches.find(nm => encodeMatchId(nm) === m.match_id);
+    if (!match) continue;
+    // Find the longest-matching team name from teams the viewer knows about
+    const matched = allTeams
+      .filter(t => {
+        const dn = (t.display_name || '').toLowerCase();
+        if (dn.length < 3) return false;
+        return (match.home_team || '').toLowerCase().includes(dn)
+            || (match.away_team || '').toLowerCase().includes(dn);
+      })
+      .sort((a, b) => b.display_name.length - a.display_name.length)[0];
+    // Only override if we found a match — otherwise keep the DB-resolved team_name
+    if (matched) m.team_name = matched.display_name;
+  }
+}
+
 async function loadMedia(recentMedia, memberTeams, followedTeams) {
   const el = document.getElementById('hm-media');
   if (!el) return;
   if (!recentMedia.length) { el.innerHTML = ''; return; }
 
+  // Resolve correct team names from match context before first render
+  await resolveMediaTeamNames(recentMedia, memberTeams, followedTeams);
 
   el.innerHTML = `
     <div class="hm-reel-wrap">
