@@ -159,7 +159,8 @@ router.get('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => {
   const teamId = parseInt(req.params.teamId);
   const members = db.prepare(`
     SELECT tm.*, u.name, u.email, u.avatar_url, u.level, u.xp,
-           u.shirt_number, u.position, u.birth_date
+           u.birth_date,
+           tm.shirt_number, tm.position
     FROM team_memberships tm JOIN users u ON u.id = tm.user_id
     WHERE tm.team_id = ?
     ORDER BY tm.membership_type, u.name
@@ -200,14 +201,35 @@ router.post('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => 
   }
 });
 
-// PATCH /api/admin/teams/:teamId/members/:userId — update membership_type
+// PATCH /api/admin/teams/:teamId/members/:userId — update membership fields
 router.patch('/teams/:teamId/members/:userId', requireTeamAdmin('teamId'), (req, res) => {
-  const { membership_type } = req.body;
-  if (!['player', 'coach', 'staff', 'parent'].includes(membership_type)) {
-    return res.status(400).json({ ok: false, error: 'Ongeldig roltype' });
+  const { membership_type, shirt_number, position } = req.body;
+  const teamId = req.params.teamId;
+  const userId = req.params.userId;
+
+  const fields = [];
+  const vals   = [];
+
+  if (membership_type !== undefined) {
+    if (!['player', 'coach', 'staff', 'parent'].includes(membership_type)) {
+      return res.status(400).json({ ok: false, error: 'Ongeldig roltype' });
+    }
+    fields.push('membership_type = ?');
+    vals.push(membership_type);
   }
-  db.prepare('UPDATE team_memberships SET membership_type = ? WHERE team_id = ? AND user_id = ?')
-    .run(membership_type, req.params.teamId, req.params.userId);
+  if (shirt_number !== undefined) {
+    fields.push('shirt_number = ?');
+    vals.push(shirt_number === '' || shirt_number === null ? null : parseInt(shirt_number));
+  }
+  if (position !== undefined) {
+    fields.push('position = ?');
+    vals.push(position || null);
+  }
+
+  if (!fields.length) return res.status(400).json({ ok: false, error: 'Geen velden om bij te werken' });
+
+  vals.push(teamId, userId);
+  db.prepare(`UPDATE team_memberships SET ${fields.join(', ')} WHERE team_id = ? AND user_id = ?`).run(...vals);
   res.json({ ok: true });
 });
 
@@ -218,12 +240,30 @@ router.delete('/teams/:teamId/members/:userId', requireTeamAdmin('teamId'), (req
   res.json({ ok: true });
 });
 
-// POST /api/admin/users/:userId/profile — edit player PII fields
-// Accessible by: super_admin, club_admin of de betreffende club, team_admin van een team waar de speler in zit
-router.post('/users/:userId/profile', (req, res) => {
+// GET /api/admin/users/:userId/profile — fetch current profile data
+router.get('/users/:userId/profile', (req, res) => {
   const requesterId = req.user.id;
   const targetId = parseInt(req.params.userId);
-  const { name, email, shirt_number, position, birth_date } = req.body;
+
+  const target = db.prepare('SELECT id, name, email, birth_date FROM users WHERE id = ?').get(targetId);
+  if (!target) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+
+  const userTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(targetId).map(r => r.team_id);
+  const userClub  = db.prepare('SELECT club_id FROM users WHERE id = ?').get(targetId);
+  const canView   = hasSuperAdmin(requesterId) ||
+    (userClub && hasClubAdmin(requesterId, userClub.club_id)) ||
+    userTeams.some(tid => hasTeamAdmin(requesterId, tid));
+  if (!canView) return res.status(403).json({ ok: false, error: 'Geen rechten' });
+
+  res.json({ ok: true, user: target });
+});
+
+// POST /api/admin/users/:userId/profile — edit user fields incl. optional password reset
+// Accessible by: super_admin, club_admin of de betreffende club, team_admin van een team waar de speler in zit
+router.post('/users/:userId/profile', async (req, res) => {
+  const requesterId = req.user.id;
+  const targetId = parseInt(req.params.userId);
+  const { name, email, birth_date, password } = req.body;
 
   // Authorization: check if requester has any admin role over this user
   const userTeams = db.prepare(
@@ -251,9 +291,23 @@ router.post('/users/:userId/profile', (req, res) => {
   const vals = [];
   if (name !== undefined)         { fields.push('name = ?');         vals.push(name.trim()); }
   if (email !== undefined)        { fields.push('email = ?');        vals.push(email.trim().toLowerCase()); }
-  if (shirt_number !== undefined) { fields.push('shirt_number = ?'); vals.push(shirt_number === '' ? null : parseInt(shirt_number)); }
-  if (position !== undefined)     { fields.push('position = ?');     vals.push(position || null); }
   if (birth_date !== undefined)   { fields.push('birth_date = ?');   vals.push(birth_date || null); }
+
+  // Password reset — only allowed for club_admin or super_admin (not team_admin)
+  if (password !== undefined && password.trim() !== '') {
+    const canResetPassword = hasSuperAdmin(requesterId) ||
+      (userClub && hasClubAdmin(requesterId, userClub.club_id));
+    if (!canResetPassword) {
+      return res.status(403).json({ ok: false, error: 'Alleen clubbeheerders mogen wachtwoorden resetten' });
+    }
+    if (password.trim().length < 6) {
+      return res.status(400).json({ ok: false, error: 'Wachtwoord moet minimaal 6 tekens zijn' });
+    }
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash(password.trim(), 10);
+    fields.push('password_hash = ?');
+    vals.push(hash);
+  }
 
   if (!fields.length) return res.status(400).json({ ok: false, error: 'Geen velden om te bewerken' });
 
@@ -261,7 +315,7 @@ router.post('/users/:userId/profile', (req, res) => {
   db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
 
   const updated = db.prepare(
-    'SELECT id, name, email, shirt_number, position, birth_date FROM users WHERE id = ?'
+    'SELECT id, name, email, birth_date FROM users WHERE id = ?'
   ).get(targetId);
 
   res.json({ ok: true, user: updated });

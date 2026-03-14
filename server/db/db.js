@@ -106,6 +106,9 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN face_reference_path TEXT`,
   // Store bounding boxes of blurred faces so re-blur can skip face detection + matching
   `ALTER TABLE match_media ADD COLUMN blur_regions TEXT`,
+  // shirt_number and position belong to the team membership, not the user
+  `ALTER TABLE team_memberships ADD COLUMN shirt_number INTEGER`,
+  `ALTER TABLE team_memberships ADD COLUMN position TEXT`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

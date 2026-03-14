@@ -214,8 +214,28 @@ async function renderClubAdminTab(panel, clubId) {
               <strong style="font-size:0.9rem">${escHtml(u.name)}</strong>
               <span class="text-muted text-small" style="display:block">${escHtml(u.email || '')}${u.team_names ? ` · ${escHtml(u.team_names)}` : ''}</span>
             </div>
-            <button class="btn btn-danger btn-sm delete-user-btn" data-userid="${u.id}" data-username="${escAttr(u.name)}" style="flex-shrink:0;margin-left:0.5rem">🗑 Verwijder</button>
+            <div style="display:flex;gap:0.4rem;flex-shrink:0;margin-left:0.5rem">
+              <button class="btn btn-secondary btn-sm edit-user-btn"
+                data-userid="${u.id}"
+                data-username="${escAttr(u.name)}"
+                data-email="${escAttr(u.email || '')}"
+                data-teamnames="${escAttr(u.team_names || '')}">✏️ Bewerk</button>
+              <button class="btn btn-danger btn-sm delete-user-btn"
+                data-userid="${u.id}"
+                data-username="${escAttr(u.name)}">🗑</button>
+            </div>
           </div>`).join('');
+
+        usersEl.querySelectorAll('.edit-user-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            showEditUserModal({
+              userId:    btn.dataset.userid,
+              name:      btn.dataset.username,
+              email:     btn.dataset.email,
+              teamNames: btn.dataset.teamnames,
+            }, () => renderClubAdminTab(panel, clubId));
+          });
+        });
 
         usersEl.querySelectorAll('.delete-user-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
@@ -273,6 +293,7 @@ async function renderTeamAdminTab(panel, teamId) {
         e.stopPropagation();
         showEditPlayerModal({
           userId:    btn.dataset.userid,
+          teamId:    teamId,
           name:      btn.dataset.name,
           email:     btn.dataset.email,
           shirt:     btn.dataset.shirt,
@@ -610,27 +631,18 @@ function showChangeRoleModal(teamId, userId, userName, currentRole, onSuccess) {
   });
 }
 
-function showEditPlayerModal({ userId, name, email, shirt, position, birthDate }, onSuccess) {
+function showEditPlayerModal({ userId, teamId, name, email, shirt, position, birthDate }, onSuccess) {
   const POSITIONS = ['Libero', 'Setter', 'Outside hitter', 'Opposite', 'Middle blocker', 'Defensive specialist'];
 
   const overlay = document.createElement('div');
   overlay.className = 'badge-unlock-overlay';
   overlay.innerHTML = `
     <div class="badge-unlock-card" style="max-width:380px">
-      <h3 style="margin-bottom:0.25rem">✏️ Speler bewerken</h3>
-      <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1.25rem">
-        ℹ️ Persoonlijke gegevens — alleen zichtbaar voor beheerders
-      </p>
+      <h3 style="margin-bottom:1rem">✏️ ${escHtml(name)}</h3>
+
+      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.05em">Teamgegevens</p>
       <div class="form-group">
-        <label class="form-label">Naam</label>
-        <input type="text" id="ep-name" class="form-input" value="${escAttr(name)}" />
-      </div>
-      <div class="form-group">
-        <label class="form-label">E-mailadres</label>
-        <input type="email" id="ep-email" class="form-input" value="${escAttr(email)}" />
-      </div>
-      <div class="form-group">
-        <label class="form-label">Shirtnummer</label>
+        <label class="form-label">Rugnummer</label>
         <input type="number" id="ep-shirt" class="form-input" value="${escAttr(shirt)}" min="1" max="99" placeholder="Bijv. 7" />
       </div>
       <div class="form-group">
@@ -640,10 +652,21 @@ function showEditPlayerModal({ userId, name, email, shirt, position, birthDate }
           ${POSITIONS.map(p => `<option value="${p}"${position === p ? ' selected' : ''}>${p}</option>`).join('')}
         </select>
       </div>
+
+      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:0.05em">Persoonsgegevens</p>
+      <div class="form-group">
+        <label class="form-label">Naam</label>
+        <input type="text" id="ep-name" class="form-input" value="${escAttr(name)}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">E-mailadres</label>
+        <input type="email" id="ep-email" class="form-input" value="${escAttr(email)}" />
+      </div>
       <div class="form-group">
         <label class="form-label">Geboortedatum</label>
         <input type="date" id="ep-birthdate" class="form-input" value="${escAttr(birthDate)}" />
       </div>
+
       <div class="flex gap-2 mt-3">
         <button class="btn btn-secondary" style="flex:1" id="ep-cancel">Annuleren</button>
         <button class="btn btn-primary" style="flex:1" id="ep-save">Opslaan</button>
@@ -658,14 +681,21 @@ function showEditPlayerModal({ userId, name, email, shirt, position, birthDate }
     saveBtn.disabled = true;
     saveBtn.textContent = 'Bezig…';
     try {
+      // Save team-specific fields via membership endpoint
+      await api(`/api/admin/teams/${teamId}/members/${userId}`, {
+        method: 'PATCH',
+        body: {
+          shirt_number: overlay.querySelector('#ep-shirt').value,
+          position:     overlay.querySelector('#ep-position').value,
+        },
+      });
+      // Save personal fields via user profile endpoint
       await api(`/api/admin/users/${userId}/profile`, {
         method: 'POST',
         body: {
-          name:         overlay.querySelector('#ep-name').value.trim(),
-          email:        overlay.querySelector('#ep-email').value.trim(),
-          shirt_number: overlay.querySelector('#ep-shirt').value,
-          position:     overlay.querySelector('#ep-position').value,
-          birth_date:   overlay.querySelector('#ep-birthdate').value,
+          name:       overlay.querySelector('#ep-name').value.trim(),
+          email:      overlay.querySelector('#ep-email').value.trim(),
+          birth_date: overlay.querySelector('#ep-birthdate').value,
         },
       });
       overlay.remove();
@@ -686,4 +716,67 @@ function escHtml(str) {
 }
 function escAttr(str) {
   return (str || '').replace(/"/g, '&quot;');
+}
+
+// ─── Edit user modal (club admin) ─────────────────────────────────────────────
+
+function showEditUserModal({ userId, name, email, teamNames }, onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:400px">
+      <h3 style="margin-bottom:1rem">✏️ Gebruiker bewerken</h3>
+      <p class="text-muted text-small" style="margin-bottom:1rem">${escHtml(teamNames || 'Geen team')}</p>
+      <div class="form-group">
+        <label class="form-label">Naam</label>
+        <input type="text" id="eu-name" class="form-input" value="${escAttr(name)}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">E-mailadres</label>
+        <input type="email" id="eu-email" class="form-input" value="${escAttr(email)}" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Geboortedatum</label>
+        <input type="date" id="eu-birth" class="form-input" />
+      </div>
+      <div class="form-group" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.5rem">
+        <label class="form-label">Nieuw wachtwoord <span class="text-muted">(leeglaten = niet wijzigen)</span></label>
+        <input type="password" id="eu-password" class="form-input" placeholder="Minimaal 6 tekens" autocomplete="new-password" />
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button class="btn btn-secondary" style="flex:1" id="eu-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="eu-save">Opslaan</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Pre-load current user data
+  api(`/api/admin/users/${userId}/profile`).then(data => {
+    if (data.user) {
+      if (data.user.birth_date) overlay.querySelector('#eu-birth').value = data.user.birth_date;
+    }
+  }).catch(() => {});
+
+  overlay.querySelector('#eu-cancel').addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#eu-save').addEventListener('click', async () => {
+    const body = {
+      name:       overlay.querySelector('#eu-name').value.trim(),
+      email:      overlay.querySelector('#eu-email').value.trim(),
+      birth_date: overlay.querySelector('#eu-birth').value,
+    };
+    const pw = overlay.querySelector('#eu-password').value;
+    if (pw) body.password = pw;
+
+    if (!body.name) { showToast('Naam is verplicht', 'error'); return; }
+
+    try {
+      await api(`/api/admin/users/${userId}/profile`, { method: 'POST', body: JSON.stringify(body) });
+      showToast('Gebruiker opgeslagen', 'success');
+      overlay.remove();
+      onSuccess?.();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 }
