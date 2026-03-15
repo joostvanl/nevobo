@@ -167,13 +167,16 @@ router.get('/:id/teams', (req, res) => {
       db.prepare("SELECT followee_id FROM user_follows WHERE follower_id = ? AND followee_type = 'team'")
         .all(userId).map(f => f.followee_id)
     );
-    const user = db.prepare('SELECT team_id FROM users WHERE id = ?').get(userId);
+    const memberTeamIds = new Set(
+      db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?')
+        .all(userId).map(r => r.team_id)
+    );
     return res.json({
       ok: true,
       teams: teams.map(t => ({
         ...t,
         is_following: followedTeamIds.has(t.id),
-        is_own_team: user?.team_id === t.id,
+        is_own_team: memberTeamIds.has(t.id),
       })),
     });
   }
@@ -217,9 +220,7 @@ router.get('/:id/teams/:teamId', async (req, res) => {
     isFollowing = !!db.prepare(
       "SELECT 1 FROM user_follows WHERE follower_id = ? AND followee_type = 'team' AND followee_id = ?"
     ).get(userId, team.id);
-    const user = db.prepare('SELECT team_id FROM users WHERE id = ?').get(userId);
-    isOwnTeam = user?.team_id === team.id ||
-      !!db.prepare('SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ?').get(userId, team.id);
+    isOwnTeam = !!db.prepare('SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ?').get(userId, team.id);
   }
 
   // Ensure home_address is populated (detect if missing)

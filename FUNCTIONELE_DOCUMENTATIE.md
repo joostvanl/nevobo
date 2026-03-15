@@ -505,3 +505,7 @@ Het restore script:
 - Zet de lokale dev-server **niet** handmatig stop vóór een backup — het script handelt dat zelf af
 - Kopieer **nooit** alleen het `.db` bestand zonder de bijbehorende `.wal`/`.shm` — dit levert een corrupte backup op als de server draait
 - De `backups/` map staat in `.gitignore` en wordt nooit gecommit
+
+### Downtime bij pull
+
+Een content pull (`node scripts/pull-from-pi.js`) veroorzaakt **korte downtime op productie**. Het script stopt namelijk de `volleyapp` Docker container om een consistente database-snapshot te garanderen (zonder actieve writes), en herstart de container daarna automatisch. De downtime duurt typisch **10–30 seconden**. Plan een pull daarom buiten drukke gebruiksperiodes.

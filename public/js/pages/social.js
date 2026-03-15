@@ -262,7 +262,7 @@ function renderDiscoverTab(data, user, followingTeamIds, followingClubIds) {
         <div class="discover-section-title">🏐 Teams in jouw club — ${ownClub.name}</div>
         <p class="text-muted text-small mb-2">Volg andere teams uit jouw club om hun wedstrijden en updates te zien.</p>
         ${myTeams.map(t => {
-          const isOwn = t.id === user.team_id;
+          const isOwn = t.is_own_team === true;
           const isFollowing = followingTeamIds.has(t.id);
           return `
             <div class="card mb-2">

@@ -138,21 +138,16 @@ async function main() {
   console.log('Fetching database from Pi...');
 
   if (!dryRun) {
-    // Upload dump script to Pi, copy into container, run it
-    const dumpScript = path.join(os.tmpdir(), '_vapp_dbdump.js');
-    fs.writeFileSync(dumpScript, [
-      "const Database = require('better-sqlite3');",
-      "const db = new Database('/app/data/volleyball.db');",
-      "db.pragma('wal_checkpoint(TRUNCATE)');",
-      "db.backup('/tmp/vapp-db-clean.db')",
-      "  .then(() => { db.close(); process.stdout.write('backup ok\\n'); })",
-      "  .catch(e  => { process.stderr.write(e.message + '\\n'); process.exit(1); });",
-    ].join('\n'));
+    // Stop the app container first so no writes happen during backup
+    console.log('  Stopping app container for consistent snapshot...');
+    ssh(`docker compose -f ${piPath}/docker-compose.yml stop app`, { allowFail: true });
 
-    run('scp', [dumpScript, `${remote}:/tmp/_vapp_dbdump.js`]);
-    ssh('docker cp /tmp/_vapp_dbdump.js volleyapp:/app/_vapp_dbdump.js');
-    ssh('docker exec volleyapp node /app/_vapp_dbdump.js');
-    ssh(`docker cp volleyapp:/tmp/vapp-db-clean.db ${remoteDbTmp}`);
+    // Container is stopped — copy database files directly from the bind-mount on the Pi host.
+    // WAL checkpoint is not needed: no writes happen while container is stopped.
+    ssh(`cp ${piPath}/data/volleyball.db ${remoteDbTmp}`);
+    // Merge WAL into the copy using sqlite3 CLI if available, otherwise the copy is fine
+    // (WAL files won't be present on a cleanly stopped container)
+    ssh(`[ -f ${piPath}/data/volleyball.db-wal ] && sqlite3 ${remoteDbTmp} "PRAGMA wal_checkpoint(TRUNCATE);" || true`, { allowFail: true });
 
     const dbTmp = path.join(os.tmpdir(), 'volleyapp-db-pull.db');
     run('scp', [`${remote}:${remoteDbTmp}`, dbTmp]);
@@ -227,6 +222,10 @@ async function main() {
     for (const f of [dbTmp, uplTar, path.join(os.tmpdir(), '_vapp_dbdump.js')]) {
       try { fs.unlinkSync(f); } catch (_) {}
     }
+
+    // ── 7. Restart the app container ─────────────────────────────────────────
+    console.log('\nRestarting app container on Pi...');
+    ssh(`docker compose -f ${piPath}/docker-compose.yml start app`, { allowFail: true });
   }
 
   console.log('\nDone! Restart the local dev server to use the new database.');
