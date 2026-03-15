@@ -402,15 +402,23 @@ async function loadResults(memberTeams, followedTeams, me) {
 
   if (!unique.length) { el.innerHTML = ''; return; }
 
+  // Extra club codes from the user's own teams — used to find cross-club matches
+  // (e.g. a match of a followed team against one of our own teams may only appear
+  //  in our own club's RSS feed, not in the followed club's feed)
+  const ownCodes = [...new Set(memberTeams.map(t => t.nevobo_code).filter(Boolean))];
+
   const data = await Promise.allSettled(
-    unique.map(t =>
-      api(`/api/nevobo/club/${t.nevobo_code}/results`)
-        .then(d => ({
-          team: t,
-          results: (d.matches||[]).filter(m => matchBelongsToTeam(m, t.display_name)).slice(0, 3),
-        }))
-        .catch(() => ({ team: t, results: [] }))
-    )
+    unique.map(t => {
+      const extraCodes = ownCodes.filter(c => c !== t.nevobo_code).join(',');
+      const params = new URLSearchParams({
+        teamName: t.display_name,
+        teamNevoboCode: t.nevobo_code,
+        ...(extraCodes ? { extraCodes } : {}),
+      });
+      return api(`/api/nevobo/team-recent-results?${params}`)
+        .then(d => ({ team: t, results: d.matches || [] }))
+        .catch(() => ({ team: t, results: [] }));
+    })
   );
 
   const sections = data

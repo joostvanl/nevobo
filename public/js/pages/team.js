@@ -282,7 +282,6 @@ function renderPage(container, opts) {
   });
 
   // ── Load team media async ──────────────────────────────────────────────────
-  console.log('[team-media] opts.teamId=', opts.teamId);
   if (opts.teamId) {
     loadTeamMedia(opts.teamId, displayName, nevoboCode);
   } else {
@@ -548,13 +547,11 @@ function fillNevoboData(container, teamData, displayName, nevoboCode) {
 // ─── Team media reel ──────────────────────────────────────────────────────────
 async function loadTeamMedia(teamId, displayName, nevoboCode) {
   const el = document.getElementById('team-media');
-  console.log('[team-media] loadTeamMedia called, teamId=', teamId, 'el=', el);
   if (!el) return;
 
   try {
     const data = await api(`/api/social/team-media/${teamId}?limit=20`);
     const media = data.media || [];
-    console.log('[team-media] got', media.length, 'items');
 
     if (!media.length) {
       el.remove();

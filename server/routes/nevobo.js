@@ -147,7 +147,7 @@ async function travelTimeMinutes(fromAddress, toAddress) {
   if (travelTimeCache.has(key)) return travelTimeCache.get(key);
   const [from, to] = await Promise.all([geocodeAddress(fromAddress), geocodeAddress(toAddress)]);
   if (!from || !to) {
-    console.log('[travel-time] geocode failed — from:', !!from, 'to:', !!to);
+    console.warn('[travel-time] geocode failed — from:', !!from, 'to:', !!to);
     return null;
   }
   try {
@@ -159,9 +159,9 @@ async function travelTimeMinutes(fromAddress, toAddress) {
       travelTimeCache.set(key, minutes);
       return minutes;
     }
-    console.log('[travel-time] OSRM unexpected response:', data.code);
+    console.warn('[travel-time] OSRM unexpected response:', data.code);
   } catch (err) {
-    console.log('[travel-time] OSRM error:', err.message);
+    console.warn('[travel-time] OSRM error:', err.message);
   }
   return null;
 }
@@ -1100,6 +1100,61 @@ router.get('/poule-stand', async (req, res) => {
   }
 });
 
+// GET /api/nevobo/team-recent-results?teamName=...&teamNevoboCode=...&extraCodes=...
+// Returns the last 3 results for a specific team, searching both the team's club feed
+// and any extra club feeds (e.g. the requesting user's own clubs) to handle cross-club matches.
+router.get('/team-recent-results', async (req, res) => {
+  const { teamName, teamNevoboCode } = req.query;
+  // Optional comma-separated extra club codes to also search (own club feeds)
+  const extraCodes = (req.query.extraCodes || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+  if (!teamName || !teamNevoboCode) {
+    return res.status(400).json({ ok: false, error: 'teamName en teamNevoboCode zijn verplicht' });
+  }
+
+  const normTeamName = normalizeName(teamName);
+  const codesToSearch = new Set([teamNevoboCode.toLowerCase(), ...extraCodes]);
+
+  const matchFilter = m => {
+    const home = normalizeName(m.home_team);
+    const away = normalizeName(m.away_team);
+    return home === normTeamName || away === normTeamName
+      || home.endsWith(normTeamName) || away.endsWith(normTeamName)
+      || home.includes(normTeamName) || away.includes(normTeamName);
+  };
+
+  try {
+    const fetches = Array.from(codesToSearch).map(clubCode =>
+      withFeedCache(
+        `results:club:${clubCode}`,
+        async () => {
+          const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${clubCode}/resultaten.rss`);
+          return { matches: (feed.items || []).map(parseMatchItem) };
+        },
+        d => resultsSmartTtl(d.matches),
+      ).then(({ data }) => data.matches || []).catch(() => [])
+    );
+
+    const allResults = (await Promise.all(fetches)).flat();
+
+    // Deduplicate by match_id and filter to this team
+    const seen = new Set();
+    const results = [];
+    for (const m of allResults) {
+      if (!matchFilter(m)) continue;
+      const key = m.match_id || (m.home_team + '|' + m.away_team + '|' + m.datetime);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push(m);
+    }
+
+    results.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+    res.json({ ok: true, matches: enrichWithClubCodes(results.slice(0, 3)) });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: 'Nevobo API onbereikbaar', detail: err.message });
+  }
+});
+
 // GET /api/nevobo/club/:code/schedule
 router.get('/club/:code/schedule', async (req, res) => {
   const code = req.params.code;
@@ -1239,9 +1294,7 @@ router.get('/geocode', async (req, res) => {
 router.get('/travel-time', async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) return res.status(400).json({ ok: false, error: 'from en to zijn verplicht' });
-  console.log('[travel-time] from:', from, '→ to:', to);
   const minutes = await travelTimeMinutes(from, to);
-  console.log('[travel-time] result:', minutes, 'min');
   if (minutes === null) return res.status(404).json({ ok: false, error: 'Reistijd kon niet worden berekend' });
   res.json({ ok: true, minutes });
 });

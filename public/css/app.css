@@ -2455,7 +2455,11 @@ img.hl-avatar {
 
 /* ── MEDIA REEL (TikTok-style) ── */
 .hm-reel-wrap {
-  /* bleed edge-to-edge out of the padded hm-body */
+  overflow: hidden;
+}
+/* On the homepage the reel sits inside .hm-body which has 0.85rem side padding;
+   bleed edge-to-edge by pulling back with a negative margin */
+.hm-body .hm-reel-wrap {
   margin: 0 -0.85rem;
 }
 .hm-reel-header {

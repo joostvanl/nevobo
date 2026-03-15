@@ -131,16 +131,12 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
     const anonTeam  = userTeams.find(t => teamHasAnonymousMembers(t.team_id));
     if (anonTeam) {
       effectiveTeamId = anonTeam.team_id;
-      console.log(`[upload] No team_id from frontend → using uploader's team ${effectiveTeamId} for anon scope`);
     }
   }
 
   const needsAnonymisation = effectiveTeamId ? teamHasAnonymousMembers(effectiveTeamId) : false;
-  console.log(`[upload] team_id="${team_id}" effective=${effectiveTeamId} needsAnon=${needsAnonymisation} files=${req.files.length}`);
 
   if (!needsAnonymisation) {
-    if (!effectiveTeamId) console.log('[upload] No team context — skipping blur');
-    else console.log(`[upload] Team ${effectiveTeamId} has no anonymous members — skipping blur`);
   }
 
   // Phase 1: EXIF normalize + (if needed) quality check + face blur per image.
@@ -183,7 +179,7 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
         console.error('[upload] Face blur failed, continuing without blur:', err.message);
       }
     } else {
-      console.log(`[upload] Skipping face blur for ${file.originalname} — quality: ${qualityFlagsByIndex[i].join('; ')}`);
+      // quality too low — skip blur silently
     }
   }
 
@@ -424,7 +420,6 @@ router.post('/media/:id/reblur', verifyToken, async (req, res) => {
       const regions = JSON.parse(item.blur_regions);
       const ok = await applyBlurRegions(fullPath, regions);
       blurred = !!ok;
-      console.log(`[reblur] media ${item.id}: used stored regions (${regions.length} face(s)), blurred=${blurred}`);
     } else {
       // Fall-back: full face detection + matching (older uploads without stored regions)
       const result = await blurFacesIfNeeded(fullPath, item.post_team_id || null);
@@ -433,7 +428,6 @@ router.post('/media/:id/reblur', verifyToken, async (req, res) => {
         db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?')
           .run(JSON.stringify(result.regions), item.id);
       }
-      console.log(`[reblur] media ${item.id}: full detection fallback, blurred=${blurred}`);
     }
     res.json({ ok: true, blurred });
   } catch (err) {
@@ -466,7 +460,6 @@ router.get('/media/:id/detect-faces', verifyToken, async (req, res) => {
     const faces      = await detectAllFaces(basePath);
     const blurRegions = item.blur_regions ? JSON.parse(item.blur_regions) : [];
     const debugOverlay = (process.env.FACE_BLUR_DEBUG || '').trim() === 'true';
-    console.log(`[detect-faces] media ${item.id}: ${faces.length} face(s) found`);
     res.json({ ok: true, faces, blurRegions, debugOverlay });
   } catch (err) {
     console.error('[detect-faces] Error:', err.message);
@@ -551,7 +544,6 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
     const regionsJson = newRegions.length > 0 ? JSON.stringify(newRegions) : null;
     db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?').run(regionsJson, item.id);
 
-    console.log(`[toggle-face-blur] media ${item.id}: ${action} face ${faceIndex}, regions=${newRegions.length}`);
     res.json({ ok: true, action, regions: newRegions });
   } catch (err) {
     console.error('[toggle-face-blur] Error:', err.message);
