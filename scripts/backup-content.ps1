@@ -25,8 +25,9 @@ New-Item -ItemType Directory -Force -Path $dest | Out-Null
 # --- Database ---
 if (Test-Path $dbSrc) {
     Write-Host "Backing up database..." -ForegroundColor Yellow
+    # Copy .db + .wal + .shm together — SQLite merges the WAL automatically on open.
+    # This is safe whether or not the server is running.
     Copy-Item $dbSrc $dbDest -Force
-    # Also copy WAL/SHM if present (consistent snapshot)
     if (Test-Path "$dbSrc-wal") { Copy-Item "$dbSrc-wal" "$dbDest-wal" -Force }
     if (Test-Path "$dbSrc-shm") { Copy-Item "$dbSrc-shm" "$dbDest-shm" -Force }
     $sz = (Get-Item $dbDest).Length

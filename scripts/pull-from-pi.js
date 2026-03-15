@@ -96,20 +96,41 @@ async function main() {
 
   // ── Fetch database ──────────────────────────────────────────────────────────
   console.log('\nFetching database from Pi...');
-  // WAL checkpoint + docker cp
-  let dbOk = ssh(
-    `docker cp volleyapp:/app/data/volleyball.db ${remoteDbTmp}`,
-    { allowFail: true }
-  );
-  if (dbOk !== 0) {
-    console.log('  docker cp failed, trying direct file copy...');
-    dbOk = ssh(`cp ${piPath}/data/volleyball.db ${remoteDbTmp}`, { allowFail: true });
-    if (dbOk !== 0) { console.error('ERROR: Cannot find database on Pi.'); process.exit(1); }
-  }
+
+  // Step 1: upload a small Node script into the container that uses better-sqlite3's
+  // own .backup() API for a guaranteed WAL-flushed, consistent snapshot.
+  const dumpScriptLocal = path.join(os.tmpdir(), '_vapp_dbdump.js');
+  fs.writeFileSync(dumpScriptLocal, [
+    "const Database = require('better-sqlite3');",
+    "const db = new Database('/app/data/volleyball.db');",
+    "db.pragma('wal_checkpoint(TRUNCATE)');",
+    "db.backup('/tmp/vapp-db-clean.db')",
+    "  .then(() => { db.close(); process.stdout.write('OK\\n'); })",
+    "  .catch(e => { process.stderr.write(e.message + '\\n'); process.exit(1); });",
+  ].join('\n'));
+
+  // Step 2: scp the script to Pi host, then docker cp into container, then run it
+  run('scp', [dumpScriptLocal, `${remote}:/tmp/_vapp_dbdump.js`]);
+  ssh('docker cp /tmp/_vapp_dbdump.js volleyapp:/app/_vapp_dbdump.js');
+  ssh('docker exec volleyapp node /app/_vapp_dbdump.js');
+  // Step 3: docker cp the clean backup out to Pi host, then scp to local temp
+  ssh(`docker cp volleyapp:/tmp/vapp-db-clean.db ${remoteDbTmp}`);
 
   const dbTmp = path.join(os.tmpdir(), 'volleyapp-db-pull.db');
   run('scp', [`${remote}:${remoteDbTmp}`, dbTmp]);
-  console.log(`  Downloaded: ${(fs.statSync(dbTmp).size / 1024).toFixed(0)} KB`);
+
+  // Step 4: verify integrity before touching the local database
+  try {
+    const Database = require('better-sqlite3');
+    const testDb = new Database(dbTmp, { readonly: true });
+    const check = testDb.pragma('integrity_check')[0].integrity_check;
+    testDb.close();
+    if (check !== 'ok') { console.error(`ERROR: Downloaded database failed integrity check: ${check}`); process.exit(1); }
+  } catch (e) {
+    console.error(`ERROR: Downloaded database is corrupt: ${e.message}`);
+    process.exit(1);
+  }
+  console.log(`  Downloaded and verified: ${(fs.statSync(dbTmp).size / 1024).toFixed(0)} KB`);
 
   // ── Fetch uploads ───────────────────────────────────────────────────────────
   console.log('\nFetching uploads from Pi...');
