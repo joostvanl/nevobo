@@ -7,7 +7,7 @@ const db = require('../db/db');
 const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
 const sharp = require('sharp');
-const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
+const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
 // Multer storage: save to public/uploads/<year>/<month>/
 const storage = multer.diskStorage({
@@ -366,7 +366,13 @@ router.get('/media/:id/has-original', verifyToken, (req, res) => {
     teamHasAnon = uploaderTeams.some(t => teamHasAnonymousMembers(t.team_id));
   }
 
-  res.json({ ok: true, hasOriginal, teamHasAnon });
+  // The uploader (or super admin) can always manually blur, regardless of anon settings
+  const isSuperAdmin = !!db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(req.user.id);
+  const isUploader = item.user_id === req.user.id || isSuperAdmin;
+
+  res.json({ ok: true, hasOriginal, teamHasAnon, isUploader });
 });
 
 // POST /api/social/media/:id/revert-blur — restore original (pre-blur) file
@@ -547,6 +553,97 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
     res.json({ ok: true, action, regions: newRegions });
   } catch (err) {
     console.error('[toggle-face-blur] Error:', err.message);
+    res.status(500).json({ ok: false, error: 'Bewerking mislukt: ' + err.message });
+  }
+});
+
+// POST /api/social/media/:id/blur-at-point
+// Tolerant face detection at a user-tapped point. Crops around the tap,
+// runs detection with low confidence threshold. If a face is found, blur it.
+// If not, place a fallback blur region centered on the tap point.
+router.post('/media/:id/blur-at-point', verifyToken, async (req, res) => {
+  const item = db.prepare(`
+    SELECT mm.*, p.team_id as post_team_id
+    FROM match_media mm
+    LEFT JOIN posts p ON p.id = mm.post_id
+    WHERE mm.id = ?
+  `).get(req.params.id);
+  if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  const isSuperAdmin = db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(req.user.id);
+  if (item.user_id !== req.user.id && !isSuperAdmin) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  // tapX, tapY: coordinates in original image pixels
+  // imgWidth, imgHeight: full image dimensions (sent by client from naturalWidth/Height)
+  // style: blur style to apply
+  const { tapX, tapY, imgWidth, imgHeight, style = 'blur' } = req.body;
+  if (tapX == null || tapY == null || !imgWidth || !imgHeight) {
+    return res.status(400).json({ ok: false, error: 'tapX, tapY, imgWidth en imgHeight zijn verplicht' });
+  }
+
+  const fs = require('fs');
+  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  if (!fs.existsSync(fullPath)) {
+    return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
+  }
+
+  try {
+    const origPath = fullPath + '.orig';
+    const basePath = fs.existsSync(origPath) ? origPath : fullPath;
+
+    // Try tolerant face detection around the tap point
+    let region = await detectFaceAtPoint(basePath, tapX, tapY, imgWidth, imgHeight);
+
+    if (!region) {
+      // No face found — use a fallback region centered on the tap point.
+      // Size: ~8% of the shortest image dimension (typical face size at moderate distance)
+      const fallbackSize = Math.round(Math.min(imgWidth, imgHeight) * 0.08);
+      region = {
+        x:      Math.round(tapX - fallbackSize / 2),
+        y:      Math.round(tapY - fallbackSize / 2),
+        width:  fallbackSize,
+        height: fallbackSize,
+        _fallback: true,
+      };
+    }
+
+    // Check if a very similar region already exists → toggle off instead
+    const currentRegions = item.blur_regions ? JSON.parse(item.blur_regions) : [];
+    const regionCx = region.x + region.width  / 2;
+    const regionCy = region.y + region.height / 2;
+    const maxDim   = Math.max(region.width, region.height);
+    const existIdx = currentRegions.findIndex(r => {
+      const rCx = r.x + r.width  / 2;
+      const rCy = r.y + r.height / 2;
+      return Math.hypot(regionCx - rCx, regionCy - rCy) < maxDim * 0.5;
+    });
+
+    let newRegions;
+    let action;
+    if (existIdx !== -1) {
+      newRegions = currentRegions.filter((_, i) => i !== existIdx);
+      action = 'unblurred';
+    } else {
+      newRegions = [...currentRegions, { ...region, style }];
+      action = 'blurred';
+    }
+
+    // Restore original then re-apply all regions
+    revertBlur(fullPath);
+    if (newRegions.length > 0) {
+      await applyBlurRegions(fullPath, newRegions);
+    }
+
+    const regionsJson = newRegions.length > 0 ? JSON.stringify(newRegions) : null;
+    db.prepare('UPDATE match_media SET blur_regions = ? WHERE id = ?').run(regionsJson, item.id);
+
+    res.json({ ok: true, action, region, regions: newRegions, wasFallback: !!(region._fallback) });
+  } catch (err) {
+    console.error('[blur-at-point] Error:', err.message);
     res.status(500).json({ ok: false, error: 'Bewerking mislukt: ' + err.message });
   }
 });
