@@ -48,6 +48,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     <div class="rv-frame">
       <button class="rv-close" aria-label="Sluiten">✕</button>
       <div class="rv-track" id="rv-track"></div>
+      <button class="rv-nav rv-nav-prev" id="rv-prev" aria-label="Vorige">‹</button>
+      <button class="rv-nav rv-nav-next" id="rv-next" aria-label="Volgende">›</button>
     </div>
 
     <div class="rv-style-picker" id="rv-style-picker">
@@ -370,10 +372,35 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   function buildSlides() {
     track.innerHTML = list.map((m, i) => `
       <div class="rv-slide" data-i="${i}" id="rv-slide-${i}">
-        ${m.file_type !== 'video'
+        ${m.file_type === 'image'
           ? `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`
-          : ''}
+          : m.file_type === 'tiktok'
+            ? `<iframe class="rv-media rv-embed"
+                src="https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=${i === startIdx ? 0 : 1}&loop=1&rel=0&controls=1"
+                allowfullscreen allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+               <div class="rv-embed-shield"></div>`
+            : m.file_type === 'instagram'
+              ? `<div class="rv-embed rv-ig-wrap">
+                  <blockquote class="instagram-media rv-ig-post"
+                    data-instgrm-permalink="${esc(m.url)}"
+                    data-instgrm-version="14"
+                    style="width:100%;max-width:540px;margin:0 auto;">
+                  </blockquote>
+                </div>
+                <div class="rv-embed-shield"></div>`
+              : ''}
       </div>`).join('');
+
+    // Load Instagram embed script once if any IG items exist
+    if (list.some(m => m.file_type === 'instagram') && !document.querySelector('script[data-ig-embed]')) {
+      const s = document.createElement('script');
+      s.src = 'https://www.instagram.com/embed.js';
+      s.async = true;
+      s.setAttribute('data-ig-embed', '1');
+      document.body.appendChild(s);
+    } else if (window.instgrm?.Embeds) {
+      window.instgrm.Embeds.process();
+    }
 
     list.forEach((m, i) => {
       if (m.file_type !== 'video') return;
@@ -426,9 +453,24 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       slide.id         = `rv-slide-${i}`;
       slide.style.width  = w + 'px';
       slide.style.height = h + 'px';
-      if (m.file_type !== 'video') {
+      if (m.file_type === 'image') {
         slide.innerHTML = `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
-      } else {
+      } else if (m.file_type === 'tiktok') {
+        slide.innerHTML = `<iframe class="rv-media rv-embed"
+          src="https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=1&loop=1&rel=0&controls=1"
+          allowfullscreen allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+          <div class="rv-embed-shield"></div>`;
+      } else if (m.file_type === 'instagram') {
+        slide.innerHTML = `<div class="rv-embed rv-ig-wrap">
+          <blockquote class="instagram-media rv-ig-post"
+            data-instgrm-permalink="${esc(m.url)}"
+            data-instgrm-version="14"
+            style="width:100%;max-width:540px;margin:0 auto;">
+          </blockquote>
+        </div>
+        <div class="rv-embed-shield"></div>`;
+        if (window.instgrm?.Embeds) window.instgrm.Embeds.process();
+      } else if (m.file_type === 'video') {
         const vid = document.createElement('video');
         vid.src = m.file_path; vid.loop = true; vid.muted = isMuted; vid.playsInline = true;
         vid.preload = 'none';
@@ -444,21 +486,23 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   function preloadAround(current) {
     track.querySelectorAll('.rv-slide').forEach(slide => {
       const si = parseInt(slide.dataset.i);
+      const m = list[si];
+      if (!m) return;
+      // Embed slides (TikTok/Instagram iframes) manage their own loading — skip
+      if (m.file_type === 'tiktok' || m.file_type === 'instagram') return;
       const near = Math.abs(si - current) <= 3;
       const img = slide.querySelector('img');
       const vid = slide.querySelector('video');
       if (img) {
-        // Switch between lazy (far) and eager (near) loading
         img.loading = near ? 'eager' : 'lazy';
-        if (near && !img.src) img.src = list[si]?.file_path || '';
+        if (near && !img.src) img.src = m.file_path || '';
       }
       if (vid) {
         if (near) {
-          if (!vid.src) vid.src = list[si]?.file_path || '';
+          if (!vid.src) vid.src = m.file_path || '';
           vid.preload = 'auto';
-          if (si !== current) vid.load(); // buffer without playing
+          if (si !== current) vid.load();
         } else {
-          // Far away — release resources
           vid.preload = 'none';
           if (si !== current) {
             vid.pause();
@@ -501,15 +545,42 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     track.style.transition = animate ? 'transform 0.28s cubic-bezier(.4,0,.2,1)' : 'none';
     track.style.transform  = `translateX(-${i * w}px)`;
 
+    // Restore embed shields on slides we're leaving (so swipe works again)
+    track.querySelectorAll('.rv-slide').forEach(slide => {
+      const si = parseInt(slide.dataset.i);
+      const m = list[si];
+      if (!m) return;
+      const isEmbed = m.file_type === 'tiktok' || m.file_type === 'instagram';
+      if (isEmbed && si !== i && !slide.querySelector('.rv-embed-shield')) {
+        const shield = document.createElement('div');
+        shield.className = 'rv-embed-shield';
+        slide.appendChild(shield);
+      }
+    });
+
+    // Mute/unmute TikTok iframes by swapping the src (postMessage is unreliable cross-origin)
+    track.querySelectorAll('.rv-slide').forEach(slide => {
+      const si = parseInt(slide.dataset.i);
+      const m  = list[si];
+      if (!m || m.file_type !== 'tiktok') return;
+      const iframe = slide.querySelector('iframe');
+      if (!iframe) return;
+      const muted = si !== i ? 1 : 0;
+      const newSrc = `https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=${muted}&loop=1&rel=0&controls=1`;
+      // Only reload if mute state actually changed
+      const cur = new URL(iframe.src);
+      if (cur.searchParams.get('muted') !== String(muted)) {
+        iframe.src = newSrc;
+      }
+    });
+
     track.querySelectorAll('.rv-slide').forEach(slide => {
       const si = parseInt(slide.dataset.i);
       const v  = slide.querySelector('video');
       if (!v) return;
       if (si === i) { v.muted = isMuted; v.currentTime = 0; v.loop = true; v.play().catch(() => {}); }
       else          { v.pause(); v.currentTime = 0; }
-    });
-
-    updateMeta();
+    });    updateMeta();
     recordView();
     maybeLoadMore();
     preloadAround(i);
@@ -528,6 +599,17 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     overlay.querySelector('#rv-bg').style.backgroundImage =
       m.file_type === 'image' ? `url(${esc(m.file_path)})` : '';
 
+    // Embed items (TikTok/Instagram) — hide interactive controls that don't apply
+    const isEmbed = m.file_type === 'tiktok' || m.file_type === 'instagram';
+    likeBtn.style.display    = isEmbed ? 'none' : '';
+    commentBtn.style.display = isEmbed ? 'none' : '';
+
+    // Nav arrows: always visible on embed slides (shield blocks swipe), hidden on normal slides
+    const prevBtn = overlay.querySelector('#rv-prev');
+    const nextBtn = overlay.querySelector('#rv-next');
+    if (prevBtn) prevBtn.style.display = isEmbed ? 'flex' : 'none';
+    if (nextBtn) nextBtn.style.display = isEmbed ? 'flex' : 'none';
+
     // Show/hide delete button
     const showDel = !!(onDelete && canDelete && canDelete(m));
     deleteBtn.style.display = showDel ? 'flex' : 'none';
@@ -537,7 +619,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
     // Show/hide revert-blur button — only for image items the uploader can manage
     revertBtn.style.display = 'none';
-    if (canRevertBlur && canRevertBlur(m) && m.file_type === 'image') {
+    if (!isEmbed && canRevertBlur && canRevertBlur(m) && m.file_type === 'image') {
       // Async check: does a .orig backup exist for this item?
       fetch(`/api/social/media/${m.id}/has-original`, {
         headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
@@ -576,6 +658,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   async function recordView() {
     try {
       const m = list[idx];
+      // Embed items have string ids like 'tiktok-...' — skip view tracking
+      if (!m.id || typeof m.id === 'string') return;
       const data = await fetch(`/api/social/media/${m.id}/view`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -606,7 +690,9 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
   async function deleteCurrentItem() {
     const m = list[idx];
-    if (!confirm('Media verwijderen?')) return;
+    const label = (m.file_type === 'tiktok' || m.file_type === 'instagram')
+      ? 'Sociale media link verwijderen?' : 'Media verwijderen?';
+    if (!confirm(label)) return;
     try {
       const removed = await onDelete(m);
       if (removed === false) return;
@@ -716,6 +802,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   // Klik op video → pause/resume toggle (not in blur mode)
   track.addEventListener('click', e => {
     if (blurMode) return;
+    // Tapping an embed shield removes it so the iframe becomes interactive
+    if (e.target.classList.contains('rv-embed-shield')) {
+      e.target.remove();
+      return;
+    }
     const vid = e.target.closest('.rv-slide')?.querySelector('video');
     if (!vid) return;
     if (vid.paused) { vid.play().catch(() => {}); }
@@ -764,6 +855,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
   // Buttons
   overlay.querySelector('.rv-frame .rv-close').addEventListener('click', close);
+  overlay.querySelector('#rv-prev').addEventListener('click', e => { e.stopPropagation(); goTo(idx - 1); });
+  overlay.querySelector('#rv-next').addEventListener('click', e => { e.stopPropagation(); goTo(idx + 1); });
   likeBtn.addEventListener('click', toggleLike);
   commentBtn.addEventListener('click', openComments);
   deleteBtn.addEventListener('click', deleteCurrentItem);

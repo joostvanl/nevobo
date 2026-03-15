@@ -109,6 +109,17 @@ const migrations = [
   // shirt_number and position belong to the team membership, not the user
   `ALTER TABLE team_memberships ADD COLUMN shirt_number INTEGER`,
   `ALTER TABLE team_memberships ADD COLUMN position TEXT`,
+  // Social media embeds per team (TikTok / Instagram)
+  `CREATE TABLE IF NOT EXISTS team_social_links (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id    INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    platform   TEXT NOT NULL CHECK(platform IN ('tiktok','instagram')),
+    url        TEXT NOT NULL,
+    embed_id   TEXT NOT NULL,
+    added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(team_id, embed_id)
+  )`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

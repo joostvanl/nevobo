@@ -126,7 +126,18 @@ function renderPage(container, opts) {
         <!-- Prominent follow block -->
         <div class="team-follow-block">
           ${isOwnTeam
-            ? `<div class="team-own-badge">✅ Jouw team</div>`
+            ? `<div class="team-own-badge-row">
+                <div class="team-own-badge">✅ Jouw team</div>
+                ${state.user ? `
+                  <div class="team-social-hero-btns">
+                    <button class="team-social-btn" id="hero-add-tiktok-btn" title="TikTok video toevoegen">
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.3 6.3 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.77a4.85 4.85 0 01-1.01-.08z"/></svg>
+                    </button>
+                    <button class="team-social-btn team-social-btn--ig" id="hero-add-instagram-btn" title="Instagram post/reel toevoegen">
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                    </button>
+                  </div>` : ''}
+              </div>`
             : state.user
               ? `<button class="team-follow-btn-big ${isFollowing ? 'following' : ''}" id="follow-btn">
                   <span class="follow-btn-icon">${isFollowing ? '✓' : '+'}</span>
@@ -390,6 +401,54 @@ function renderPage(container, opts) {
     btn.textContent = expanded ? `Toon alle ${results.length} uitslagen ↓` : 'Minder tonen ↑';
   });
 
+  // ── Hero social media buttons (own team members only) ────────────────────
+  if (isOwnTeam && state.user && teamId) {
+    const showSocialOverlay = (platform) => {
+      // Reuse the overlay in the team-media section if it exists, otherwise create one
+      let overlay = document.getElementById('social-url-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'social-url-overlay';
+        overlay.className = 'badge-unlock-overlay';
+        overlay.innerHTML = `
+          <div class="badge-unlock-card" style="max-width:340px;text-align:left;padding:1.5rem">
+            <p class="text-muted text-small mb-2" id="social-overlay-hint"></p>
+            <input type="url" id="social-overlay-input" class="form-input mb-3" placeholder="Plak hier de URL…" />
+            <div class="flex gap-2">
+              <button class="btn btn-ghost" id="social-overlay-cancel" style="flex:1">Annuleren</button>
+              <button class="btn btn-primary" id="social-overlay-confirm" style="flex:1">Toevoegen</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+
+        overlay.querySelector('#social-overlay-cancel').addEventListener('click', () => { overlay.style.display = 'none'; });
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.style.display = 'none'; });
+        overlay.querySelector('#social-overlay-input').addEventListener('keydown', e => {
+          if (e.key === 'Enter') overlay.querySelector('#social-overlay-confirm').click();
+        });
+        overlay.querySelector('#social-overlay-confirm').addEventListener('click', async () => {
+          const url = overlay.querySelector('#social-overlay-input').value.trim();
+          if (!url) return;
+          try {
+            await api(`/api/social/teams/${teamId}/social-links`, { method: 'POST', body: { url } });
+            showToast('Toegevoegd!', 'success');
+            overlay.style.display = 'none';
+            loadTeamMedia(teamId, displayName, nevoboCode);
+          } catch (err) { showToast(err.message, 'error'); }
+        });
+      }
+      overlay.querySelector('#social-overlay-hint').textContent = platform === 'tiktok'
+        ? 'Plak een TikTok video-URL: https://www.tiktok.com/@user/video/…'
+        : 'Plak een Instagram post of reel-URL: https://www.instagram.com/reel/…';
+      overlay.querySelector('#social-overlay-input').value = '';
+      overlay.style.display = 'flex';
+      setTimeout(() => overlay.querySelector('#social-overlay-input').focus(), 50);
+    };
+
+    document.getElementById('hero-add-tiktok-btn')?.addEventListener('click', () => showSocialOverlay('tiktok'));
+    document.getElementById('hero-add-instagram-btn')?.addEventListener('click', () => showSocialOverlay('instagram'));
+  }
+
   // ── Follow button handler ─────────────────────────────────────────────────
   if (!isOwnTeam && state.user) {
     document.getElementById('follow-btn')?.addEventListener('click', async () => {
@@ -549,9 +608,17 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
   const el = document.getElementById('team-media');
   if (!el) return;
 
+  // Check if current user is a member of this team (for social add button)
+  const isTeamAdmin = state.user?.roles?.some(r =>
+    r.role === 'super_admin' ||
+    r.role === 'club_admin' ||
+    (r.role === 'team_admin' && r.team_id === teamId)
+  );
+  const currentUserId = state.user?.id || null;
+
   try {
     const data = await api(`/api/social/team-media/${teamId}?limit=20`);
-    const media = data.media || [];
+    let media = data.media || [];
 
     if (!media.length) {
       el.remove();
@@ -569,7 +636,15 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
               ${m.file_type === 'video'
                 ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
                    <div class="hm-reel-play-icon">▶</div>`
-                : `<img class="hm-reel-media" src="${esc(m.file_path)}" alt="Media" loading="lazy" />`}
+                : m.file_type === 'tiktok'
+                  ? `<div class="hm-reel-media hm-reel-social-thumb hm-reel-social-tiktok">
+                       <svg class="hm-reel-social-logo" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.3 6.3 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.77a4.85 4.85 0 01-1.01-.08z"/></svg>
+                     </div>`
+                  : m.file_type === 'instagram'
+                    ? `<div class="hm-reel-media hm-reel-social-thumb hm-reel-social-ig">
+                         <svg class="hm-reel-social-logo" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                       </div>`
+                    : `<img class="hm-reel-media" src="${esc(m.file_path)}" alt="Media" loading="lazy" />`}
               <div class="hm-reel-gradient"></div>
               <div class="hm-reel-info">
                 <div class="hm-reel-stats">
@@ -594,6 +669,22 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
           fetchMore: async (offset) => {
             const d = await api(`/api/social/team-media/${teamId}?limit=20&offset=${offset}`);
             return d.media || [];
+          },
+          canDelete: (m) => {
+            if (!state.user) return false;
+            if (m.file_type === 'tiktok' || m.file_type === 'instagram') {
+              // Social embeds: owner or team/club/super admin
+              return m.added_by === currentUserId || isTeamAdmin || state.user.role === 'super_admin';
+            }
+            // Regular media: uploader or admin
+            return m.user_id === currentUserId || isTeamAdmin || state.user.role === 'super_admin';
+          },
+          onDelete: async (m) => {
+            if (m.file_type === 'tiktok' || m.file_type === 'instagram') {
+              await api(`/api/social/teams/${teamId}/social-links/${m.social_link_id}`, { method: 'DELETE' });
+            } else {
+              await api(`/api/social/media/${m.id}`, { method: 'DELETE' });
+            }
           },
         });
       });

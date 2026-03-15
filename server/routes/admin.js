@@ -398,4 +398,64 @@ router.delete('/users/:userId', (req, res) => {
   res.json({ ok: true, message: `Gebruiker "${target.name}" verwijderd` });
 });
 
+// ─── Team social media links ──────────────────────────────────────────────────
+
+function parseSocialUrl(url) {
+  if (!url) return null;
+  const clean = url.trim();
+
+  // TikTok: https://www.tiktok.com/@user/video/1234567890...
+  const ttMatch = clean.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+  if (ttMatch) return { platform: 'tiktok', embed_id: ttMatch[1] };
+
+  // Instagram reel: https://www.instagram.com/reel/ABC123.../
+  const igReel = clean.match(/instagram\.com\/reel\/([A-Za-z0-9_-]+)/);
+  if (igReel) return { platform: 'instagram', embed_id: igReel[1] };
+
+  // Instagram post: https://www.instagram.com/p/ABC123.../
+  const igPost = clean.match(/instagram\.com\/p\/([A-Za-z0-9_-]+)/);
+  if (igPost) return { platform: 'instagram', embed_id: igPost[1] };
+
+  return null;
+}
+
+// GET /api/admin/teams/:teamId/social-links
+router.get('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res) => {
+  const links = db.prepare(
+    'SELECT * FROM team_social_links WHERE team_id = ? ORDER BY created_at DESC'
+  ).all(req.params.teamId);
+  res.json({ ok: true, links });
+});
+
+// POST /api/admin/teams/:teamId/social-links
+router.post('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res) => {
+  const { url } = req.body;
+  const parsed = parseSocialUrl(url);
+  if (!parsed) {
+    return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
+  }
+  const teamId = parseInt(req.params.teamId);
+  try {
+    db.prepare(
+      'INSERT INTO team_social_links (team_id, platform, url, embed_id, added_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(teamId, parsed.platform, url.trim(), parsed.embed_id, req.user.id);
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) {
+      return res.status(409).json({ ok: false, error: 'Deze URL is al gekoppeld aan dit team.' });
+    }
+    throw e;
+  }
+  const link = db.prepare('SELECT * FROM team_social_links WHERE team_id = ? AND embed_id = ?').get(teamId, parsed.embed_id);
+  res.json({ ok: true, link });
+});
+
+// DELETE /api/admin/teams/:teamId/social-links/:linkId
+router.delete('/teams/:teamId/social-links/:linkId', requireTeamAdmin('teamId'), (req, res) => {
+  const result = db.prepare(
+    'DELETE FROM team_social_links WHERE id = ? AND team_id = ?'
+  ).run(req.params.linkId, req.params.teamId);
+  if (result.changes === 0) return res.status(404).json({ ok: false, error: 'Link niet gevonden.' });
+  res.json({ ok: true });
+});
+
 module.exports = router;

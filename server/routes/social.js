@@ -877,6 +877,48 @@ router.get('/home-summary', verifyToken, (req, res) => {
     `).all(userId, ...args);
   }
 
+  // Append social embeds from relevant teams (interleaved every 4th position)
+  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  if (embedsEnabled && relevantTeamIds.length > 0) {
+    const ph = relevantTeamIds.map(() => '?').join(',');
+    const socialLinks = db.prepare(
+      `SELECT tsl.*, t.display_name AS team_name FROM team_social_links tsl
+       JOIN teams t ON t.id = tsl.team_id
+       WHERE tsl.team_id IN (${ph}) ORDER BY tsl.created_at DESC LIMIT 10`
+    ).all(...relevantTeamIds);
+
+    if (socialLinks.length > 0) {
+      const socialItems = socialLinks.map(l => ({
+        id: `${l.platform}-${l.embed_id}`,
+        social_link_id: l.id,
+        added_by: l.added_by,
+        file_type: l.platform,
+        embed_id: l.embed_id,
+        url: l.url,
+        file_path: null,
+        caption: null,
+        blur_regions: null,
+        like_count: 0,
+        view_count: 0,
+        comment_count: 0,
+        liked_by_me: 0,
+        created_at: l.created_at,
+        team_name: l.team_name,
+        team_id: l.team_id,
+      }));
+
+      // Interleave: every 4th item is a social embed
+      const mixed = [];
+      let si = 0;
+      for (let i = 0; i < recentMedia.length; i++) {
+        mixed.push(recentMedia[i]);
+        if ((i + 1) % 4 === 0 && si < socialItems.length) mixed.push(socialItems[si++]);
+      }
+      while (si < socialItems.length) mixed.push(socialItems[si++]);
+      recentMedia = mixed;
+    }
+  }
+
   // New followers who started following the current user in the last 30 days
   const newFollowers = db.prepare(`
     SELECT u.id, u.name, u.avatar_url, uf.created_at AS followed_at, c.name AS club_name
@@ -1036,7 +1078,49 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...args);
 
-  res.json({ ok: true, media });
+  // Append social media embeds (TikTok / Instagram) when feature is enabled
+  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  let socialItems = [];
+  if (embedsEnabled && offset === 0) {
+    const links = db.prepare(
+      'SELECT * FROM team_social_links WHERE team_id = ? ORDER BY created_at DESC'
+    ).all(teamId);
+    socialItems = links.map(l => ({
+      id: `${l.platform}-${l.embed_id}`,
+      social_link_id: l.id,
+      added_by: l.added_by,
+      file_type: l.platform,
+      embed_id: l.embed_id,
+      url: l.url,
+      file_path: null,
+      caption: null,
+      blur_regions: null,
+      like_count: 0,
+      view_count: 0,
+      comment_count: 0,
+      liked_by_me: 0,
+      created_at: l.created_at,
+    }));
+  }
+
+  // Interleave: every 4th item is a social embed (if any exist)
+  let combined;
+  if (socialItems.length === 0) {
+    combined = media;
+  } else {
+    combined = [];
+    let si = 0;
+    for (let i = 0; i < media.length; i++) {
+      combined.push(media[i]);
+      if ((i + 1) % 4 === 0 && si < socialItems.length) {
+        combined.push(socialItems[si++]);
+      }
+    }
+    // Append remaining social items at end
+    while (si < socialItems.length) combined.push(socialItems[si++]);
+  }
+
+  res.json({ ok: true, media: combined });
 });
 
 
@@ -1049,5 +1133,81 @@ router.get('/followers/:userId', (req, res) => {
   `).all(req.params.userId);
   res.json({ ok: true, followers });
 });
+
+// ─── Team social links (for team members) ────────────────────────────────────
+
+// POST /api/social/teams/:teamId/social-links — any team member can add
+router.post('/teams/:teamId/social-links', verifyToken, (req, res) => {
+  const teamId = parseInt(req.params.teamId);
+  const userId = req.user.id;
+
+  // Verify user is a member of this team
+  const membership = db.prepare(
+    'SELECT id FROM team_memberships WHERE team_id = ? AND user_id = ?'
+  ).get(teamId, userId);
+  if (!membership) {
+    return res.status(403).json({ ok: false, error: 'Je bent geen lid van dit team.' });
+  }
+
+  const { url } = req.body;
+  // Reuse parseSocialUrl from admin routes by duplicating the logic here
+  const parsed = parseSocialUrlForSocial(url);
+  if (!parsed) {
+    return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
+  }
+
+  try {
+    db.prepare(
+      'INSERT INTO team_social_links (team_id, platform, url, embed_id, added_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(teamId, parsed.platform, url.trim(), parsed.embed_id, userId);
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) {
+      return res.status(409).json({ ok: false, error: 'Deze URL is al gekoppeld aan dit team.' });
+    }
+    throw e;
+  }
+  res.json({ ok: true });
+});
+
+// DELETE /api/social/teams/:teamId/social-links/:linkId — owner or team admin
+router.delete('/teams/:teamId/social-links/:linkId', verifyToken, (req, res) => {
+  const teamId = parseInt(req.params.teamId);
+  const linkId = parseInt(req.params.linkId);
+  const userId = req.user.id;
+
+  const link = db.prepare(
+    'SELECT * FROM team_social_links WHERE id = ? AND team_id = ?'
+  ).get(linkId, teamId);
+  if (!link) return res.status(404).json({ ok: false, error: 'Link niet gevonden.' });
+
+  // Allow: own link, super_admin, club_admin, or team_admin of this team
+  const isSuperAdmin = !!db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'super_admin'"
+  ).get(userId);
+  const isTeamAdmin = !!db.prepare(
+    "SELECT 1 FROM user_roles WHERE user_id = ? AND role IN ('team_admin','club_admin') AND (team_id = ? OR role = 'club_admin')"
+  ).get(userId, teamId);
+  const isOwner = link.added_by === userId;
+
+  if (!isOwner && !isSuperAdmin && !isTeamAdmin) {
+    return res.status(403).json({ ok: false, error: 'Je mag deze link niet verwijderen.' });
+  }
+
+  db.prepare('DELETE FROM team_social_links WHERE id = ?').run(linkId);
+  res.json({ ok: true });
+});
+
+// Shared URL parser (mirrors the one in admin.js)
+function parseSocialUrlForSocial(url) {
+  if (!url) return null;
+  const clean = url.trim();
+  const ttMatch = clean.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+  if (ttMatch) return { platform: 'tiktok', embed_id: ttMatch[1] };
+  const igReel = clean.match(/instagram\.com\/reel\/([A-Za-z0-9_-]+)/);
+  if (igReel) return { platform: 'instagram', embed_id: igReel[1] };
+  const igPost = clean.match(/instagram\.com\/p\/([A-Za-z0-9_-]+)/);
+  if (igPost) return { platform: 'instagram', embed_id: igPost[1] };
+  return null;
+}
 
 module.exports = router;
