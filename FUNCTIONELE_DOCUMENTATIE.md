@@ -22,6 +22,7 @@
 12. [Privacybeleid & GDPR](#12-privacybeleid--gdpr)
 13. [PWA & Caching](#13-pwa--caching)
 14. [Bekende beperkingen & ontwerpkeuzes](#14-bekende-beperkingen--ontwerpkeuzes)
+15. [Content beheer — backup, restore & pull van Pi](#15-content-beheer--backup-restore--pull-van-pi)
 
 ---
 
@@ -420,3 +421,87 @@ Media-bestanden worden opgeslagen op de bestandsserver van de Raspberry Pi (Dock
 
 ### Sessieduur
 JWT tokens verlopen na 7 dagen. Er is geen automatische verlenging ("refresh token"). Na verlopen moet de gebruiker opnieuw inloggen.
+
+---
+
+## 15. Content beheer — backup, restore & pull van Pi
+
+### Omgeving
+
+| Rol | Locatie |
+|---|---|
+| Productie | Raspberry Pi — Docker containers (`volleyapp`, `volleyapp-nginx`, `volleyapp-tunnel`) |
+| Database | `/home/joostvl/volleyapp/data/volleyball.db` (bind-mount in container) |
+| Uploads | Docker named volume `volleyapp_uploads` |
+| Lokale ontwikkeling | `c:\Users\joost.vanleeuwaarden\webroot\Team` |
+
+### Pi-configuratie (eenmalig)
+
+Voeg toe aan je lokale `.env`:
+```env
+PI_HOST=192.168.1.91
+PI_USER=joostvl
+PI_PATH=/home/joostvl/volleyapp
+```
+
+SSH key-auth instellen (eenmalig, zodat scripts nooit om een wachtwoord vragen):
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh joostvl@192.168.1.91 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+### Productie-content naar lokaal halen (pull)
+
+```bash
+node scripts/pull-from-pi.js
+```
+
+Dit doet in één commando:
+1. **Backup** van de huidige lokale database + uploads (in `backups/`)
+2. **Database**: Node script wordt in de Docker container uitgevoerd (`better-sqlite3.backup()`), WAL wordt geflushed, consistente snapshot
+3. **Integrity check**: download wordt geweigerd als de database corrupt is
+4. **Uploads**: Docker volume wordt via `sudo tar` geëxporteerd
+5. **Toepassen** lokaal — database en uploads worden vervangen
+6. **Cleanup** van tijdelijke bestanden op Pi en lokaal
+
+Opties:
+```bash
+node scripts/pull-from-pi.js --skip-backup   # sla backup-stap over
+node scripts/pull-from-pi.js --dry-run       # toon wat er zou gebeuren zonder te wijzigen
+```
+
+> **Belangrijk**: Cursor's terminal kan geen interactieve SSH-sessies starten. Het script gebruikt `BatchMode=yes` en werkt daardoor alleen met key-based SSH auth.
+
+### Lokale backup maken
+
+```powershell
+.\scripts\backup-content.ps1
+.\scripts\backup-content.ps1 -Label "voor-grote-update"
+```
+
+Backups staan in `backups/YYYY-MM-DD_HH-MM-SS[-label]/` en bevatten:
+- `volleyball.db` + eventuele `.wal` / `.shm` bestanden
+- `uploads/` map (recursief)
+- `manifest.json` met metadata
+
+> **Technische noot**: De backup kopieert `.db` + `.wal` + `.shm` samen. SQLite herstelt de WAL automatisch bij het openen — dit is een geldige consistente snapshot ook als de server draait.
+
+### Lokale content terugzetten (restore)
+
+```powershell
+.\scripts\restore-content.ps1                              # interactief menu
+.\scripts\restore-content.ps1 -Backup "2026-03-15_10-32-42-voor-update"
+.\scripts\restore-content.ps1 -Backup "..." -Force        # zonder bevestigingsvraag
+```
+
+Het restore script:
+1. Maakt eerst een veiligheidskopie van de huidige staat
+2. Stopt actieve Node-processen
+3. Verwijdert `.wal` / `.shm` bestanden
+4. Kopieert database en uploads terug
+5. Op de Pi: stopt en herstart de Docker app-container automatisch
+
+### Waarschuwingen
+
+- Zet de lokale dev-server **niet** handmatig stop vóór een backup — het script handelt dat zelf af
+- Kopieer **nooit** alleen het `.db` bestand zonder de bijbehorende `.wal`/`.shm` — dit levert een corrupte backup op als de server draait
+- De `backups/` map staat in `.gitignore` en wordt nooit gecommit
