@@ -273,13 +273,14 @@ function resultsSmartTtl(matches) {
 // On Nevobo API errors we fall back to stale cached data to stay resilient.
 const feedMemCache = new Map(); // key → { data, fetchedAt, ttlMs }
 
-async function withFeedCache(key, fetchFn, ttlFn) {
+async function withFeedCache(key, fetchFn, ttlFn, { maxAgeMs } = {}) {
   const db = require('../db/db');
   const now = Date.now();
 
   // Layer 1: in-memory
   const mem = feedMemCache.get(key);
-  if (mem && now - mem.fetchedAt < mem.ttlMs) {
+  const memAge = mem ? now - mem.fetchedAt : Infinity;
+  if (mem && memAge < mem.ttlMs && (!maxAgeMs || memAge < maxAgeMs)) {
     return { data: mem.data, stale: false };
   }
 
@@ -288,7 +289,8 @@ async function withFeedCache(key, fetchFn, ttlFn) {
   try {
     dbRow = db.prepare('SELECT data_json, fetched_at, ttl_ms FROM feed_cache WHERE cache_key = ?').get(key);
   } catch (_) {}
-  if (dbRow && now - dbRow.fetched_at < dbRow.ttl_ms) {
+  const dbAge = dbRow ? now - dbRow.fetched_at : Infinity;
+  if (dbRow && dbAge < dbRow.ttl_ms && (!maxAgeMs || dbAge < maxAgeMs)) {
     const data = JSON.parse(dbRow.data_json);
     feedMemCache.set(key, { data, fetchedAt: dbRow.fetched_at, ttlMs: dbRow.ttl_ms });
     return { data, stale: false };
@@ -1124,16 +1126,21 @@ router.get('/team-recent-results', async (req, res) => {
   };
 
   try {
-    const fetches = Array.from(codesToSearch).map(clubCode =>
-      withFeedCache(
+    const fetches = Array.from(codesToSearch).map(clubCode => {
+      // For clubs other than the team's own club, cap cache age at 3 hours
+      // so stale data from e.g. days ago doesn't hide recent results
+      const isOwnClub = clubCode === teamNevoboCode.toLowerCase();
+      const opts = isOwnClub ? {} : { maxAgeMs: 3 * 3600_000 };
+      return withFeedCache(
         `results:club:${clubCode}`,
         async () => {
           const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${clubCode}/resultaten.rss`);
           return { matches: (feed.items || []).map(parseMatchItem) };
         },
         d => resultsSmartTtl(d.matches),
-      ).then(({ data }) => data.matches || []).catch(() => [])
-    );
+        opts,
+      ).then(({ data }) => data.matches || []).catch(() => []);
+    });
 
     const allResults = (await Promise.all(fetches)).flat();
 
@@ -1386,6 +1393,18 @@ router.delete('/cache', async (req, res) => {
   standCache.clear();
   try { db.prepare('DELETE FROM feed_cache').run(); } catch (_) {}
   res.json({ ok: true, message: 'Feed cache geleegd' });
+});
+
+// DELETE /api/nevobo/cache/:code — flush cache entries for a specific club code
+router.delete('/cache/:code', async (req, res) => {
+  const db = require('../db/db');
+  const code = req.params.code.toLowerCase();
+  feedMemCache.delete(`results:club:${code}`);
+  feedMemCache.delete(`schedule:club:${code}`);
+  try {
+    db.prepare("DELETE FROM feed_cache WHERE cache_key LIKE ?").run(`%:${code}`);
+  } catch (_) {}
+  res.json({ ok: true, message: `Cache geleegd voor club ${code}` });
 });
 
 module.exports = router;
