@@ -1006,7 +1006,53 @@ router.get('/media-feed', verifyToken, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(userId, ...args, limit, offset);
 
-  res.json({ ok: true, media });
+  // Append social embeds from relevant teams (interleaved every 4th position)
+  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  let socialItems = [];
+  if (embedsEnabled && relevantTeamIds.length > 0 && offset === 0) {
+    // Only interleave social links on the first page to avoid duplicates
+    const teamPHSocial = relevantTeamIds.map(() => '?').join(',');
+    const socialLinks = db.prepare(
+      `SELECT tsl.*, t.display_name AS team_name FROM team_social_links tsl
+       JOIN teams t ON t.id = tsl.team_id
+       WHERE tsl.team_id IN (${teamPHSocial})
+       ORDER BY tsl.created_at DESC`
+    ).all(...relevantTeamIds);
+
+    socialItems = socialLinks.map(l => ({
+      id: `${l.platform}-${l.embed_id}`,
+      social_link_id: l.id,
+      file_type: l.platform,
+      embed_id: l.embed_id,
+      url: l.url,
+      file_path: null,
+      caption: null,
+      blur_regions: null,
+      like_count: 0,
+      view_count: l.view_count || 0,
+      comment_count: 0,
+      liked_by_me: 0,
+      added_by: l.added_by,
+      created_at: l.created_at,
+      team_name: l.team_name,
+      team_id: l.team_id,
+    }));
+  }
+
+  let combined;
+  if (socialItems.length === 0) {
+    combined = media;
+  } else {
+    combined = [];
+    let si = 0;
+    for (let i = 0; i < media.length; i++) {
+      combined.push(media[i]);
+      if ((i + 1) % 4 === 0 && si < socialItems.length) combined.push(socialItems[si++]);
+    }
+    while (si < socialItems.length) combined.push(socialItems[si++]);
+  }
+
+  res.json({ ok: true, media: combined });
 });
 
 // GET /api/social/team-media/:teamId — media for a specific team (public, no auth required)
