@@ -390,6 +390,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         vid.loop = true;
         vid.muted = isMuted;
         vid.playsInline = true;
+        vid.preload = 'none';
       }
       vid.classList.add('rv-media');
       slide.appendChild(vid);
@@ -430,12 +431,43 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       } else {
         const vid = document.createElement('video');
         vid.src = m.file_path; vid.loop = true; vid.muted = isMuted; vid.playsInline = true;
+        vid.preload = 'none';
         vid.className = 'rv-media';
         slide.appendChild(vid);
       }
       track.appendChild(slide);
     });
     track.style.width = (w * list.length) + 'px';
+  }
+
+  // Preload media for slides within ±3 of current index; unload the rest to save memory
+  function preloadAround(current) {
+    track.querySelectorAll('.rv-slide').forEach(slide => {
+      const si = parseInt(slide.dataset.i);
+      const near = Math.abs(si - current) <= 3;
+      const img = slide.querySelector('img');
+      const vid = slide.querySelector('video');
+      if (img) {
+        // Switch between lazy (far) and eager (near) loading
+        img.loading = near ? 'eager' : 'lazy';
+        if (near && !img.src) img.src = list[si]?.file_path || '';
+      }
+      if (vid) {
+        if (near) {
+          if (!vid.src) vid.src = list[si]?.file_path || '';
+          vid.preload = 'auto';
+          if (si !== current) vid.load(); // buffer without playing
+        } else {
+          // Far away — release resources
+          vid.preload = 'none';
+          if (si !== current) {
+            vid.pause();
+            vid.removeAttribute('src');
+            vid.load();
+          }
+        }
+      }
+    });
   }
 
   // Trigger background load when within 2 items of the end
@@ -480,6 +512,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     updateMeta();
     recordView();
     maybeLoadMore();
+    preloadAround(i);
   }
 
   function updateMeta() {
@@ -678,6 +711,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
   updateMeta();
   recordView();
+  preloadAround(startIdx);
 
   // Klik op video → pause/resume toggle (not in blur mode)
   track.addEventListener('click', e => {
