@@ -652,6 +652,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         sourceVideo.classList.remove('rv-media');
         sourceVideo.classList.add('hm-reel-media');
         sourceVideo.style.cssText = '';
+        sourceVideo.muted = true;
         reelCard.insertBefore(sourceVideo, reelCard.firstChild);
       }
     }
