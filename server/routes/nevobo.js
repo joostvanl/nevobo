@@ -832,7 +832,7 @@ router.get('/team-by-name', async (req, res) => {
   //   C) Lazy poule-structure discovery — resolveClubCodeForTeam (on first visit only)
   let resolvedNevoboCode = code.toLowerCase();
 
-  // Method A: check the teams table in DB
+  // Method A: check the teams table in DB (by exact display_name match)
   const dbTeamRow = db.prepare(
     `SELECT c.nevobo_code FROM teams t
      JOIN clubs c ON c.id = t.club_id
@@ -841,6 +841,18 @@ router.get('/team-by-name', async (req, res) => {
   if (dbTeamRow?.nevobo_code) {
     resolvedNevoboCode = dbTeamRow.nevobo_code;
     codesToSearch.add(resolvedNevoboCode);
+  }
+
+  // Method A2: check competition_teams table — populated by lazy discovery and warmClubCache
+  if (resolvedNevoboCode === code.toLowerCase()) {
+    const ctRow = db.prepare(
+      `SELECT club_nevobo_code FROM competition_teams
+       WHERE LOWER(team_naam) = ? AND club_nevobo_code IS NOT NULL LIMIT 1`
+    ).get(normTeamName);
+    if (ctRow?.club_nevobo_code) {
+      resolvedNevoboCode = ctRow.club_nevobo_code;
+      codesToSearch.add(resolvedNevoboCode);
+    }
   }
 
   // Method B: teamCodes map (covers own teams + DB-cached opponents)
@@ -922,8 +934,25 @@ router.get('/team-by-name', async (req, res) => {
 
     // Check if this team exists in our DB
     const dbTeam = db.prepare(
-      'SELECT t.*, c.name AS club_name, c.nevobo_code FROM teams t JOIN clubs c ON c.id = t.club_id WHERE LOWER(t.display_name) = ?'
+      'SELECT t.*, c.name AS club_name, c.nevobo_code, c.id AS club_id FROM teams t JOIN clubs c ON c.id = t.club_id WHERE LOWER(t.display_name) = ?'
     ).get(normTeamName);
+
+    // If we resolved a better nevobo_code for this team, persist it so future lookups are instant
+    if (dbTeam && resolvedNevoboCode && resolvedNevoboCode !== code.toLowerCase() && dbTeam.nevobo_code !== resolvedNevoboCode) {
+      try {
+        // Check if a club with the correct code already exists
+        let correctClub = db.prepare('SELECT id FROM clubs WHERE nevobo_code = ?').get(resolvedNevoboCode);
+        if (!correctClub) {
+          db.prepare("INSERT OR IGNORE INTO clubs (name, nevobo_code, region) VALUES (?, ?, '')").run(
+            dbTeam.club_name || resolvedNevoboCode.toUpperCase(), resolvedNevoboCode
+          );
+          correctClub = db.prepare('SELECT id FROM clubs WHERE nevobo_code = ?').get(resolvedNevoboCode);
+        }
+        if (correctClub) {
+          db.prepare('UPDATE teams SET club_id = ? WHERE id = ?').run(correctClub.id, dbTeam.id);
+        }
+      } catch (_) { /* non-fatal */ }
+    }
 
     let isFollowing = false;
     let isOwnTeam   = false;
@@ -1438,6 +1467,8 @@ module.exports.warmClubCache = async function warmClubCache(nevoboCode) {
         d => scheduleSmartTtl(d.matches),
         { maxAgeMs: 1 * 3600_000 },
       ),
+      // Also populate competition_teams so the team→code lookup works instantly
+      fetchClubCompetitionTeams(code),
     ]);
   } catch (_) { /* non-fatal */ }
 };

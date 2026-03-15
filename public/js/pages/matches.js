@@ -293,7 +293,7 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode) || el.dataset.nevobocode;
+        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
         navigate('team', { teamName, nevoboCode: code });
       });
     });
@@ -370,7 +370,7 @@ async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode) || el.dataset.nevobocode;
+        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
         navigate('team', { teamName, nevoboCode: code });
       });
     });
@@ -460,7 +460,7 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode) || el.dataset.nevobocode;
+        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
         navigate('team', { teamName, nevoboCode: code });
       });
     });
@@ -545,7 +545,7 @@ async function loadFollowedTeamsSection(listEl, club, followedTeams, tab) {
       el.addEventListener('click', e => {
         e.stopPropagation();
         const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode) || el.dataset.nevobocode;
+        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
         navigate('team', { teamName, nevoboCode: code });
       });
     });
@@ -845,7 +845,10 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
     if (teamName) {
       el.style.cursor = 'pointer';
       el.addEventListener('click', () => {
-        const code = resolveClubCode(teamName, storedCode) || storedCode;
+        // Use strict mode: only use resolved code if we're confident it's correct.
+        // storedCode may be the own club's code (passed as context), so prefer a strict
+        // lookup that returns null for unknowns rather than silently using the wrong code.
+        const code = resolveClubCode(teamName, storedCode, true) || storedCode;
         navigate('team', { teamName, nevoboCode: code });
       });
     }
