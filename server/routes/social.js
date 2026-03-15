@@ -982,11 +982,10 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
   const whereClause = [
     // Direct link: post explicitly belongs to this team
     'p.team_id = ?',
-    // match_ids already linked to this team via other posts (but only if post has no conflicting team_id)
-    '(mm.match_id IS NOT NULL AND (p.team_id IS NULL OR p.team_id = ?) AND mm.match_id IN (SELECT DISTINCT p2.match_id FROM posts p2 WHERE p2.team_id = ? AND p2.match_id IS NOT NULL))',
-    // match_ids from feed_cache for this team — only include when post has no team_id (old uploads)
-    // or when the post team_id matches, to prevent cross-team contamination
-    cachePH ? `((p.team_id IS NULL OR p.team_id = ?) AND mm.match_id IN (${cachePH}))` : null,
+    // Same match as another post that explicitly belongs to this team
+    '(p.team_id = ? AND mm.match_id IS NOT NULL AND mm.match_id IN (SELECT DISTINCT p2.match_id FROM posts p2 WHERE p2.team_id = ? AND p2.match_id IS NOT NULL))',
+    // match_ids from feed_cache — only when the post explicitly belongs to this team
+    cachePH ? `(p.team_id = ? AND mm.match_id IN (${cachePH}))` : null,
   ].filter(Boolean).join(' OR ');
 
   const args = [userId, teamId, teamId, teamId, teamId, ...cacheIds, limit, offset];
