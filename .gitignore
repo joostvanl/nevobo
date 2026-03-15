@@ -10,6 +10,9 @@ data/
 # Uploaded media
 public/uploads/
 
+# Content backups (database + uploads snapshots)
+backups/
+
 # Logs
 *.log
 *.err

@@ -980,14 +980,16 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
   const cachePH  = cacheIds.length > 0 ? cacheIds.map(() => '?').join(',') : null;
 
   const whereClause = [
+    // Direct link: post explicitly belongs to this team
     'p.team_id = ?',
-    // match_ids known from posts already linked to this team
-    '(mm.match_id IS NOT NULL AND mm.match_id IN (SELECT DISTINCT p2.match_id FROM posts p2 WHERE p2.team_id = ? AND p2.match_id IS NOT NULL))',
-    // match_ids found in the feed_cache for this team (catches old uploads without team_id)
-    cachePH ? `mm.match_id IN (${cachePH})` : null,
+    // match_ids already linked to this team via other posts (but only if post has no conflicting team_id)
+    '(mm.match_id IS NOT NULL AND (p.team_id IS NULL OR p.team_id = ?) AND mm.match_id IN (SELECT DISTINCT p2.match_id FROM posts p2 WHERE p2.team_id = ? AND p2.match_id IS NOT NULL))',
+    // match_ids from feed_cache for this team — only include when post has no team_id (old uploads)
+    // or when the post team_id matches, to prevent cross-team contamination
+    cachePH ? `((p.team_id IS NULL OR p.team_id = ?) AND mm.match_id IN (${cachePH}))` : null,
   ].filter(Boolean).join(' OR ');
 
-  const args = [userId, teamId, teamId, ...cacheIds, limit, offset];
+  const args = [userId, teamId, teamId, teamId, teamId, ...cacheIds, limit, offset];
 
   const media = db.prepare(`
     SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
