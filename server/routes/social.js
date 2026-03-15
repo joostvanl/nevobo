@@ -120,18 +120,46 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
 
   // Normalise team_id — frontend may send the string "undefined" when not set
   const rawTeamId = (team_id && team_id !== 'undefined') ? parseInt(team_id) : null;
+  const rawMatchId = match_id || null;
 
-  // Resolve effective team scope for anonymisation:
+  // Resolve effective team scope:
   // 1. Use team_id from request if provided
-  // 2. Fall back to the uploading user's own team memberships
-  //    (photos are almost always uploaded for one's own team)
+  // 2. If team_id is missing but match_id is known, derive the correct team from
+  //    the match data in feed_cache — pick the team the uploader is actually a member of
+  // 3. Fall back to null (no team context — blur check will be skipped)
   let effectiveTeamId = rawTeamId;
-  if (!effectiveTeamId) {
-    const userTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(req.user.id);
-    const anonTeam  = userTeams.find(t => teamHasAnonymousMembers(t.team_id));
-    if (anonTeam) {
-      effectiveTeamId = anonTeam.team_id;
+  if (!effectiveTeamId && rawMatchId) {
+    // Find which team played in this match, cross-referenced with uploader's memberships
+    const uploaderTeamIds = new Set(
+      db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(req.user.id).map(r => r.team_id)
+    );
+    // Look up the match in feed_cache to find home/away team names
+    const cacheRows = db.prepare('SELECT data_json FROM feed_cache').all();
+    let matchedTeamId = null;
+    outer: for (const row of cacheRows) {
+      try {
+        const data = JSON.parse(row.data_json);
+        for (const m of (data.matches || [])) {
+          if (m.match_id !== rawMatchId) continue;
+          // Find which of the uploader's teams played in this match
+          const teamRows = db.prepare(
+            'SELECT id, display_name FROM teams WHERE id IN (' +
+            [...uploaderTeamIds].map(() => '?').join(',') + ')'
+          ).all(...uploaderTeamIds);
+          for (const t of teamRows) {
+            const dn = (t.display_name || '').toLowerCase();
+            const home = (m.home_team || '').toLowerCase();
+            const away = (m.away_team || '').toLowerCase();
+            if (home === dn || away === dn) {
+              matchedTeamId = t.id;
+              break outer;
+            }
+          }
+          break outer; // match found in cache but no team matched — stop searching
+        }
+      } catch (_) {}
     }
+    if (matchedTeamId) effectiveTeamId = matchedTeamId;
   }
 
   const needsAnonymisation = effectiveTeamId ? teamHasAnonymousMembers(effectiveTeamId) : false;
