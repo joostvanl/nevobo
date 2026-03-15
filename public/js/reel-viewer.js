@@ -139,7 +139,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       const data = await api(`/api/social/media/${m.id}/detect-faces`);
       detectedFaces = data.faces || [];
       renderFaceOverlays(slide, img, detectedFaces, data.blurRegions || [], !!data.debugOverlay);
-      if (!data.debugOverlay) showToast('Tik op een gezicht om te blurren of ontblurren', 'info');
+      if (detectedFaces.length > 0) {
+        if (!data.debugOverlay) showToast('Tik op een gezicht om te blurren of ontblurren', 'info');
+      } else {
+        showToast('Geen gezichten herkend — tik waar je wilt blurren', 'info');
+      }
     } catch (err) {
       removeBlurCanvas();
       showToast('Gezichtsdetectie mislukt', 'error');
@@ -185,6 +189,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     const doRender = () => {
       const c = document.createElement('canvas');
       c.className = 'rv-face-canvas';
+      c.style.cursor = 'crosshair';
       slide.appendChild(c);
       c.width  = c.offsetWidth  || img.offsetWidth;
       c.height = c.offsetHeight || img.offsetHeight;
@@ -215,7 +220,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       }
 
       if (faces.length === 0) {
-        // Only show "no faces" message in debug mode; in production silently do nothing
+        // No auto-detected faces — still keep the canvas active so the user
+        // can tap anywhere to trigger tolerant detection (blur-at-point)
         if (debugOverlay) {
           ctx.fillStyle = 'rgba(0,0,0,0.5)';
           ctx.fillRect(0, 0, canW, canH);
@@ -223,9 +229,9 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
           ctx.font      = `${Math.round(canH * 0.03)}px sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.fillText('Geen gezichten gevonden', canW / 2, canH / 2);
+          ctx.fillText('Geen gezichten gevonden — tik om handmatig te blurren', canW / 2, canH / 2);
         }
-        return;
+        // Fall through: still register the click handler below
       }
 
       if (debugOverlay) {
@@ -260,7 +266,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         });
       }
 
-      // Click: find nearest face and toggle (always active regardless of debug)
+      // Click: find nearest face and toggle, or run tolerant detection at tap point
       c.addEventListener('click', async (e) => {
         e.stopPropagation(); // prevent double-tap-to-like on the frame
         if (blurLoading) return;
@@ -270,19 +276,24 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         const imgX   = (canvasX + xOff) / scale;
         const imgY   = (canvasY + yOff) / scale;
 
+        // Check if tap lands inside (or very close to) an already-detected face
+        // Only match against faces that came from the standard detect-faces call (not blur-at-point additions)
         let bestIdx  = -1;
         let bestDist = Infinity;
         faces.forEach((face, i) => {
-          const d = Math.hypot(imgX - (face.x + face.width / 2), imgY - (face.y + face.height / 2));
-          if (d < bestDist) { bestDist = d; bestIdx = i; }
+          if (face._fromBlurAtPoint) return; // skip manually-added faces — handled via blur-at-point
+          const cx = face.x + face.width  / 2;
+          const cy = face.y + face.height / 2;
+          const d  = Math.hypot(imgX - cx, imgY - cy);
+          // "inside" = closer than 60% of the face half-diagonal
+          const threshold = Math.hypot(face.width, face.height) * 0.60;
+          if (d < threshold && d < bestDist) { bestDist = d; bestIdx = i; }
         });
-        if (bestIdx === -1) return;
 
         const m = list[idx];
         blurLoading = true;
         c.style.cursor = 'wait';
 
-        // Show loading spinner on the slide (always, regardless of debugOverlay)
         const slide2 = track.querySelector(`#rv-slide-${idx}`);
         let spinner = slide2?.querySelector('.rv-blur-spinner');
         if (!spinner && slide2) {
@@ -291,35 +302,50 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
           slide2.appendChild(spinner);
         }
 
-        if (debugOverlay) {
-          // Dim the selected face while loading (debug only)
+        if (debugOverlay && bestIdx !== -1) {
+          // Dim the selected face while loading
           ctx.beginPath();
           const face   = faces[bestIdx];
           const EXPAND2 = 0.25;
-          const [cbx, cby] = toCanvas(
-            face.x + face.width  / 2,
-            face.y + face.height / 2
-          );
+          const [cbx, cby] = toCanvas(face.x + face.width / 2, face.y + face.height / 2);
           ctx.ellipse(cbx, cby, (face.width / 2 + face.width * EXPAND2) * scale, (face.height / 2 + face.height * EXPAND2) * scale, 0, 0, Math.PI * 2);
           ctx.fillStyle = 'rgba(255,255,255,0.3)';
           ctx.fill();
         }
 
         try {
-          const data = await api(`/api/social/media/${m.id}/toggle-face-blur`, {
-            method: 'POST',
-            body: JSON.stringify({ faceIndex: bestIdx, style: selectedStyle }),
-          });
+          let data;
+          if (bestIdx !== -1) {
+            // Tap is on a known face — use fast toggle
+            data = await api(`/api/social/media/${m.id}/toggle-face-blur`, {
+              method: 'POST',
+              body: JSON.stringify({ faceIndex: bestIdx, style: selectedStyle }),
+            });
+          } else {
+            // Tap is NOT on a known face — run tolerant detection at this point
+            // natW/natH are already computed above from img.naturalWidth/offsetWidth
+            data = await api(`/api/social/media/${m.id}/blur-at-point`, {
+              method: 'POST',
+              body: JSON.stringify({
+                tapX: imgX, tapY: imgY,
+                imgWidth: natW, imgHeight: natH,
+                style: selectedStyle,
+              }),
+            });
+            // If a new face was found, add it to our local faces array so
+            // future taps near it use the blur-at-point path (marked with _fromBlurAtPoint)
+            if (data.ok && data.action === 'blurred' && data.region && !data.wasFallback) {
+              faces.push({ ...data.region, _fromBlurAtPoint: true });
+              faces.sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
+            }
+          }
+
           if (data.ok) {
-            // Reload image from server (no cache-buster needed — Nginx sends no-cache)
             const imgEl = slide.querySelector('img');
             if (imgEl) imgEl.src = m.file_path.split('?')[0] + '?t=' + Date.now();
-            // Reset file_path to clean path (strip any previous cache-buster)
             m.file_path = m.file_path.split('?')[0];
-            // Redraw overlays with updated regions
             blurRegions = data.regions || [];
             renderFaceOverlays(slide, imgEl || img, faces, blurRegions, debugOverlay);
-            // Update blur state on item
             m._blurred = blurRegions.length > 0;
             updateRevertBtn(m);
           }
@@ -483,10 +509,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       fetch(`/api/social/media/${m.id}/has-original`, {
         headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
       }).then(r => r.json()).then(data => {
-        // Only show if this is still the active item and team has (or had) anon members
-        if (list[idx]?.id === m.id && (data.teamHasAnon || data.hasOriginal)) {
-          m._blurred    = data.hasOriginal;
+        // Show blur editor button if: uploader/admin, team has anon members, or photo was previously blurred
+        if (list[idx]?.id === m.id && (data.isUploader || data.teamHasAnon || data.hasOriginal)) {
+          m._blurred     = data.hasOriginal;
           m._teamHasAnon = data.teamHasAnon;
+          m._isUploader  = data.isUploader;
           updateRevertBtn(m);
         }
       }).catch(() => {});
@@ -495,7 +522,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
   function updateRevertBtn(m) {
     if (canRevertBlur && canRevertBlur(m) && m.file_type === 'image' && m._blurred !== undefined
-        && (m._teamHasAnon || m._blurred)) {
+        && (m._isUploader || m._teamHasAnon || m._blurred)) {
       revertBtn.style.display = 'flex';
       revertBtn.textContent = '🙈';
       if (blurMode) {

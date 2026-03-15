@@ -448,8 +448,83 @@ async function detectAllFaces(absoluteFilePath) {
 }
 
 /**
- * Returns the absolute path of the .orig backup if it exists, otherwise null.
+ * Tolerant face detection around a specific tap point.
+ *
+ * Crops a region around (tapX, tapY) — about 3× expected face size — and
+ * runs face detection with a much lower confidence threshold (0.15) to catch
+ * faces at distance or in difficult angles. Returns the best matching face
+ * bounding box in ORIGINAL image coordinates, or null if nothing found.
+ *
+ * @param {string} absoluteFilePath  path to the original (unblurred) image
+ * @param {number} tapX              tap X in original-image pixel coordinates
+ * @param {number} tapY              tap Y in original-image pixel coordinates
+ * @param {number} imgWidth          full image width in pixels
+ * @param {number} imgHeight         full image height in pixels
+ * @returns {{ x, y, width, height } | null}
  */
+async function detectFaceAtPoint(absoluteFilePath, tapX, tapY, imgWidth, imgHeight) {
+  if (!modelsLoaded || !faceapi) return null;
+  try {
+    // Crop size: ~30% of the shortest image dimension, min 100px
+    const cropSize = Math.max(100, Math.round(Math.min(imgWidth, imgHeight) * 0.30));
+    const halfCrop = Math.floor(cropSize / 2);
+
+    const cropX = Math.max(0, Math.round(tapX) - halfCrop);
+    const cropY = Math.max(0, Math.round(tapY) - halfCrop);
+    const cropW = Math.min(cropSize, imgWidth  - cropX);
+    const cropH = Math.min(cropSize, imgHeight - cropY);
+
+    if (cropW < 20 || cropH < 20) return null;
+
+    // Extract crop as raw tensor
+    const { data, info } = await sharp(absoluteFilePath)
+      .rotate()
+      .removeAlpha()
+      .extract({ left: cropX, top: cropY, width: cropW, height: cropH })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const tensor = faceapi.tf.tensor3d(new Uint8Array(data), [info.height, info.width, 3], 'int32');
+
+    let detections;
+    try {
+      // Very tolerant threshold — catches distant/angled faces
+      detections = await faceapi
+        .detectAllFaces(tensor, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.15 }))
+        .withFaceLandmarks();
+    } finally {
+      faceapi.tf.dispose(tensor);
+    }
+
+    if (!detections || !detections.length) return null;
+
+    // Pick the detection whose centre is closest to the tap point (within the crop)
+    const tapInCropX = tapX - cropX;
+    const tapInCropY = tapY - cropY;
+    let best = null;
+    let bestDist = Infinity;
+    for (const d of detections) {
+      const cx = d.detection.box.x + d.detection.box.width  / 2;
+      const cy = d.detection.box.y + d.detection.box.height / 2;
+      const dist = Math.hypot(cx - tapInCropX, cy - tapInCropY);
+      if (dist < bestDist) { bestDist = dist; best = d; }
+    }
+    if (!best) return null;
+
+    // Translate back to original image coordinates
+    return {
+      x:      Math.round(best.detection.box.x + cropX),
+      y:      Math.round(best.detection.box.y + cropY),
+      width:  Math.round(best.detection.box.width),
+      height: Math.round(best.detection.box.height),
+    };
+  } catch (err) {
+    console.error('[faceBlur] detectFaceAtPoint error:', err.message);
+    return null;
+  }
+}
+
+
 function getOriginalBackupPath(absoluteFilePath) {
   const p = absoluteFilePath + '.orig';
   return fs.existsSync(p) ? p : null;
@@ -637,4 +712,4 @@ async function checkReferencePhotoQuality(absoluteFilePath) {
   return { ok: issues.length === 0, issues, hints };
 }
 
-module.exports = { loadModels, blurFacesIfNeeded, applyBlurRegions, detectAllFaces, invalidateCache, checkReferencePhotoQuality, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur };
+module.exports = { loadModels, blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, invalidateCache, checkReferencePhotoQuality, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur };
