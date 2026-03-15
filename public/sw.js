@@ -1,4 +1,4 @@
-const CACHE_NAME = 'volleyapp-v105';
+const CACHE_NAME = 'volleyapp-v106';
 const STATIC_ASSETS = [
   '/',
   '/css/app.css',
