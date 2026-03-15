@@ -120,6 +120,7 @@ const migrations = [
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(team_id, embed_id)
   )`,
+  `ALTER TABLE team_social_links ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

@@ -899,7 +899,7 @@ router.get('/home-summary', verifyToken, (req, res) => {
         caption: null,
         blur_regions: null,
         like_count: 0,
-        view_count: 0,
+        view_count: l.view_count || 0,
         comment_count: 0,
         liked_by_me: 0,
         created_at: l.created_at,
@@ -1096,7 +1096,7 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
       caption: null,
       blur_regions: null,
       like_count: 0,
-      view_count: 0,
+      view_count: l.view_count || 0,
       comment_count: 0,
       liked_by_me: 0,
       created_at: l.created_at,
@@ -1195,6 +1195,19 @@ router.delete('/teams/:teamId/social-links/:linkId', verifyToken, (req, res) => 
 
   db.prepare('DELETE FROM team_social_links WHERE id = ?').run(linkId);
   res.json({ ok: true });
+});
+
+// POST /api/social/social-links/:id/view — record a view for a social embed
+router.post('/social-links/:id/view', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ ok: false });
+  try {
+    db.prepare('UPDATE team_social_links SET view_count = view_count + 1 WHERE id = ?').run(id);
+    const row = db.prepare('SELECT view_count FROM team_social_links WHERE id = ?').get(id);
+    res.json({ ok: true, view_count: row?.view_count || 0 });
+  } catch (_) {
+    res.status(500).json({ ok: false });
+  }
 });
 
 // Shared URL parser (mirrors the one in admin.js)

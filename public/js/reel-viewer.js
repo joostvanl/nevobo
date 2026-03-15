@@ -32,6 +32,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   let touchStartY = 0;
   let allLoaded   = !fetchMore;   // true when no more items to fetch
   let loadingMore = false;
+  let embedUnlocked = false; // true when user tapped active embed shield
 
   // Blur editor state
   let blurMode       = false;
@@ -69,7 +70,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         <span class="rv-act-icon">💬</span>
         <span class="rv-act-label" id="rv-comment-count">0</span>
       </button>
-      <span class="rv-act-btn">
+      <span class="rv-act-btn" id="rv-view-btn">
         <span class="rv-act-icon">👁</span>
         <span class="rv-act-label" id="rv-view-count">0</span>
       </span>
@@ -537,6 +538,20 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       if (i >= list.length) i = 0;
       else if (i < 0) i = list.length - 1;
     }
+    // Restore embed shield on the slide we're leaving if user had unlocked it
+    if (embedUnlocked) {
+      const prevSlide = track.querySelector(`#rv-slide-${idx}`);
+      const prevM = list[idx];
+      if (prevSlide && prevM && (prevM.file_type === 'tiktok' || prevM.file_type === 'instagram')) {
+        if (!prevSlide.querySelector('.rv-embed-shield')) {
+          const shield = document.createElement('div');
+          shield.className = 'rv-embed-shield';
+          prevSlide.appendChild(shield);
+        }
+      }
+      embedUnlocked = false;
+    }
+
     i = Math.max(0, Math.min(i, list.length - 1));
     idx = i;
 
@@ -603,6 +618,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     const isEmbed = m.file_type === 'tiktok' || m.file_type === 'instagram';
     likeBtn.style.display    = isEmbed ? 'none' : '';
     commentBtn.style.display = isEmbed ? 'none' : '';
+    // View counter is shown for all items including embeds
+    overlay.querySelector('#rv-view-btn').style.display = '';
+
+    // For TikTok: move action buttons to bottom-left so TikTok's own right-side controls stay accessible
+    overlay.querySelector('#rv-actions').classList.toggle('rv-actions--left', m.file_type === 'tiktok');
 
     // Nav arrows: always visible on embed slides (shield blocks swipe), hidden on normal slides
     const prevBtn = overlay.querySelector('#rv-prev');
@@ -658,6 +678,19 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   async function recordView() {
     try {
       const m = list[idx];
+      // Social embeds use a separate view endpoint
+      if (m.file_type === 'tiktok' || m.file_type === 'instagram') {
+        if (!m.social_link_id) return;
+        const data = await fetch(`/api/social/social-links/${m.social_link_id}/view`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }).then(r => r.json());
+        if (data.ok) {
+          m.view_count = data.view_count;
+          overlay.querySelector('#rv-view-count').textContent = data.view_count;
+        }
+        return;
+      }
       // Embed items have string ids like 'tiktok-...' — skip view tracking
       if (!m.id || typeof m.id === 'string') return;
       const data = await fetch(`/api/social/media/${m.id}/view`, {
@@ -805,6 +838,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     // Tapping an embed shield removes it so the iframe becomes interactive
     if (e.target.classList.contains('rv-embed-shield')) {
       e.target.remove();
+      embedUnlocked = true;
       return;
     }
     const vid = e.target.closest('.rv-slide')?.querySelector('video');

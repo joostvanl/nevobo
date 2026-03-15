@@ -2665,7 +2665,7 @@ img.hl-avatar {
   position: absolute;
   top: 12px;
   right: 12px;
-  z-index: 20;
+  z-index: 100;
   background: rgba(0,0,0,0.45);
   border: none;
   color: #fff;
@@ -2673,6 +2673,8 @@ img.hl-avatar {
   height: 32px;
   border-radius: 50%;
   font-size: 0.85rem;
+  pointer-events: all;
+  touch-action: manipulation;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2685,7 +2687,7 @@ img.hl-avatar {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 20;
+  z-index: 100;
   background: rgba(0,0,0,0.5);
   border: none;
   color: #fff;
@@ -2699,6 +2701,8 @@ img.hl-avatar {
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(6px);
+  pointer-events: all;
+  touch-action: manipulation;
 }
 .rv-nav-prev { left: 6px; }
 .rv-nav-next { right: 6px; }
@@ -2877,6 +2881,9 @@ img.hl-avatar {
 .rv-embed {
   border: none;
   background: #000;
+  /* Iframe sits below our UI controls — don't let it capture pointer events meant for nav/close buttons */
+  position: relative;
+  z-index: 1;
 }
 /* Transparent shield over embed iframes — blocks pointer events for swipe/close.
    Removed on tap so user can interact with the embed. */
@@ -2910,11 +2917,18 @@ img.hl-avatar {
   position: absolute;
   right: 28px;
   bottom: calc(env(safe-area-inset-bottom, 0px) + 38px);
-  z-index: 10;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
   align-items: center;
+  pointer-events: all;
+  touch-action: manipulation;
+}
+/* On TikTok slides: move to bottom-left so TikTok's own right-side controls stay accessible */
+.rv-actions--left {
+  right: auto;
+  left: 14px;
 }
 .rv-act-btn {
   background: none;
