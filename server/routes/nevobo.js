@@ -1409,3 +1409,35 @@ router.delete('/cache/:code', async (req, res) => {
 
 module.exports = router;
 module.exports.parseMatchItem = parseMatchItem;
+
+/**
+ * Proactively fetch and cache both RSS feeds for a club.
+ * Called fire-and-forget when a user follows an external team,
+ * so the data is ready on the next homepage load.
+ */
+module.exports.warmClubCache = async function warmClubCache(nevoboCode) {
+  const code = (nevoboCode || '').toLowerCase();
+  if (!code) return;
+  try {
+    await Promise.all([
+      withFeedCache(
+        `results:club:${code}`,
+        async () => {
+          const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${code}/resultaten.rss`);
+          return { matches: (feed.items || []).map(parseMatchItem) };
+        },
+        d => resultsSmartTtl(d.matches),
+        { maxAgeMs: 1 * 3600_000 }, // force refresh if older than 1h
+      ),
+      withFeedCache(
+        `schedule:club:${code}`,
+        async () => {
+          const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${code}/programma.rss`);
+          return { matches: (feed.items || []).map(parseMatchItem), club_name: feed.title };
+        },
+        d => scheduleSmartTtl(d.matches),
+        { maxAgeMs: 1 * 3600_000 },
+      ),
+    ]);
+  } catch (_) { /* non-fatal */ }
+};

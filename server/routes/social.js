@@ -560,6 +560,7 @@ router.post('/follow', verifyToken, (req, res) => {
   }
 
   let resolvedId = followee_id;
+  let externalNevoboCode = null; // track if we need to warm the cache
 
   // Auto-create an external team record if teamName is provided without a DB id
   if (followee_type === 'team' && !followee_id && teamName) {
@@ -583,7 +584,12 @@ router.post('/follow', verifyToken, (req, res) => {
         team = { id: r.lastInsertRowid };
       }
       resolvedId = team.id;
+      externalNevoboCode = club.nevobo_code;
     }
+  } else if (followee_type === 'team' && followee_id) {
+    // Following an existing DB team — check if it's an external club
+    const teamRow = db.prepare('SELECT c.nevobo_code FROM teams t JOIN clubs c ON c.id = t.club_id WHERE t.id = ?').get(followee_id);
+    if (teamRow?.nevobo_code) externalNevoboCode = teamRow.nevobo_code;
   }
 
   if (!resolvedId) {
@@ -602,6 +608,13 @@ router.post('/follow', verifyToken, (req, res) => {
       if (user && user.club_id !== parseInt(resolvedId)) {
         awardBadgeIfNew(req.user.id, 'fan');
       }
+    }
+
+    // Fire-and-forget: warm the RSS cache for the followed club so the
+    // homepage has fresh data on the next load without delay
+    if (externalNevoboCode) {
+      const { warmClubCache } = require('./nevobo');
+      warmClubCache(externalNevoboCode).catch(() => {});
     }
 
     res.status(201).json({ ok: true, followee_id: resolvedId });
@@ -673,6 +686,17 @@ router.get('/home-summary', verifyToken, (req, res) => {
     JOIN clubs c ON c.id = t.club_id
     WHERE uf.follower_id = ? AND uf.followee_type = 'team'
   `).all(userId);
+
+  // Fire-and-forget: ensure RSS feeds for all followed external clubs are cached.
+  // This repairs the case where a club was followed but its feeds were never fetched.
+  const ownCodes = new Set(memberTeams.map(t => t.nevobo_code).filter(Boolean));
+  const externalCodes = [...new Set(
+    followedTeamRows.map(t => t.nevobo_code).filter(c => c && !ownCodes.has(c))
+  )];
+  if (externalCodes.length > 0) {
+    const { warmClubCache } = require('./nevobo');
+    for (const code of externalCodes) warmClubCache(code).catch(() => {});
+  }
 
   // Recent media: photos/videos from the user's club or followed teams
   // Posts often have club_id set but team_id=null, so we query by both
