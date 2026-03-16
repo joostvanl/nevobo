@@ -136,7 +136,7 @@ export async function render(container, params = {}) {
   // If a specific match was clicked (from team page or elsewhere)
   if (params.matchId) {
     if (params.teamName && params.nevoboCode) {
-      renderMatchDetailByTeamFeed(container, params.matchId, params.teamName, params.nevoboCode, club);
+      renderMatchDetailByTeamFeed(container, params.matchId, params.teamName, params.nevoboCode, club, myTeams);
     } else {
       renderMatchDetailById(container, params.matchId, club, myTeams.length > 0, myTeams);
     }
@@ -695,11 +695,43 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
   const isHomeGame = canInteract && clubNameLower.length > 0
     && (match.home_team || '').toLowerCase().includes(clubNameLower);
 
+  // Matching team = user's team that plays in this match (for scout button)
+  const norm = s => (s || '').toLowerCase().replace(/\s+/g, '');
+  const matchingTeam = (match._matchingTeam && myTeams.find(t => t.id === match._matchingTeam.id))
+    || myTeams.find(t => {
+        const dn = (t.display_name || t.team_name || '').trim();
+        if (!dn || dn.length < 2) return false;
+        const dnNorm = norm(dn);
+        const homeNorm = norm(match.home_team);
+        const awayNorm = norm(match.away_team);
+        return homeNorm.includes(dnNorm) || awayNorm.includes(dnNorm)
+            || (match.home_team || '').toLowerCase().includes(dn.toLowerCase())
+            || (match.away_team || '').toLowerCase().includes(dn.toLowerCase());
+      })
+    || (myTeams.length === 1 && clubNameLower && (
+        (match.home_team || '').toLowerCase().includes(clubNameLower) ||
+        (match.away_team || '').toLowerCase().includes(clubNameLower)
+      ) ? myTeams[0] : null);
+  const isScoutAllowed = canInteract && matchingTeam && (
+    (state.user?.memberships?.some(m => m.team_id === matchingTeam.id && m.membership_type === 'coach'))
+    || (state.user?.roles?.some(r =>
+      r.role === 'super_admin'
+      || (r.role === 'club_admin' && r.club_id === matchingTeam.club_id)
+      || (r.role === 'team_admin' && r.team_id === matchingTeam.id)
+    ))
+  );
+
   container.innerHTML = `
     <div class="page-hero">
       <div class="container">
-        <button class="btn" style="background:rgba(255,255,255,0.2);color:#fff;margin-bottom:0.75rem"
-          onclick="navigate('matches')">← Terug</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem">
+          <button class="btn" style="background:rgba(255,255,255,0.2);color:#fff"
+            onclick="navigate('matches')">← Terug</button>
+          ${isScoutAllowed ? `
+            <button class="btn" id="match-scout-btn" style="background:rgba(255,255,255,0.25);color:#fff;font-size:0.9rem"
+              title="Scout wedstrijd">🏐 Scout</button>
+            <span id="scout-lock-info" class="hidden" style="color:rgba(255,255,255,0.8);font-size:0.75rem;width:100%;text-align:right"></span>` : ''}
+        </div>
         <h1 style="font-size:1.1rem;line-height:1.3">${match.home_team || '—'} vs ${match.away_team || '—'}</h1>
         ${match.poule_code ? `<p style="opacity:0.8;font-size:0.8rem;margin-top:0.25rem">${match.poule_code}</p>` : ''}
         ${!canInteract ? `<span class="chip" style="background:rgba(255,255,255,0.2);color:#fff;font-size:0.75rem;margin-top:0.35rem;display:inline-block">👁️ Alleen lezen</span>` : ''}
@@ -905,6 +937,44 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
       setTimeout(() => showUploadModal(matchId, uploadTeamId, { capture: false }), 400);
     }
   }
+
+  // Scout button (visible only for coaches/admins when isScoutAllowed)
+  // Ons team is altijd "thuis" in de scout, ongeacht de feitelijke thuis/uit status.
+  const scoutBtn = container.querySelector('#match-scout-btn');
+  if (scoutBtn) {
+    scoutBtn.addEventListener('click', () => {
+      if (scoutBtn.disabled) return;
+      if (!matchingTeam) return;
+      const dn = (matchingTeam.display_name || '').toLowerCase();
+      const weAreHome = dn && (match.home_team || '').toLowerCase().includes(dn);
+      navigate('scout-setup', {
+        teamId: matchingTeam.id,
+        nevoboMatchId: matchId,
+        homeTeam: weAreHome ? (match.home_team || '') : (match.away_team || ''),
+        awayTeam: weAreHome ? (match.away_team || '') : (match.home_team || ''),
+      });
+    });
+
+    // Check lock status asynchronously
+    const scoutMatchId = 'nm_' + matchId.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 80);
+    api(`/api/scout/status/${encodeURIComponent(scoutMatchId)}`).then(st => {
+      if (!st) return;
+      const lockInfo = container.querySelector('#scout-lock-info');
+      if (st.locked && !st.lockedByMe) {
+        scoutBtn.disabled = true;
+        scoutBtn.style.opacity = '0.5';
+        scoutBtn.style.cursor = 'not-allowed';
+        scoutBtn.textContent = '🔒 Bezet';
+        scoutBtn.title = `Wordt gescouted door ${st.lockedBy || 'iemand anders'}`;
+        if (lockInfo) {
+          lockInfo.classList.remove('hidden');
+          lockInfo.textContent = `🔒 Wordt gescouted door ${st.lockedBy || 'iemand anders'}`;
+        }
+      } else if (st.locked && st.lockedByMe) {
+        scoutBtn.textContent = '🏐 Hervat scout';
+      }
+    }).catch(() => {});
+  }
 }
 
 async function renderMatchDetailById(container, matchId, club, canInteract, myTeams = []) {
@@ -926,8 +996,8 @@ async function renderMatchDetailById(container, matchId, club, canInteract, myTe
   }
 }
 
-// Called when navigating from team page — fetches via team-by-name feed
-async function renderMatchDetailByTeamFeed(container, matchId, teamName, nevoboCode, club) {
+// Called when navigating from team page or home — fetches via team-by-name feed
+async function renderMatchDetailByTeamFeed(container, matchId, teamName, nevoboCode, club, myTeams = []) {
   container.innerHTML = `<div class="spinner"></div>`;
   try {
     const q = `name=${encodeURIComponent(teamName)}&code=${encodeURIComponent(nevoboCode)}`;
@@ -940,7 +1010,10 @@ async function renderMatchDetailByTeamFeed(container, matchId, teamName, nevoboC
       (data.dbTeam?.nevobo_code === club.nevobo_code)
     );
     if (match) {
-      renderMatchDetail(container, match, club || { nevobo_code: nevoboCode, name: teamName }, null, isOwnClub);
+      // Resolve matching team from myTeams for Scout button (team in this match from user's club)
+      const dbTeam = data.dbTeam ? { id: data.dbTeam.id, display_name: data.dbTeam.display_name || teamName, club_id: data.dbTeam.club_id } : null;
+      const resolvedMyTeams = dbTeam && myTeams.some(t => t.id === dbTeam.id) ? myTeams : (dbTeam ? [...myTeams, dbTeam] : myTeams);
+      renderMatchDetail(container, match, club || { nevobo_code: nevoboCode, name: teamName }, null, isOwnClub, resolvedMyTeams);
     } else {
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Wedstrijd niet gevonden</p><button class="btn btn-primary mt-3" onclick="navigate('matches')">Terug</button></div>`;
     }
@@ -1137,7 +1210,17 @@ function openCapturePicker(accept, matchId, teamId) {
     if (!files.length) { sessionStorage.removeItem('vb_upload_intent'); return; }
     showCaptionModal(matchId, teamId, files);
   });
-  input.click();
+  try {
+    input.click();
+  } catch (e) {
+    // Permissions check can fail in PWA/iframe contexts; fallback without capture
+    if (e && (e.name === 'TypeError' || String(e.message || '').includes('Permissions'))) {
+      delete input.capture;
+      input.click();
+    } else {
+      throw e;
+    }
+  }
 }
 
 function showUploadModal(matchId, teamId = null) {

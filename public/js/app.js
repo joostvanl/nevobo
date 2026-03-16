@@ -387,14 +387,16 @@ export function registerRoute(name, fn) {
 }
 
 const PAGE_TITLES = {
-  home:     'Home',
-  matches:  'Wedstrijden',
-  carpool:  'Carpool',  // kept for deep links from match pages
-  badges:   'Badges & Doelen',
-  social:   'Sociaal',
-  profile:  'Mijn Profiel',
-  team:     'Team',
-  admin:    'Beheer',
+  home:          'Home',
+  matches:       'Wedstrijden',
+  carpool:       'Carpool',
+  badges:        'Badges & Doelen',
+  social:        'Sociaal',
+  profile:       'Mijn Profiel',
+  team:          'Team',
+  admin:         'Beheer',
+  'scout-setup': '🏐 Scout setup',
+  'scout-match': '🏐 Scouting',
 };
 
 export function navigate(route, params = {}) {
@@ -535,6 +537,8 @@ async function boot() {
     import('./pages/team.js'),
     import('./pages/admin.js'),
     import('./pages/privacy.js'),
+    import('./pages/scout-setup.js'),
+    import('./pages/scout-match.js'),
   ]);
 
   if (token && user) {
@@ -557,17 +561,19 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, privacyPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, privacyPage, scoutSetupPage, scoutMatchPage] = await pagesPromise;
 
-  registerRoute('home',    homePage.render);
-  registerRoute('matches', matchesPage.render);
-  registerRoute('carpool', carpoolPage.render);
-  registerRoute('badges',  badgesPage.render);
-  registerRoute('social',  socialPage.render);
-  registerRoute('profile', profilePage.render);
-  registerRoute('team',    teamPage.render);
-  registerRoute('admin',   adminPage.render);
-  registerRoute('privacy', privacyPage.render);
+  registerRoute('home',         homePage.render);
+  registerRoute('matches',      matchesPage.render);
+  registerRoute('carpool',      carpoolPage.render);
+  registerRoute('badges',       badgesPage.render);
+  registerRoute('social',       socialPage.render);
+  registerRoute('profile',      profilePage.render);
+  registerRoute('team',         teamPage.render);
+  registerRoute('admin',        adminPage.render);
+  registerRoute('privacy',      privacyPage.render);
+  registerRoute('scout-setup',  scoutSetupPage.render);
+  registerRoute('scout-match',  scoutMatchPage.render);
 
   // Bottom nav clicks
   document.querySelectorAll('.nav-item[data-route]').forEach(btn => {

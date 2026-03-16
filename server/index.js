@@ -27,6 +27,7 @@ app.use('/api/carpool',       require('./routes/carpool'));
 app.use('/api/social',        require('./routes/social'));
 app.use('/api/gamification',  require('./routes/gamification'));
 app.use('/api/admin',         require('./routes/admin'));
+app.use('/api/scout',         require('./routes/scout'));
 
 // ─── Global error handler ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {

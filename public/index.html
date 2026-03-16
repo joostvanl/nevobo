@@ -11,6 +11,7 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏐</text></svg>" />
   <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/scout.css" />
 
   <!-- CDN Libraries -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -115,6 +116,13 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="/js/app.js" type="module"></script>
 <script>
+  // Suppress bekende niet-app fouten (extensions, camera-context)
+  window.addEventListener('unhandledrejection', function(e) {
+    var msg = e.reason && (e.reason.message || String(e.reason));
+    if (!msg) return;
+    if (msg.indexOf('Permissions check failed') !== -1) return e.preventDefault();
+    if (msg.indexOf('Could not establish connection') !== -1 && msg.indexOf('Receiving end does not exist') !== -1) return e.preventDefault();
+  });
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

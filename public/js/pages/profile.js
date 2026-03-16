@@ -365,7 +365,11 @@ function showEditOverlay(me, clubs, container) {
       const f = inp.files?.[0]; inp.remove();
       if (f) uploadFaceRef(f, overlay);
     });
-    inp.click();
+    try {
+      inp.click();
+    } catch (e) {
+      if (/permission|Permissions/i.test(String(e))) { delete inp.capture; inp.click(); } else { throw e; }
+    }
   });
 
   // Face reference: file upload
@@ -498,7 +502,11 @@ function showAvatarPicker(me, container) {
     inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
     document.body.appendChild(inp);
     inp.addEventListener('change', () => { const f = inp.files?.[0]; inp.remove(); if (f) doUpload(f); });
-    inp.click();
+    try {
+      inp.click();
+    } catch (e) {
+      if (/permission|Permissions/i.test(String(e))) { delete inp.capture; inp.click(); } else { throw e; }
+    }
   });
 
   overlay.querySelector('#av-upload').addEventListener('click', () => {

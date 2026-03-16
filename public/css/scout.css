@@ -1,0 +1,1017 @@
+/**
+ * scout.css — Scout module styling
+ * Inherits app CSS variables, overrides/extends for the scout screens.
+ */
+
+/* ── Scout container wrapper ─────────────────────────────────────────────── */
+.scout-page {
+  min-height: calc(100dvh - 56px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
+}
+
+/* ── Setup wizard ────────────────────────────────────────────────────────── */
+.scout-setup-header {
+  background: var(--primary);
+  color: #fff;
+  padding: 1.25rem 1rem 1rem;
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-bottom: 1.25rem;
+}
+.scout-setup-header h2 {
+  margin: 0 0 0.15rem;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+.scout-setup-header p {
+  margin: 0;
+  opacity: 0.85;
+  font-size: 0.85rem;
+}
+
+.scout-step {
+  display: none;
+}
+.scout-step.active {
+  display: block;
+}
+
+.scout-step-indicator {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+.scout-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.scout-step-dot.active {
+  background: var(--primary);
+}
+.scout-step-dot.done {
+  background: var(--success, #22c55e);
+}
+
+/* Player list in setup */
+.scout-player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+.scout-player-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--surface, #f5f5f7);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+}
+.scout-player-number {
+  font-weight: 800;
+  font-size: 1.1rem;
+  color: var(--primary);
+  width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+.scout-player-name {
+  flex: 1;
+  font-size: 0.95rem;
+}
+.scout-player-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+.scout-player-remove:active { color: var(--danger, #ef4444); }
+
+/* Position grid (veld opstelling) */
+.scout-field {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0.5rem;
+  aspect-ratio: 3/2;
+  background: var(--success-bg, #dcfce7);
+  border: 2px solid var(--success, #22c55e);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  margin: 0.75rem 0;
+}
+.scout-field-cell {
+  background: rgba(255,255,255,0.7);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  min-height: 56px;
+  transition: border-color 0.15s, background 0.15s;
+  padding: 0.25rem;
+  gap: 0.1rem;
+}
+.scout-field-cell:active, .scout-field-cell.selected {
+  border-color: var(--primary);
+  background: var(--primary-light, rgba(37,99,235,0.1));
+}
+.scout-field-cell .pos-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.scout-field-cell .pos-number {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+/* ── Match scoreboard ─────────────────────────────────────────────────────── */
+.scout-scoreboard {
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.scout-team-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+.scout-team-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  opacity: 0.85;
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scout-score {
+  font-size: 3.5rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+.scout-sets-row {
+  display: flex;
+  gap: 0.3rem;
+}
+.scout-set-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.3);
+}
+.scout-set-dot.won {
+  background: #fff;
+}
+.scout-vs {
+  font-size: 1rem;
+  opacity: 0.7;
+  font-weight: 700;
+  padding: 0 0.25rem;
+}
+.scout-set-info {
+  text-align: center;
+  font-size: 0.75rem;
+  opacity: 0.8;
+  margin-top: 0.25rem;
+}
+
+/* Serving indicator */
+.scout-serving {
+  display: inline-block;
+  background: rgba(255,255,255,0.25);
+  border-radius: 99px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-top: 0.2rem;
+}
+
+/* ── Action buttons ───────────────────────────────────────────────────────── */
+.scout-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.scout-actions-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.scout-btn {
+  flex: 1;
+  background: var(--surface, #f0f0f5);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  padding: 0.75rem 0.25rem;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  line-height: 1.2;
+}
+.scout-btn:active {
+  transform: scale(0.95);
+  background: var(--primary-light, rgba(37,99,235,0.12));
+  border-color: var(--primary);
+}
+.scout-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.scout-btn-icon {
+  display: block;
+  font-size: 1.4rem;
+  margin-bottom: 0.1rem;
+}
+.scout-btn-score {
+  padding: 1rem 0.5rem;
+  font-size: 1rem;
+}
+.scout-btn-score.home {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.scout-btn-score.away {
+  background: var(--surface2, #e8e8ed);
+  border-color: var(--border);
+}
+.scout-btn-end {
+  background: var(--danger-bg, #fee2e2);
+  border-color: var(--danger, #ef4444);
+  color: var(--danger, #ef4444);
+}
+.scout-btn-end:active {
+  background: var(--danger, #ef4444);
+  color: #fff;
+}
+
+/* ── Rotation display ─────────────────────────────────────────────────────── */
+.scout-rotation {
+  background: var(--surface, #f5f5f7);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.scout-rotation h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.scout-rotation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 0.35rem;
+}
+.scout-rotation-cell {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.25rem;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.scout-rotation-cell.selected {
+  border-color: var(--primary);
+  background: var(--primary-light, rgba(37,99,235,0.1));
+  color: var(--primary);
+}
+.scout-rotation-cell .cell-number {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+/* ── Rally log ────────────────────────────────────────────────────────────── */
+.scout-rally-log {
+  background: var(--surface, #f5f5f7);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.scout-rally-log h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.scout-event-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.scout-event-row:last-child { border-bottom: none; }
+.scout-event-icon { font-size: 1rem; flex-shrink: 0; }
+.scout-event-desc { flex: 1; color: var(--text); }
+.scout-event-player { color: var(--text-muted); font-size: 0.75rem; }
+
+/* ── Match controls bar ───────────────────────────────────────────────────── */
+.scout-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.scout-controls .scout-btn {
+  font-size: 0.8rem;
+  padding: 0.6rem 0.4rem;
+}
+
+/* ── Dialog overlay (dialog.js creëert .dialog-overlay / .dialog-panel) ──── */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.dialog-overlay.hidden { display: none !important; }
+
+.dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-panel {
+  position: relative;
+  background: var(--card-bg, #fff);
+  border-radius: 14px;
+  padding: 1.5rem 1.25rem 1.25rem;
+  width: 100%;
+  max-width: 340px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.3);
+  animation: dialogSlideUp 0.2s ease-out;
+}
+@keyframes dialogSlideUp {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dialog-message {
+  margin: 0 0 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.dialog-input {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 1rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.dialog-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.dialog-input.hidden { display: none !important; }
+
+.dialog-buttons {
+  display: flex;
+  gap: 0.6rem;
+}
+.dialog-buttons .btn {
+  flex: 1;
+  padding: 0.65rem 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 8px;
+  min-height: 44px;
+}
+.dialog-buttons .btn-secondary {
+  background: var(--surface, #f0f0f5);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.dialog-buttons .btn-primary {
+  background: var(--primary);
+  border: none;
+  color: #fff;
+}
+
+/* ── Overlays: Opties / Wissels / Timeout (bottom-sheet style) ────────────── */
+.options-overlay,
+.wissel-overlay,
+.timeout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  pointer-events: none;
+}
+.options-overlay:not(.hidden),
+.wissel-overlay:not(.hidden),
+.timeout-overlay:not(.hidden) {
+  pointer-events: auto;
+}
+
+.options-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.options-overlay:not(.hidden) .options-backdrop,
+.wissel-overlay:not(.hidden) .options-backdrop,
+.timeout-overlay:not(.hidden) .options-backdrop {
+  opacity: 1;
+}
+
+.options-panel,
+.wissel-panel,
+.timeout-panel {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  background: var(--card-bg, #fff);
+  border-radius: var(--radius, 12px) var(--radius, 12px) 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+  transform: translateY(100%);
+  transition: transform 0.25s ease-out;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.options-overlay:not(.hidden) .options-panel,
+.wissel-overlay:not(.hidden) .options-panel,
+.wissel-overlay:not(.hidden) .wissel-panel,
+.timeout-overlay:not(.hidden) .options-panel,
+.timeout-overlay:not(.hidden) .timeout-panel {
+  transform: translateY(0);
+}
+
+/* Timeout panel: content directly in panel needs padding + scroll */
+.timeout-panel {
+  overflow-y: auto;
+  padding: 0 1.25rem 1.25rem;
+}
+.timeout-panel > .options-header {
+  margin: 0 -1.25rem;
+  padding: 1rem 1.25rem;
+}
+
+.options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.options-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.options-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.options-section {
+  margin-bottom: 1.5rem;
+}
+.options-section h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.options-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.options-sub {
+  margin-top: 0.75rem;
+  padding-left: 0.5rem;
+  border-left: 3px solid var(--border);
+}
+.options-sub.hidden { display: none; }
+
+/* Close button in overlay headers */
+.options-close {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+.options-close:hover {
+  color: var(--text);
+  background: var(--surface2, #e8e8ed);
+}
+
+/* Options body */
+.options-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.option-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface2, #e8e8ed);
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.option-choice:hover {
+  background: rgba(0,0,0,0.04);
+}
+.option-choice:has(input:checked) {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.08);
+}
+.option-choice input { margin: 0; accent-color: var(--primary); }
+
+.options-more {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.options-link {
+  display: inline-block;
+  color: var(--primary);
+  text-decoration: none;
+  padding: 0.5rem 0;
+}
+.options-link:hover { text-decoration: underline; }
+
+.options-section-placeholder {
+  min-height: 4rem;
+  display: flex;
+  align-items: center;
+}
+
+.option-check { margin-bottom: 0.5rem; }
+.option-check input[type="checkbox"] { width: 1.25em; height: 1.25em; }
+
+.btn-block {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+/* ── Setup court (wissel overlay veld + wissels) ─────────────────────────── */
+.setup-court {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+.setup-court .court-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+.setup-court .court-net {
+  height: 4px;
+  margin: 0.25rem 0;
+  background: linear-gradient(to right, transparent 0%, var(--primary-light, rgba(37,99,235,0.15)) 10%, var(--primary) 50%, var(--primary-light, rgba(37,99,235,0.15)) 90%, transparent 100%);
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+.setup-cell {
+  padding: 0.65rem 0.5rem;
+  min-height: 3.5rem;
+  background: var(--surface, #f0f0f5);
+  border: 2px solid var(--border);
+  border-radius: var(--radius, 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  position: relative;
+}
+.setup-cell .tile-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.setup-cell .tile-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+  word-break: break-word;
+}
+.setup-cell .tile-name.empty {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+.setup-cell.selected {
+  border-color: var(--primary) !important;
+  background: var(--primary-light, rgba(37,99,235,0.1)) !important;
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.setup-cell:active {
+  transform: scale(0.97);
+}
+
+/* Wisselspelers (bank) */
+.setup-cell.setup-sub {
+  border-style: dashed;
+  border-color: var(--border);
+  min-height: 4.5rem;
+  padding: 0.85rem 0.6rem;
+}
+.setup-cell.setup-sub .tile-name {
+  font-size: 1rem;
+  line-height: 1.25;
+}
+.setup-cell.setup-sub.libero-highlight {
+  border-color: rgba(249, 115, 22, 0.6);
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.3), 0 0 20px rgba(249, 115, 22, 0.15);
+}
+
+.setup-section-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.5rem 0 0.25rem;
+}
+
+.setup-subs-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.wissel-count {
+  font-weight: 600;
+  color: var(--primary);
+  margin-left: 0.4rem;
+}
+
+.wissel-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
+}
+
+/* Timeout overlay */
+.timeout-overlay #timeoutLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  gap: 1rem;
+}
+.timeout-overlay .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: scout-spin 0.8s linear infinite;
+}
+@keyframes scout-spin { to { transform: rotate(360deg); } }
+
+#timeoutContent.hidden,
+#timeoutError.hidden,
+#timeoutLoading.hidden { display: none !important; }
+
+#timeoutAdviceBody {
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* ── Scout match page hero ────────────────────────────────────────────────── */
+.scout-match-hero {
+  background: linear-gradient(135deg, var(--primary) 0%, #1d4ed8 100%);
+  padding: 0.75rem 1rem;
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.scout-match-hero .back-btn {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  padding: 0.4rem 0.75rem;
+  border-radius: 99px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+.scout-match-hero .title {
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.9);
+  font-weight: 700;
+  text-align: center;
+  flex: 1;
+  padding: 0 0.5rem;
+}
+
+/* ── Completed badge ──────────────────────────────────────────────────────── */
+.scout-completed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--success-bg, #dcfce7);
+  color: var(--success, #16a34a);
+  border-radius: 99px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid var(--success, #22c55e);
+}
+
+/* ── Scout button on match detail page ───────────────────────────────────── */
+.btn-scout {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+}
+.btn-scout:active {
+  opacity: 0.85;
+}
+.btn-scout-resume {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
+.btn-scout-view {
+  background: var(--surface, #f0f0f5);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/* ── Scout Buttonbox ──────────────────────────────────────────────────────── */
+.scout-buttonbox {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+.scout-buttonbox button { cursor: pointer; pointer-events: auto; }
+
+.sbox-row { display: flex; flex-direction: column; gap: 0.35rem; }
+.sbox-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0 0.1rem;
+}
+
+.sbox-grid {
+  display: grid;
+  gap: 0.4rem;
+}
+.sbox-grid-2 { grid-template-columns: 1fr 1fr; }
+.sbox-grid-3 { grid-template-columns: repeat(3, 1fr); }
+.sbox-grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+/* Base button */
+.sbox-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #f5f5f7);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 0.65rem 0.3rem;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: center;
+  transition: transform 0.08s, background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  line-height: 1.15;
+  user-select: none;
+}
+.sbox-btn:active {
+  transform: scale(0.94);
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.sbox-btn--wide { grid-column: 1 / -1; }
+
+/* Variants */
+.sbox-btn--primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.sbox-btn--primary:active {
+  background: var(--primary-dark, #1d4ed8);
+  border-color: var(--primary-dark, #1d4ed8);
+}
+
+.sbox-btn--accent {
+  background: #fff;
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 800;
+}
+.sbox-btn--accent:active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.sbox-btn--warn {
+  background: #fff;
+  border-color: var(--warning, #f59e0b);
+  color: var(--warning-dark, #b45309);
+  font-weight: 800;
+}
+.sbox-btn--warn:active {
+  background: var(--warning, #f59e0b);
+  color: #fff;
+}
+
+/* Point buttons — gelijkwaardig, opvallend */
+.sbox-btn--point {
+  padding: 0.85rem 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  border-width: 2px;
+  border-radius: 10px;
+  letter-spacing: 0.01em;
+}
+.sbox-btn--point-home {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.sbox-btn--point-home:active {
+  background: var(--primary-dark, #1d4ed8);
+}
+.sbox-btn--point-away {
+  background: var(--danger, #ef4444);
+  border-color: var(--danger, #ef4444);
+  color: #fff;
+}
+.sbox-btn--point-away:active {
+  background: var(--danger-dark, #b91c1c);
+}
+
+.sbox-btn--cancel {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.5rem;
+}
+
+/* Legacy compat */
+.events-section { pointer-events: auto; }
+.events-section button { cursor: pointer; }
+.match-main .scout-buttonbox { pointer-events: auto; }
+
+/* ── Rotation court: spelerselectie (tik op veldcel) ──────────────────────── */
+#rotationCourt .court-cell {
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 0.15s, box-shadow 0.2s, background 0.15s;
+}
+
+/* Role-based colouring */
+.player-tile.court-cell.role-sv {
+  background: linear-gradient(135deg, rgba(61, 123, 245, 0.18) 0%, rgba(61, 123, 245, 0.06) 100%) !important;
+  border-left: 4px solid #3d7bf5 !important;
+}
+.player-tile.court-cell.role-pl {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.05) 100%) !important;
+  border-left: 4px solid #22c55e !important;
+}
+.player-tile.court-cell.role-mid {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.18) 0%, rgba(234, 179, 8, 0.06) 100%) !important;
+  border-left: 4px solid #eab308 !important;
+}
+.player-tile.court-cell.role-dia {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.18) 0%, rgba(168, 85, 247, 0.06) 100%) !important;
+  border-left: 4px solid #a855f7 !important;
+}
+.player-tile.court-cell.setter .tile-badge::after {
+  content: " · S";
+  color: var(--primary);
+  font-weight: 700;
+}
+.player-tile.court-cell.libero {
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.18) 0%, rgba(249, 115, 22, 0.05) 100%) !important;
+  border-left: 4px solid #f97316 !important;
+}
+
+/* Passer-highlight: groene glow op de 3 meest aannemelijke passers */
+.player-tile.court-cell.passer-highlight {
+  border-color: rgba(34, 197, 94, 0.5) !important;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.45), 0 0 28px rgba(34, 197, 94, 0.18), inset 0 0 16px rgba(34, 197, 94, 0.06);
+}
+.player-tile.court-cell.passer-highlight.selected {
+  border-color: rgba(61, 123, 245, 0.6) !important;
+  box-shadow: 0 0 12px rgba(61, 123, 245, 0.45), 0 0 28px rgba(61, 123, 245, 0.18), 0 0 0 2px rgba(61, 123, 245, 0.4);
+}
+
+/* Selected cell */
+#rotationCourt .court-cell.selected {
+  border-color: var(--primary) !important;
+  background: var(--primary-light, rgba(37, 99, 235, 0.12)) !important;
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* Service position indicator */
+.player-tile.court-cell.court-service {
+  border-style: dashed;
+}
+
+/* ── Hidden utility ───────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
