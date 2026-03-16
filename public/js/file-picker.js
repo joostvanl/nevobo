@@ -19,7 +19,7 @@ export class FilePicker {
   constructor(container, opts = {}) {
     this.container = container;
     this.accept   = opts.accept   ?? 'image/*,video/*';
-    this.multiple = opts.multiple ?? true;
+    this.multiple = opts.multiple ?? false;
     this.maxFiles = opts.maxFiles ?? 10;
     this.label    = opts.label    ?? "Foto's of video's kiezen";
     this.hint     = opts.hint     ?? 'JPG, PNG, GIF, MP4 · max 50 MB per bestand';
@@ -73,13 +73,32 @@ export class FilePicker {
   }
 
   _addFiles(incoming) {
-    for (const f of incoming) {
+    const hasVideo = this._files.some(f => f.type.startsWith('video/'));
+    const images = incoming.filter(f => !f.type.startsWith('video/'));
+    const videos = incoming.filter(f => f.type.startsWith('video/'));
+
+    // Max 1 video total — silently keep only the first, skip if one already exists
+    let droppedVideos = 0;
+    if (videos.length > 0) {
+      if (hasVideo) {
+        droppedVideos = videos.length;
+      } else {
+        images.push(videos[0]);
+        droppedVideos = videos.length - 1;
+      }
+    }
+
+    for (const f of images) {
       if (this._files.length >= this.maxFiles) break;
-      // Deduplicate by name+size
       if (!this._files.some(x => x.name === f.name && x.size === f.size)) {
         this._files.push(f);
       }
     }
+
+    if (droppedVideos > 0 && typeof window.showToast === 'function') {
+      window.showToast('Video\'s kunnen alleen 1 per keer geüpload worden', 'info');
+    }
+
     this._updateUI();
   }
 
@@ -96,7 +115,7 @@ export class FilePicker {
       this._zone.innerHTML = `
         <div class="pick-icon">✅</div>
         <div class="pick-label">${this._files.length} bestand${this._files.length !== 1 ? 'en' : ''} geselecteerd</div>
-        <div class="pick-hint">Klik of sleep om meer toe te voegen (max ${this.maxFiles})</div>`;
+        <div class="pick-hint">Klik om nog een bestand toe te voegen (max ${this.maxFiles})</div>`;
     } else {
       this._zone.innerHTML = `
         <div class="pick-icon">📎</div>

@@ -1303,6 +1303,72 @@ p  { line-height: 1.6; }
   background: rgba(255,87,34,0.05);
 }
 
+/* ─── Composer team picker ─────────────────────────────────────────────────── */
+.composer-team-picker {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+.composer-team-options {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.composer-team-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--border);
+  background: var(--bg-card);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  transition: all 0.15s ease;
+}
+.composer-team-opt:hover {
+  border-color: var(--primary);
+  background: rgba(255,87,34,0.04);
+}
+.composer-team-opt.selected {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.composer-team-opt.selected .composer-team-name {
+  color: #fff;
+}
+.composer-team-logo {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.composer-team-opt.selected .composer-team-logo {
+  filter: brightness(0) invert(1);
+}
+.composer-team-fallback {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-team-opt.selected .composer-team-fallback {
+  background: #fff;
+  color: var(--primary);
+}
+.composer-team-name {
+  color: var(--text);
+}
+
 /* ─── Team page ───────────────────────────────────────────────────────────────── */
 /* ── Nevobo lazy-load skeleton removed — uses .spinner instead ── */
 

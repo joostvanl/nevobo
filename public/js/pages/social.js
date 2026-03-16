@@ -48,21 +48,47 @@ async function renderSocialPage(container, tab) {
       <div class="container">
 
         <!-- Post composer (only shown on feed tab) -->
-        ${tab === 'feed' && user ? `
+        ${tab === 'feed' && user ? (() => {
+          const mems = user.memberships || [];
+          const needsPicker = mems.length > 1;
+          const singleTeam = mems.length === 1 ? mems[0] : null;
+          return `
           <div class="card mb-3">
             <div class="card-body">
               <div class="flex items-center gap-2 mb-2">
                 ${renderAvatar(user.name, user.avatar_url, 'sm')}
                 <input type="text" id="post-input" class="form-input" placeholder="Deel iets met je team… 🏐" style="flex:1" />
               </div>
+              ${needsPicker ? `
+              <div class="composer-team-picker" id="composer-team-picker">
+                <label style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-bottom:0.25rem;display:block">Plaats in team</label>
+                <div class="composer-team-options" id="composer-team-options">
+                  ${mems.map(m => {
+                    const logoUrl = m.nevobo_code
+                      ? 'https://assets.nevobo.nl/organisatie/logo/' + m.nevobo_code.toUpperCase() + '.jpg'
+                      : '';
+                    return `
+                    <button type="button" class="composer-team-opt" data-team-id="${m.team_id}" data-club-id="${m.club_id}">
+                      ${logoUrl
+                        ? `<img src="${logoUrl}" alt="" class="composer-team-logo"
+                               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+                        : ''}
+                      <span class="composer-team-fallback" style="${logoUrl ? 'display:none' : 'display:flex'}">${(m.team_name || '?').charAt(0)}</span>
+                      <span class="composer-team-name">${m.team_name}</span>
+                    </button>`;
+                  }).join('')}
+                </div>
+              </div>
+              ` : ''}
+              ${singleTeam ? `<input type="hidden" id="composer-team-id" value="${singleTeam.team_id}" />` : ''}
               <div id="composer-picker-wrap"></div>
               <div class="flex gap-2 mt-2">
                 <button class="compose-media-btn" id="toggle-picker-btn" type="button">📎 Bijlage</button>
                 <button class="btn btn-primary btn-sm" id="post-submit" style="margin-left:auto">Plaatsen</button>
               </div>
             </div>
-          </div>
-        ` : ''}
+          </div>`;
+        })() : ''}
 
         <!-- Tabs -->
         <div class="tabs">
@@ -107,6 +133,26 @@ async function renderSocialPage(container, tab) {
       renderSocialPage(container, 'discover');
     });
 
+    // Team picker in composer — single select
+    let selectedTeamId = document.getElementById('composer-team-id')?.value || null;
+    const teamOptsWrap = document.getElementById('composer-team-options');
+    if (teamOptsWrap) {
+      const teamBtns = teamOptsWrap.querySelectorAll('.composer-team-opt');
+      teamBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tid = btn.dataset.teamId;
+          if (btn.classList.contains('selected')) {
+            btn.classList.remove('selected');
+            selectedTeamId = null;
+          } else {
+            teamBtns.forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+            selectedTeamId = tid;
+          }
+        });
+      });
+    }
+
     // Set up FilePicker in composer (feed tab only)
     let composerPicker = null;
     let pickerVisible = false;
@@ -149,11 +195,20 @@ async function renderSocialPage(container, tab) {
 
       if (!text && files.length === 0) return;
 
+      const mems = user.memberships || [];
+      if (mems.length > 1 && !selectedTeamId) {
+        showToast('Kies eerst een team', 'error');
+        document.getElementById('composer-team-picker')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      const teamId = selectedTeamId || (mems.length === 1 ? mems[0].team_id : user.team_id) || null;
+
       try {
         if (files.length > 0) {
           const fd = new FormData();
           files.forEach(f => fd.append('files', f));
           if (text) fd.append('caption', text);
+          if (teamId) fd.append('team_id', teamId);
           const resp = await fetch('/api/social/upload', {
             method: 'POST',
             headers: { Authorization: `Bearer ${state.token}` },
@@ -165,7 +220,7 @@ async function renderSocialPage(container, tab) {
             showQualityWarningModal(data.qualityIssues, () => renderSocialPage(container, 'feed'));
           }
         } else {
-          await api('/api/social/post', { method: 'POST', body: { body: text, team_id: user.team_id || null } });
+          await api('/api/social/post', { method: 'POST', body: { body: text, team_id: teamId } });
           showToast('Bericht geplaatst! 📣', 'success');
         }
         renderSocialPage(container, 'feed');
