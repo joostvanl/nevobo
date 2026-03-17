@@ -400,8 +400,6 @@ router.delete('/users/:userId', (req, res) => {
 
 // ─── Team social media links ──────────────────────────────────────────────────
 
-const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
-
 function parseSocialUrl(url) {
   if (!url) return null;
   const clean = url.trim();
@@ -432,15 +430,8 @@ router.get('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res)
 // POST /api/admin/teams/:teamId/social-links
 router.post('/teams/:teamId/social-links', requireTeamAdmin('teamId'), async (req, res) => {
   const { url } = req.body;
-  let parsed = parseSocialUrl(url);
-  let urlToStore = url.trim();
-  if (!parsed && /vm\.tiktok\.com\/[^/?#]+/i.test(urlToStore)) {
-    const resolved = await resolveVmTiktokToVideoId(url);
-    if (resolved) {
-      parsed = { platform: 'tiktok', embed_id: resolved.videoId };
-      urlToStore = resolved.finalUrl;
-    }
-  }
+  const parsed = parseSocialUrl(url);
+  const urlToStore = (url || '').trim();
   if (!parsed) {
     return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
   }

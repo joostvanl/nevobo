@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS match_media (
   file_path   TEXT NOT NULL,
   file_type   TEXT NOT NULL DEFAULT 'image',  -- 'image' | 'video'
   caption     TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  match_home_team TEXT,  -- stored at upload for opponent label in reel (no feed_cache dependency)
+  match_away_team TEXT
 );
 
 -- ─── Carpool ─────────────────────────────────────────────────────────────────

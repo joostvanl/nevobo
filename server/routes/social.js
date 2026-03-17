@@ -6,7 +6,6 @@ const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
-const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
 const sharp = require('sharp');
 const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
@@ -57,26 +56,32 @@ function getMatchTeamsMap(database) {
 
 function addMatchOpponentToMediaItems(items, matchMap) {
   for (const item of items) {
-    if (!item.match_id) continue;
-    let rawId = item.match_id;
-    if (typeof item.match_id === 'string') {
-      try { rawId = decodeURIComponent(item.match_id); } catch (_) {}
+    const home = (item.match_home_team || '').trim();
+    const away = (item.match_away_team || '').trim();
+    let home_team = home;
+    let away_team = away;
+    if (!home_team || !away_team) {
+      if (!item.match_id) continue;
+      let rawId = item.match_id;
+      if (typeof item.match_id === 'string') {
+        try { rawId = decodeURIComponent(item.match_id); } catch (_) {}
+      }
+      const matchData = matchMap[item.match_id] || matchMap[rawId];
+      if (!matchData) continue;
+      home_team = home_team || matchData.home_team || '';
+      away_team = away_team || matchData.away_team || '';
     }
-    const matchData = matchMap[item.match_id] || matchMap[rawId];
-    if (!matchData) continue;
-    const { home_team, away_team } = matchData;
     const team = (item.team_name || '').trim();
     const teamLower = team.toLowerCase();
-    const home = (home_team || '').toLowerCase();
-    const away = (away_team || '').toLowerCase();
-    const isHome = home && (home === teamLower || home.includes(teamLower) || teamLower.includes(home));
-    const isAway = away && (away === teamLower || away.includes(teamLower) || teamLower.includes(away));
+    const homeLower = (home_team || '').toLowerCase();
+    const awayLower = (away_team || '').toLowerCase();
+    const isHome = homeLower && (homeLower === teamLower || homeLower.includes(teamLower) || teamLower.includes(homeLower));
+    const isAway = awayLower && (awayLower === teamLower || awayLower.includes(teamLower) || teamLower.includes(awayLower));
     if (isHome) {
       item.match_opponent_team = away_team || '';
     } else if (isAway) {
       item.match_opponent_team = home_team || '';
     } else {
-      // Geen duidelijke match: toon beide teams (Thuis – Uit)
       item.match_opponent_team = [home_team, away_team].filter(Boolean).join(' – ') || '';
     }
   }
@@ -158,7 +163,7 @@ router.post('/post', verifyToken, (req, res) => {
 
 // POST /api/social/upload — upload photos/videos with optional caption
 router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) => {
-  const { match_id, caption, team_id } = req.body;
+  const { match_id, caption, team_id, home_team, away_team } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
   if (!req.files || req.files.length === 0) {
@@ -281,9 +286,11 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
   const mediaItems = req.files.map((file, i) => {
     const isVideo = file.mimetype.startsWith('video/');
     const relativePath = '/uploads/' + file.path.split(/[/\\]public[/\\]uploads[/\\]/)[1].replace(/\\/g, '/');
+    const homeTeam = (home_team || '').trim() || null;
+    const awayTeam = (away_team || '').trim() || null;
     const result = db.prepare(
-      'INSERT INTO match_media (post_id, user_id, match_id, file_path, file_type, caption) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(postId, req.user.id, match_id || null, relativePath, isVideo ? 'video' : 'image', caption || null);
+      'INSERT INTO match_media (post_id, user_id, match_id, file_path, file_type, caption, match_home_team, match_away_team) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(postId, req.user.id, match_id || null, relativePath, isVideo ? 'video' : 'image', caption || null, homeTeam, awayTeam);
     const item = db.prepare('SELECT * FROM match_media WHERE id = ?').get(result.lastInsertRowid);
     // Persist blur regions so re-blur can skip face detection entirely
     if (blurRegionsByIndex[i]) {
@@ -334,27 +341,45 @@ router.get('/match/:matchId/media', (req, res) => {
     ORDER BY mm.created_at DESC
   `).all(req.params.matchId);
 
-  let matchHome = (req.query.home_team || '').trim();
-  let matchAway = (req.query.away_team || '').trim();
-  if (!matchHome || !matchAway) {
+  // Request-level home/away: query params (from match page) or feed_cache fallback
+  let reqHome = (req.query.home_team || '').trim();
+  let reqAway = (req.query.away_team || '').trim();
+  if (!reqHome || !reqAway) {
     const matchMap = getMatchTeamsMap(db);
     const rawId = (() => { try { return decodeURIComponent(req.params.matchId); } catch (_) { return req.params.matchId; } })();
     const matchData = matchMap[req.params.matchId] || matchMap[rawId];
     if (matchData) {
-      matchHome = matchHome || matchData.home_team || '';
-      matchAway = matchAway || matchData.away_team || '';
+      reqHome = reqHome || matchData.home_team || '';
+      reqAway = reqAway || matchData.away_team || '';
     }
   }
 
-  const enriched = media.map(m => ({
-    ...m,
-    liked_by_me: userId
-      ? !!db.prepare('SELECT 1 FROM media_likes WHERE media_id = ? AND user_id = ?').get(m.id, userId)
-      : false,
-    match_home_team: matchHome,
-    match_away_team: matchAway,
-    match_opponent_team: matchHome && matchAway ? `${matchHome} – ${matchAway}` : '',
-  }));
+  const enriched = media.map(m => {
+    // Prefer team names stored on this media row (from upload); else use request-level
+    const home = (m.match_home_team || reqHome || '').trim();
+    const away = (m.match_away_team || reqAway || '').trim();
+    const teamName = (m.team_name || '').trim();
+    const teamLower = teamName.toLowerCase();
+    const homeLower = (home || '').toLowerCase();
+    const awayLower = (away || '').toLowerCase();
+    let match_opponent_team = '';
+    if (home && away) {
+      const isHome = homeLower && (homeLower === teamLower || homeLower.includes(teamLower) || teamLower.includes(homeLower));
+      const isAway = awayLower && (awayLower === teamLower || awayLower.includes(teamLower) || teamLower.includes(awayLower));
+      if (isHome) match_opponent_team = away;
+      else if (isAway) match_opponent_team = home;
+      else match_opponent_team = [home, away].filter(Boolean).join(' – ');
+    }
+    return {
+      ...m,
+      liked_by_me: userId
+        ? !!db.prepare('SELECT 1 FROM media_likes WHERE media_id = ? AND user_id = ?').get(m.id, userId)
+        : false,
+      match_home_team: home,
+      match_away_team: away,
+      match_opponent_team,
+    };
+  });
   res.json({ ok: true, media: enriched });
 });
 
@@ -1308,15 +1333,8 @@ router.post('/teams/:teamId/social-links', verifyToken, async (req, res) => {
   }
 
   const { url } = req.body;
-  let parsed = parseSocialUrlForSocial(url);
-  let urlToStore = (url || '').trim();
-  if (!parsed && /vm\.tiktok\.com\/[^/?#]+/i.test(urlToStore)) {
-    const resolved = await resolveVmTiktokToVideoId(url);
-    if (resolved) {
-      parsed = { platform: 'tiktok', embed_id: resolved.videoId };
-      urlToStore = resolved.finalUrl;
-    }
-  }
+  const parsed = parseSocialUrlForSocial(url);
+  const urlToStore = (url || '').trim();
   if (!parsed) {
     return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
   }

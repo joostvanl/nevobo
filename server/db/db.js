@@ -106,6 +106,9 @@ const migrations = [
   `ALTER TABLE users ADD COLUMN face_reference_path TEXT`,
   // Store bounding boxes of blurred faces so re-blur can skip face detection + matching
   `ALTER TABLE match_media ADD COLUMN blur_regions TEXT`,
+  // Opponent resolution: store team names at upload so reel can show them without feed_cache
+  `ALTER TABLE match_media ADD COLUMN match_home_team TEXT`,
+  `ALTER TABLE match_media ADD COLUMN match_away_team TEXT`,
   // shirt_number and position belong to the team membership, not the user
   `ALTER TABLE team_memberships ADD COLUMN shirt_number INTEGER`,
   `ALTER TABLE team_memberships ADD COLUMN position TEXT`,

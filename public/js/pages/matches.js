@@ -881,12 +881,12 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
 
     document.getElementById('photo-btn')?.addEventListener('click', () => {
       sessionStorage.setItem('vb_upload_intent', matchId);
-      openCapturePicker('image/*', matchId, uploadTeamId);
+      openCapturePicker('image/*', matchId, uploadTeamId, match);
     });
 
     document.getElementById('video-btn')?.addEventListener('click', () => {
       sessionStorage.setItem('vb_upload_intent', matchId);
-      openCapturePicker('video/*', matchId, uploadTeamId);
+      openCapturePicker('video/*', matchId, uploadTeamId, match);
     });
 
     document.getElementById('live-btn')?.addEventListener('click', () => {
@@ -895,14 +895,14 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
 
     document.getElementById('upload-btn')?.addEventListener('click', () => {
       sessionStorage.setItem('vb_upload_intent', matchId);
-      showUploadModal(matchId, uploadTeamId);
+      showUploadModal(matchId, uploadTeamId, match);
     });
 
     // Re-open upload modal if the page reloaded mid-upload (e.g. after camera capture)
     const savedIntent = sessionStorage.getItem('vb_upload_intent');
     if (savedIntent && savedIntent === matchId) {
       sessionStorage.removeItem('vb_upload_intent');
-      setTimeout(() => showUploadModal(matchId, uploadTeamId, { capture: false }), 400);
+      setTimeout(() => showUploadModal(matchId, uploadTeamId, match), 400);
     }
   }
 }
@@ -1129,7 +1129,7 @@ function renderMatchReel(el, items, canInteract) {
   videos.forEach(v => obs.observe(v));
 }
 
-function openCapturePicker(accept, matchId, teamId) {
+function openCapturePicker(accept, matchId, teamId, match = null) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = accept;
@@ -1140,12 +1140,12 @@ function openCapturePicker(accept, matchId, teamId) {
     const files = Array.from(input.files || []);
     input.remove();
     if (!files.length) { sessionStorage.removeItem('vb_upload_intent'); return; }
-    showCaptionModal(matchId, teamId, files);
+    showCaptionModal(matchId, teamId, files, match);
   });
   input.click();
 }
 
-function showUploadModal(matchId, teamId = null) {
+function showUploadModal(matchId, teamId = null, match = null) {
   // Standard file-picker modal
   const overlay = document.createElement('div');
   overlay.className = 'badge-unlock-overlay';
@@ -1182,11 +1182,11 @@ function showUploadModal(matchId, teamId = null) {
     const files = picker.getFiles();
     if (files.length === 0) { showToast('Kies eerst bestanden', 'error'); return; }
     overlay.remove();
-    await doUpload(matchId, teamId, files, overlay.querySelector('#upload-caption')?.value || '');
+    await doUpload(matchId, teamId, files, overlay.querySelector('#upload-caption')?.value || '', match);
   });
 }
 
-function showCaptionModal(matchId, teamId, files) {
+function showCaptionModal(matchId, teamId, files, match = null) {
   // Show thumbnail preview of captured file(s)
   const preview = files.map(f => {
     const url = URL.createObjectURL(f);
@@ -1220,17 +1220,19 @@ function showCaptionModal(matchId, teamId, files) {
   overlay.querySelector('#cap-submit').addEventListener('click', async () => {
     const caption = overlay.querySelector('#cap-input').value;
     overlay.remove();
-    await doUpload(matchId, teamId, files, caption);
+    await doUpload(matchId, teamId, files, caption, match);
   });
 }
 
-async function doUpload(matchId, teamId, files, caption = '') {
+async function doUpload(matchId, teamId, files, caption = '', match = null) {
   const toast = showToast('Uploaden…', 'info');
   const fd = new FormData();
   files.forEach(f => fd.append('files', f));
   if (caption) fd.append('caption', caption);
   fd.append('match_id', matchId);
   if (teamId) fd.append('team_id', teamId);
+  if (match?.home_team) fd.append('home_team', match.home_team);
+  if (match?.away_team) fd.append('away_team', match.away_team);
   try {
     const resp = await fetch('/api/social/upload', {
       method: 'POST',
