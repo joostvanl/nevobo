@@ -854,8 +854,8 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
     }
   });
 
-  // Load gallery
-  loadMatchGallery(matchId, canInteract);
+  // Load gallery (pass match so API can return home/away for reel badge)
+  loadMatchGallery(matchId, canInteract, match);
 
   // Load carpool seat summary — only for away games
   if (!isResult && !isHomeGame) {
@@ -1028,12 +1028,17 @@ async function loadMatchMap(address, fromAddress = null) {
 
 // ─── Media gallery (reel style, matches homepage) ────────────────────────────
 
-async function loadMatchGallery(matchId, canInteract = true) {
+async function loadMatchGallery(matchId, canInteract = true, match = null) {
   const el = document.getElementById('gallery-body');
   if (!el) return;
   try {
     const userId = state.user?.id || null;
-    const { media } = await api(`/api/social/match/${matchId}/media${userId ? `?userId=${userId}` : ''}`);
+    const params = new URLSearchParams();
+    if (userId) params.set('userId', userId);
+    if (match?.home_team) params.set('home_team', match.home_team);
+    if (match?.away_team) params.set('away_team', match.away_team);
+    const qs = params.toString();
+    const { media } = await api(`/api/social/match/${matchId}/media${qs ? '?' + qs : ''}`);
     const items = media || [];
 
     if (items.length === 0) {

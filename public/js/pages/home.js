@@ -327,6 +327,14 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
   // Resolve correct team names from match context before first render
   await resolveMediaTeamNames(recentMedia, memberTeams, followedTeams);
 
+  const fallbackNevobo = (memberTeams[0]?.nevobo_code || followedTeams[0]?.nevobo_code) || null;
+  const clubLogoUrl = (m) => {
+    if (m.club_logo_url) return m.club_logo_url;
+    if (m.club_nevobo_code) return `https://assets.nevobo.nl/organisatie/logo/${String(m.club_nevobo_code).toUpperCase()}.jpg`;
+    if (fallbackNevobo) return `https://assets.nevobo.nl/organisatie/logo/${String(fallbackNevobo).toUpperCase()}.jpg`;
+    return null;
+  };
+
   el.innerHTML = `
     <div class="hm-reel-wrap">
       <div class="hm-reel-header">
@@ -335,8 +343,11 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
       </div>
       <div class="hm-reel" id="hm-reel-track">
         <div class="hm-reel-spacer"></div>
-        ${recentMedia.map((m, i) => `
+        ${recentMedia.map((m, i) => {
+          const logoUrl = clubLogoUrl(m);
+          return `
           <div class="hm-reel-card" data-index="${i}">
+            ${logoUrl ? `<div class="hm-reel-club-logo"><img src="${esc(logoUrl)}" alt="" /></div>` : ''}
             ${m.file_type === 'video'
               ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
                  <div class="hm-reel-play-icon">▶</div>`
@@ -357,7 +368,8 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
                 ${m.view_count > 0 ? `<span>👁 ${m.view_count}</span>` : ''}
               </div>
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
         <div class="hm-reel-spacer"></div>
       </div>
     </div>`;
@@ -371,6 +383,7 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
       const existingVideo = card.querySelector('video.hm-reel-media');
       openReelViewer(recentMedia, clickedIdx, {
         sourceVideo: existingVideo,
+        fallbackNevoboCode: fallbackNevobo,
         fetchMore: async (offset) => {
           const data = await api(`/api/social/media-feed?offset=${offset}&limit=20`);
           return data.media || [];

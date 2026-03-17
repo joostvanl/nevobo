@@ -1466,6 +1466,7 @@ p  { line-height: 1.6; }
 .team-social-hero-btns {
   display: flex;
   gap: 0.4rem;
+  margin-left: auto;
 }
 .team-own-badge {
   display: inline-flex;
@@ -2588,6 +2589,26 @@ img.hl-avatar {
 }
 .hm-reel-card:active { transform: scale(0.96); }
 
+/* Club logo on uploaded media (video/image) — top-left, small */
+.hm-reel-club-logo {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.hm-reel-club-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #fff;
+}
+
 .hm-reel-media {
   position: absolute;
   inset: 0;
@@ -2636,6 +2657,10 @@ img.hl-avatar {
 .team-social-btn:active { transform: scale(0.9); }
 .team-social-btn--ig {
   background: linear-gradient(135deg, #f09433, #dc2743, #bc1888);
+}
+.team-social-btn--media {
+  background: rgba(255,255,255,0.25);
+  font-size: 1rem;
 }
 
 .hm-reel-play-icon {
@@ -2936,6 +2961,43 @@ img.hl-avatar {
   flex-shrink: 0;
   position: relative;
   overflow: hidden;
+}
+/* Club logo + team name in fullscreen reel — top-left */
+.rv-club-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: calc(100% - 20px);
+}
+.rv-club-logo {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.35);
+}
+.rv-club-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #fff;
+}
+.rv-club-team-name {
+  flex-shrink: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .rv-media {
   width: 100%;

@@ -23,7 +23,7 @@ function esc(str) {
 }
 
 export function openReelViewer(items, startIdx = 0, options = {}) {
-  const { sourceVideo = null, onDelete = null, canDelete = null, fetchMore = null, canRevertBlur = null, onClose = null } = options;
+  const { sourceVideo = null, onDelete = null, canDelete = null, fetchMore = null, canRevertBlur = null, onClose = null, fallbackNevoboCode = null } = options;
 
   // Work on a mutable copy so deletions don't affect the caller's array
   let list        = [...items];
@@ -370,9 +370,28 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     }
   }
 
+  function clubLogoUrl(m) {
+    if (m.club_logo_url) return m.club_logo_url;
+    if (m.club_nevobo_code) return `https://assets.nevobo.nl/organisatie/logo/${String(m.club_nevobo_code).toUpperCase()}.jpg`;
+    if (fallbackNevoboCode) return `https://assets.nevobo.nl/organisatie/logo/${String(fallbackNevoboCode).toUpperCase()}.jpg`;
+    return null;
+  }
+  function clubLogoOverlay(m) {
+    const url = clubLogoUrl(m);
+    const teamName = (m.team_name || m.club_name_media || '').trim();
+    const opponent = (m.match_opponent_team || '').trim();
+    const label = opponent ? (teamName ? `${teamName} vs. ${opponent}` : opponent) : teamName;
+    if (!url && !label) return '';
+    return `<div class="rv-club-badge">
+      ${url ? `<div class="rv-club-logo"><img src="${esc(url)}" alt="" /></div>` : ''}
+      ${label ? `<span class="rv-club-team-name">${esc(label)}</span>` : ''}
+    </div>`;
+  }
+
   function buildSlides() {
     track.innerHTML = list.map((m, i) => `
       <div class="rv-slide" data-i="${i}" id="rv-slide-${i}">
+        ${clubLogoOverlay(m)}
         ${m.file_type === 'image'
           ? `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`
           : m.file_type === 'tiktok'
@@ -455,14 +474,14 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       slide.style.width  = w + 'px';
       slide.style.height = h + 'px';
       if (m.file_type === 'image') {
-        slide.innerHTML = `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
+        slide.innerHTML = clubLogoOverlay(m) + `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
       } else if (m.file_type === 'tiktok') {
-        slide.innerHTML = `<iframe class="rv-media rv-embed"
+        slide.innerHTML = clubLogoOverlay(m) + `<iframe class="rv-media rv-embed"
           src="https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=1&loop=1&rel=0&controls=1"
           allowfullscreen allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
           <div class="rv-embed-shield"></div>`;
       } else if (m.file_type === 'instagram') {
-        slide.innerHTML = `<div class="rv-embed rv-ig-wrap">
+        slide.innerHTML = clubLogoOverlay(m) + `<div class="rv-embed rv-ig-wrap">
           <blockquote class="instagram-media rv-ig-post"
             data-instgrm-permalink="${esc(m.url)}"
             data-instgrm-version="14"
@@ -472,6 +491,16 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         <div class="rv-embed-shield"></div>`;
         if (window.instgrm?.Embeds) window.instgrm.Embeds.process();
       } else if (m.file_type === 'video') {
+        const logoUrl = clubLogoUrl(m);
+        if (logoUrl) {
+          const teamName = (m.team_name || m.club_name_media || '').trim();
+          const opponent = (m.match_opponent_team || '').trim();
+          const label = opponent ? `${teamName} vs. ${opponent}` : teamName;
+          const badge = document.createElement('div');
+          badge.className = 'rv-club-badge';
+          badge.innerHTML = `<div class="rv-club-logo"><img src="${esc(logoUrl)}" alt="" /></div>${label ? `<span class="rv-club-team-name">${esc(label)}</span>` : ''}`;
+          slide.appendChild(badge);
+        }
         const vid = document.createElement('video');
         vid.src = m.file_path; vid.loop = true; vid.muted = isMuted; vid.playsInline = true;
         vid.preload = 'none';

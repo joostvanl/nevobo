@@ -400,6 +400,8 @@ router.delete('/users/:userId', (req, res) => {
 
 // ─── Team social media links ──────────────────────────────────────────────────
 
+const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
+
 function parseSocialUrl(url) {
   if (!url) return null;
   const clean = url.trim();
@@ -428,9 +430,17 @@ router.get('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res)
 });
 
 // POST /api/admin/teams/:teamId/social-links
-router.post('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res) => {
+router.post('/teams/:teamId/social-links', requireTeamAdmin('teamId'), async (req, res) => {
   const { url } = req.body;
-  const parsed = parseSocialUrl(url);
+  let parsed = parseSocialUrl(url);
+  let urlToStore = url.trim();
+  if (!parsed && /vm\.tiktok\.com\/[^/?#]+/i.test(urlToStore)) {
+    const resolved = await resolveVmTiktokToVideoId(url);
+    if (resolved) {
+      parsed = { platform: 'tiktok', embed_id: resolved.videoId };
+      urlToStore = resolved.finalUrl;
+    }
+  }
   if (!parsed) {
     return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
   }
@@ -438,7 +448,7 @@ router.post('/teams/:teamId/social-links', requireTeamAdmin('teamId'), (req, res
   try {
     db.prepare(
       'INSERT INTO team_social_links (team_id, platform, url, embed_id, added_by) VALUES (?, ?, ?, ?, ?)'
-    ).run(teamId, parsed.platform, url.trim(), parsed.embed_id, req.user.id);
+    ).run(teamId, parsed.platform, urlToStore, parsed.embed_id, req.user.id);
   } catch (e) {
     if (e.message.includes('UNIQUE')) {
       return res.status(409).json({ ok: false, error: 'Deze URL is al gekoppeld aan dit team.' });

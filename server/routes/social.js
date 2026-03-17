@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
+const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
 const sharp = require('sharp');
 const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
@@ -34,6 +35,52 @@ const upload = multer({
   fileFilter,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
+
+// Build match_id -> { home_team, away_team } from feed_cache for opponent resolution
+function getMatchTeamsMap(database) {
+  const map = {};
+  const rows = database.prepare('SELECT data_json FROM feed_cache').all();
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(row.data_json);
+      for (const m of (data.matches || [])) {
+        if (m.match_id && (m.home_team || m.away_team)) {
+          const entry = { home_team: m.home_team || '', away_team: m.away_team || '' };
+          map[m.match_id] = entry;
+          try { map[encodeURIComponent(m.match_id)] = entry; } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+  return map;
+}
+
+function addMatchOpponentToMediaItems(items, matchMap) {
+  for (const item of items) {
+    if (!item.match_id) continue;
+    let rawId = item.match_id;
+    if (typeof item.match_id === 'string') {
+      try { rawId = decodeURIComponent(item.match_id); } catch (_) {}
+    }
+    const matchData = matchMap[item.match_id] || matchMap[rawId];
+    if (!matchData) continue;
+    const { home_team, away_team } = matchData;
+    const team = (item.team_name || '').trim();
+    const teamLower = team.toLowerCase();
+    const home = (home_team || '').toLowerCase();
+    const away = (away_team || '').toLowerCase();
+    const isHome = home && (home === teamLower || home.includes(teamLower) || teamLower.includes(home));
+    const isAway = away && (away === teamLower || away.includes(teamLower) || teamLower.includes(away));
+    if (isHome) {
+      item.match_opponent_team = away_team || '';
+    } else if (isAway) {
+      item.match_opponent_team = home_team || '';
+    } else {
+      // Geen duidelijke match: toon beide teams (Thuis – Uit)
+      item.match_opponent_team = [home_team, away_team].filter(Boolean).join(' – ') || '';
+    }
+  }
+}
 
 // GET /api/social/feed — personalized feed (follows + own club)
 router.get('/feed', verifyToken, (req, res) => {
@@ -162,6 +209,19 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
     if (matchedTeamId) effectiveTeamId = matchedTeamId;
   }
 
+  // Alleen spelers en coaches mogen media uploaden naar een team; begeleiders en ouders niet
+  if (effectiveTeamId) {
+    const membership = db.prepare(
+      'SELECT membership_type FROM team_memberships WHERE team_id = ? AND user_id = ?'
+    ).get(effectiveTeamId, req.user.id);
+    if (!membership) {
+      return res.status(403).json({ ok: false, error: 'Je bent geen lid van dit team.' });
+    }
+    if (membership.membership_type !== 'player' && membership.membership_type !== 'coach') {
+      return res.status(403).json({ ok: false, error: 'Alleen spelers en coaches kunnen media toevoegen.' });
+    }
+  }
+
   const needsAnonymisation = effectiveTeamId ? teamHasAnonymousMembers(effectiveTeamId) : false;
 
   if (!needsAnonymisation) {
@@ -260,19 +320,40 @@ router.get('/match/:matchId/media', (req, res) => {
     SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,
       (SELECT COUNT(*) FROM media_views mv WHERE mv.media_id = mm.id) AS view_count,
       (SELECT COUNT(*) FROM media_likes ml WHERE ml.media_id = mm.id) AS like_count,
-      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count
+      (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
+      COALESCE(t.display_name, cl.name) AS team_name,
+      COALESCE(cl.logo_url, cu.logo_url) AS club_logo_url,
+      COALESCE(cl.nevobo_code, cu.nevobo_code) AS club_nevobo_code
     FROM match_media mm
     JOIN users u ON u.id = mm.user_id
+    LEFT JOIN posts p ON p.id = mm.post_id
+    LEFT JOIN teams t ON t.id = p.team_id
+    LEFT JOIN clubs cl ON cl.id = COALESCE(p.club_id, t.club_id)
+    LEFT JOIN clubs cu ON cu.id = u.club_id
     WHERE mm.match_id = ?
     ORDER BY mm.created_at DESC
   `).all(req.params.matchId);
 
-  // Add per-user like status
+  let matchHome = (req.query.home_team || '').trim();
+  let matchAway = (req.query.away_team || '').trim();
+  if (!matchHome || !matchAway) {
+    const matchMap = getMatchTeamsMap(db);
+    const rawId = (() => { try { return decodeURIComponent(req.params.matchId); } catch (_) { return req.params.matchId; } })();
+    const matchData = matchMap[req.params.matchId] || matchMap[rawId];
+    if (matchData) {
+      matchHome = matchHome || matchData.home_team || '';
+      matchAway = matchAway || matchData.away_team || '';
+    }
+  }
+
   const enriched = media.map(m => ({
     ...m,
     liked_by_me: userId
       ? !!db.prepare('SELECT 1 FROM media_likes WHERE media_id = ? AND user_id = ?').get(m.id, userId)
       : false,
+    match_home_team: matchHome,
+    match_away_team: matchAway,
+    match_opponent_team: matchHome && matchAway ? `${matchHome} – ${matchAway}` : '',
   }));
   res.json({ ok: true, media: enriched });
 });
@@ -865,16 +946,21 @@ router.get('/home-summary', verifyToken, (req, res) => {
            JOIN clubs c3 ON c3.id = t3.club_id
            WHERE p3.match_id = mm.match_id AND p3.team_id IS NOT NULL
            LIMIT 1)
-        ) AS club_name_media
+        ) AS club_name_media,
+        COALESCE(c.logo_url, cu.logo_url) AS club_logo_url,
+        COALESCE(c.nevobo_code, cu.nevobo_code) AS club_nevobo_code
       FROM match_media mm
       JOIN users u ON u.id = mm.user_id
       LEFT JOIN posts p ON p.id = mm.post_id
       LEFT JOIN teams t ON t.id = p.team_id
-      LEFT JOIN clubs c ON c.id = p.club_id
+      LEFT JOIN clubs c ON c.id = COALESCE(p.club_id, t.club_id)
+      LEFT JOIN clubs cu ON cu.id = u.club_id
       WHERE ${whereClause}
       ORDER BY mm.created_at DESC
       LIMIT 10
     `).all(userId, ...args);
+    const matchMap = getMatchTeamsMap(db);
+    addMatchOpponentToMediaItems(recentMedia, matchMap);
   }
 
   // Append social embeds from relevant teams (interleaved every 4th position)
@@ -882,8 +968,10 @@ router.get('/home-summary', verifyToken, (req, res) => {
   if (embedsEnabled && relevantTeamIds.length > 0) {
     const ph = relevantTeamIds.map(() => '?').join(',');
     const socialLinks = db.prepare(
-      `SELECT tsl.*, t.display_name AS team_name FROM team_social_links tsl
+      `SELECT tsl.*, t.display_name AS team_name, c.logo_url AS club_logo_url, c.nevobo_code AS club_nevobo_code
+       FROM team_social_links tsl
        JOIN teams t ON t.id = tsl.team_id
+       JOIN clubs c ON c.id = t.club_id
        WHERE tsl.team_id IN (${ph}) ORDER BY tsl.created_at DESC LIMIT 10`
     ).all(...relevantTeamIds);
 
@@ -905,6 +993,8 @@ router.get('/home-summary', verifyToken, (req, res) => {
         created_at: l.created_at,
         team_name: l.team_name,
         team_id: l.team_id,
+        club_logo_url: l.club_logo_url,
+        club_nevobo_code: l.club_nevobo_code,
       }));
 
       // Interleave: every 4th item is a social embed
@@ -1006,6 +1096,9 @@ router.get('/media-feed', verifyToken, (req, res) => {
     LIMIT ? OFFSET ?
   `).all(userId, ...args, limit, offset);
 
+  const matchMap = getMatchTeamsMap(db);
+  addMatchOpponentToMediaItems(media, matchMap);
+
   // Append social embeds from relevant teams (interleaved every 4th position)
   const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
   let socialItems = [];
@@ -1013,8 +1106,10 @@ router.get('/media-feed', verifyToken, (req, res) => {
     // Only interleave social links on the first page to avoid duplicates
     const teamPHSocial = relevantTeamIds.map(() => '?').join(',');
     const socialLinks = db.prepare(
-      `SELECT tsl.*, t.display_name AS team_name FROM team_social_links tsl
+      `SELECT tsl.*, t.display_name AS team_name, c.logo_url AS club_logo_url, c.nevobo_code AS club_nevobo_code
+       FROM team_social_links tsl
        JOIN teams t ON t.id = tsl.team_id
+       JOIN clubs c ON c.id = t.club_id
        WHERE tsl.team_id IN (${teamPHSocial})
        ORDER BY tsl.created_at DESC`
     ).all(...relevantTeamIds);
@@ -1036,6 +1131,8 @@ router.get('/media-feed', verifyToken, (req, res) => {
       created_at: l.created_at,
       team_name: l.team_name,
       team_id: l.team_id,
+      club_logo_url: l.club_logo_url,
+      club_nevobo_code: l.club_nevobo_code,
     }));
   }
 
@@ -1113,23 +1210,33 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
       (SELECT COUNT(*) FROM media_comments mc WHERE mc.media_id = mm.id) AS comment_count,
       (SELECT COUNT(*) FROM media_likes ml2 WHERE ml2.media_id = mm.id AND ml2.user_id = ?) AS liked_by_me,
       COALESCE(t.display_name, cl.name) AS team_name,
-      cl.name AS club_name_media
+      cl.name AS club_name_media,
+      COALESCE(cl.logo_url, cu.logo_url) AS club_logo_url,
+      COALESCE(cl.nevobo_code, cu.nevobo_code) AS club_nevobo_code
     FROM match_media mm
     LEFT JOIN users u ON u.id = mm.user_id
     LEFT JOIN posts p ON p.id = mm.post_id
     LEFT JOIN teams t ON t.id = p.team_id
-    LEFT JOIN clubs cl ON cl.id = p.club_id
+    LEFT JOIN clubs cl ON cl.id = COALESCE(p.club_id, t.club_id)
+    LEFT JOIN clubs cu ON cu.id = u.club_id
     WHERE ${whereClause}
     ORDER BY mm.created_at DESC
     LIMIT ? OFFSET ?
   `).all(...args);
+
+  const matchMap = getMatchTeamsMap(db);
+  addMatchOpponentToMediaItems(media, matchMap);
 
   // Append social media embeds (TikTok / Instagram) when feature is enabled
   const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
   let socialItems = [];
   if (embedsEnabled && offset === 0) {
     const links = db.prepare(
-      'SELECT * FROM team_social_links WHERE team_id = ? ORDER BY created_at DESC'
+      `SELECT tsl.*, c.logo_url AS club_logo_url, c.nevobo_code AS club_nevobo_code
+       FROM team_social_links tsl
+       JOIN teams t ON t.id = tsl.team_id
+       JOIN clubs c ON c.id = t.club_id
+       WHERE tsl.team_id = ? ORDER BY tsl.created_at DESC`
     ).all(teamId);
     socialItems = links.map(l => ({
       id: `${l.platform}-${l.embed_id}`,
@@ -1146,6 +1253,8 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
       comment_count: 0,
       liked_by_me: 0,
       created_at: l.created_at,
+      club_logo_url: l.club_logo_url,
+      club_nevobo_code: l.club_nevobo_code,
     }));
   }
 
@@ -1183,21 +1292,31 @@ router.get('/followers/:userId', (req, res) => {
 // ─── Team social links (for team members) ────────────────────────────────────
 
 // POST /api/social/teams/:teamId/social-links — any team member can add
-router.post('/teams/:teamId/social-links', verifyToken, (req, res) => {
+router.post('/teams/:teamId/social-links', verifyToken, async (req, res) => {
   const teamId = parseInt(req.params.teamId);
   const userId = req.user.id;
 
-  // Verify user is a member of this team
+  // Alleen spelers en coaches mogen social links toevoegen; begeleiders en ouders niet
   const membership = db.prepare(
-    'SELECT id FROM team_memberships WHERE team_id = ? AND user_id = ?'
+    'SELECT id, membership_type FROM team_memberships WHERE team_id = ? AND user_id = ?'
   ).get(teamId, userId);
   if (!membership) {
     return res.status(403).json({ ok: false, error: 'Je bent geen lid van dit team.' });
   }
+  if (membership.membership_type !== 'player' && membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen spelers en coaches kunnen media toevoegen.' });
+  }
 
   const { url } = req.body;
-  // Reuse parseSocialUrl from admin routes by duplicating the logic here
-  const parsed = parseSocialUrlForSocial(url);
+  let parsed = parseSocialUrlForSocial(url);
+  let urlToStore = (url || '').trim();
+  if (!parsed && /vm\.tiktok\.com\/[^/?#]+/i.test(urlToStore)) {
+    const resolved = await resolveVmTiktokToVideoId(url);
+    if (resolved) {
+      parsed = { platform: 'tiktok', embed_id: resolved.videoId };
+      urlToStore = resolved.finalUrl;
+    }
+  }
   if (!parsed) {
     return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
   }
@@ -1205,7 +1324,7 @@ router.post('/teams/:teamId/social-links', verifyToken, (req, res) => {
   try {
     db.prepare(
       'INSERT INTO team_social_links (team_id, platform, url, embed_id, added_by) VALUES (?, ?, ?, ?, ?)'
-    ).run(teamId, parsed.platform, url.trim(), parsed.embed_id, userId);
+    ).run(teamId, parsed.platform, urlToStore, parsed.embed_id, userId);
   } catch (e) {
     if (e.message.includes('UNIQUE')) {
       return res.status(409).json({ ok: false, error: 'Deze URL is al gekoppeld aan dit team.' });

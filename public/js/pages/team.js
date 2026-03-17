@@ -1,5 +1,6 @@
-import { api, state, renderAvatar, renderClubLogo, formatDate, formatTime, showToast, navigate } from '../app.js';
+import { api, state, renderAvatar, renderClubLogo, formatDate, formatTime, showToast, navigate, showQualityWarningModal } from '../app.js';
 import { openReelViewer } from '../reel-viewer.js';
+import { FilePicker } from '../file-picker.js';
 
 /**
  * Params:
@@ -103,6 +104,10 @@ function renderPage(container, opts) {
 
   const totalPlayed = wins + losses + draws;
 
+  // Alleen spelers en coaches mogen media toevoegen; begeleiders en ouders niet
+  const currentUserMembership = (opts.members || []).find(m => m.id === state.user?.id)?.membership_type;
+  const canAddTeamMedia = !!(state.user && (currentUserMembership === 'player' || currentUserMembership === 'coach'));
+
   const nevoboSkeleton = `<div class="spinner"></div>`;
 
   container.innerHTML = `
@@ -128,13 +133,22 @@ function renderPage(container, opts) {
           ${isOwnTeam
             ? `<div class="team-own-badge-row">
                 <div class="team-own-badge">✅ Jouw team</div>
-                ${state.user ? `
+                ${canAddTeamMedia ? `
                   <div class="team-social-hero-btns">
                     <button class="team-social-btn" id="hero-add-tiktok-btn" title="TikTok video toevoegen">
                       <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.3 6.3 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.77a4.85 4.85 0 01-1.01-.08z"/></svg>
                     </button>
                     <button class="team-social-btn team-social-btn--ig" id="hero-add-instagram-btn" title="Instagram post/reel toevoegen">
                       <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                    </button>
+                    <button class="team-social-btn team-social-btn--media" id="hero-add-photo-btn" title="Foto toevoegen">
+                      <span aria-hidden="true">📷</span>
+                    </button>
+                    <button class="team-social-btn team-social-btn--media" id="hero-add-video-btn" title="Video toevoegen">
+                      <span aria-hidden="true">🎥</span>
+                    </button>
+                    <button class="team-social-btn team-social-btn--media" id="hero-add-upload-btn" title="Bestand uploaden">
+                      <span aria-hidden="true">⬆️</span>
                     </button>
                   </div>` : ''}
               </div>`
@@ -401,8 +415,8 @@ function renderPage(container, opts) {
     btn.textContent = expanded ? `Toon alle ${results.length} uitslagen ↓` : 'Minder tonen ↑';
   });
 
-  // ── Hero social media buttons (own team members only) ────────────────────
-  if (isOwnTeam && state.user && teamId) {
+  // ── Hero social media buttons (alleen spelers en coaches mogen media toevoegen) ────────────────────
+  if (isOwnTeam && canAddTeamMedia && teamId) {
     const showSocialOverlay = (platform) => {
       // Reuse the overlay in the team-media section if it exists, otherwise create one
       let overlay = document.getElementById('social-url-overlay');
@@ -433,12 +447,12 @@ function renderPage(container, opts) {
             await api(`/api/social/teams/${teamId}/social-links`, { method: 'POST', body: { url } });
             showToast('Toegevoegd!', 'success');
             overlay.style.display = 'none';
-            loadTeamMedia(teamId, displayName, nevoboCode);
+            await loadTeamMedia(teamId, displayName, nevoboCode);
           } catch (err) { showToast(err.message, 'error'); }
         });
       }
       overlay.querySelector('#social-overlay-hint').textContent = platform === 'tiktok'
-        ? 'Plak een TikTok video-URL: https://www.tiktok.com/@user/video/…'
+        ? 'Plak een TikTok video-URL: https://www.tiktok.com/@user/video/… of https://vm.tiktok.com/…'
         : 'Plak een Instagram post of reel-URL: https://www.instagram.com/reel/…';
       overlay.querySelector('#social-overlay-input').value = '';
       overlay.style.display = 'flex';
@@ -447,6 +461,27 @@ function renderPage(container, opts) {
 
     document.getElementById('hero-add-tiktok-btn')?.addEventListener('click', () => showSocialOverlay('tiktok'));
     document.getElementById('hero-add-instagram-btn')?.addEventListener('click', () => showSocialOverlay('instagram'));
+
+    // Foto / Video / Upload — Foto en Video direct naar camera in de juiste modus (zoals wedstrijdpagina)
+    const openTeamMediaPicker = (accept, useCapture = false) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = accept;
+      if (useCapture) input.capture = 'environment';
+      input.multiple = !useCapture && (accept === 'image/*,video/*' || accept === 'image/*');
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.addEventListener('change', () => {
+        const files = Array.from(input.files || []);
+        input.remove();
+        if (files.length) showTeamCaptionModal(teamId, displayName, nevoboCode, files);
+      });
+      input.click();
+    };
+
+    document.getElementById('hero-add-photo-btn')?.addEventListener('click', () => openTeamMediaPicker('image/*', true));
+    document.getElementById('hero-add-video-btn')?.addEventListener('click', () => openTeamMediaPicker('video/*', true));
+    document.getElementById('hero-add-upload-btn')?.addEventListener('click', () => showTeamUploadModal(teamId, displayName, nevoboCode));
   }
 
   // ── Follow button handler ─────────────────────────────────────────────────
@@ -621,18 +656,29 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
     let media = data.media || [];
 
     if (!media.length) {
-      el.remove();
+      el.innerHTML = `<div class="hm-reel-wrap"><p class="text-muted text-small" style="padding:1rem;margin:0">Nog geen media.</p></div>`;
+      el.hidden = false;
       return;
     }
 
     const esc = s => (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const clubLogoUrl = (m) => {
+      if (m.club_logo_url) return m.club_logo_url;
+      if (m.club_nevobo_code) return `https://assets.nevobo.nl/organisatie/logo/${String(m.club_nevobo_code).toUpperCase()}.jpg`;
+      // Fallback: team page context — use the team's club (nevoboCode) so logo always shows on team reels
+      if (nevoboCode) return `https://assets.nevobo.nl/organisatie/logo/${String(nevoboCode).toUpperCase()}.jpg`;
+      return null;
+    };
 
     el.innerHTML = `
       <div class="hm-reel-wrap">
         <div class="hm-reel" id="team-reel-track">
           <div class="hm-reel-spacer"></div>
-          ${media.map((m, i) => `
+          ${media.map((m, i) => {
+            const logoUrl = clubLogoUrl(m);
+            return `
             <div class="hm-reel-card" data-index="${i}">
+              ${logoUrl ? `<div class="hm-reel-club-logo"><img src="${esc(logoUrl)}" alt="" /></div>` : ''}
               ${m.file_type === 'video'
                 ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
                    <div class="hm-reel-play-icon">▶</div>`
@@ -652,7 +698,8 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
                   ${m.view_count > 0 ? `<span>👁 ${m.view_count}</span>` : ''}
                 </div>
               </div>
-            </div>`).join('')}
+            </div>`;
+          }).join('')}
           <div class="hm-reel-spacer"></div>
         </div>
       </div>`;
@@ -666,6 +713,7 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
         const existingVideo = card.querySelector('video.hm-reel-media');
         openReelViewer(media, idx, {
           sourceVideo: existingVideo,
+          fallbackNevoboCode: nevoboCode,
           fetchMore: async (offset) => {
             const d = await api(`/api/social/team-media/${teamId}?limit=20&offset=${offset}`);
             return d.media || [];
@@ -708,6 +756,104 @@ async function loadTeamMedia(teamId, displayName, nevoboCode) {
     }
   } catch (_) {
     el.remove();
+  }
+}
+
+// ─── Team media upload (Foto / Video / Upload from hero) ─────────────────────
+function showTeamCaptionModal(teamId, displayName, nevoboCode, files) {
+  const preview = files.map(f => {
+    const url = URL.createObjectURL(f);
+    return f.type.startsWith('video/')
+      ? `<video src="${url}" style="width:100%;max-height:180px;border-radius:10px;object-fit:cover" muted playsinline></video>`
+      : `<img src="${url}" style="width:100%;max-height:180px;border-radius:10px;object-fit:cover" alt="" />`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:360px">
+      <h3 style="margin-bottom:0.75rem">📸 Media toevoegen aan team</h3>
+      <div style="margin-bottom:0.75rem;border-radius:10px;overflow:hidden">${preview}</div>
+      <div class="form-group">
+        <label class="form-label">Onderschrift (optioneel)</label>
+        <input type="text" id="team-cap-input" class="form-input" placeholder="Bijv. training of uitwedstrijd" />
+      </div>
+      <div class="flex gap-2 mt-2">
+        <button class="btn btn-secondary" style="flex:1" id="team-cap-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="team-cap-submit">Plaatsen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#team-cap-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#team-cap-submit').addEventListener('click', async () => {
+    const caption = overlay.querySelector('#team-cap-input').value.trim();
+    overlay.remove();
+    await doTeamUpload(teamId, displayName, nevoboCode, files, caption);
+  });
+}
+
+function showTeamUploadModal(teamId, displayName, nevoboCode) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:360px">
+      <h3 style="margin-bottom:1rem">📸 Foto's &amp; video's uploaden</h3>
+      <form id="team-upload-form">
+        <div id="team-fp-wrap" class="form-group"></div>
+        <div class="form-group">
+          <label class="form-label">Onderschrift (optioneel)</label>
+          <input type="text" id="team-upload-caption" class="form-input" placeholder="Bijv. training of uitwedstrijd" />
+        </div>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-secondary" style="flex:1" id="team-upload-cancel">Annuleren</button>
+          <button type="submit" class="btn btn-primary" style="flex:1" id="team-upload-submit">Uploaden</button>
+        </div>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const picker = new FilePicker(overlay.querySelector('#team-fp-wrap'), {
+    accept: 'image/*,video/*',
+    multiple: true,
+    maxFiles: 10,
+  });
+
+  overlay.querySelector('#team-upload-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#team-upload-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const files = picker.getFiles();
+    if (files.length === 0) {
+      showToast('Kies eerst bestanden', 'error');
+      return;
+    }
+    const caption = overlay.querySelector('#team-upload-caption').value.trim();
+    overlay.remove();
+    await doTeamUpload(teamId, displayName, nevoboCode, files, caption);
+  });
+}
+
+async function doTeamUpload(teamId, displayName, nevoboCode, files, caption = '') {
+  showToast('Uploaden…', 'info');
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  if (caption) fd.append('caption', caption);
+  fd.append('team_id', String(teamId));
+  try {
+    const resp = await fetch('/api/social/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.token}` },
+      body: fd,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Upload mislukt');
+    showToast('Toegevoegd! 📸', 'success');
+    await loadTeamMedia(teamId, displayName, nevoboCode);
+    if (data.qualityIssues?.length) {
+      showQualityWarningModal(data.qualityIssues, () => loadTeamMedia(teamId, displayName, nevoboCode));
+    }
+  } catch (err) {
+    showToast(err.message || 'Upload mislukt', 'error');
   }
 }
 
