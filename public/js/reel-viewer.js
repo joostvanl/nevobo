@@ -560,12 +560,17 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     });
   }
 
+  // Number of "media" items (excl. TikTok/Instagram embeds) — API pagination uses this offset
+  function mediaCount() {
+    return list.filter(m => m.file_type !== 'tiktok' && m.file_type !== 'instagram').length;
+  }
+
   // Trigger background load when within 5 items of the end (so next batch is ready before user reaches end)
   function maybeLoadMore() {
     if (allLoaded || loadingMore || !fetchMore) return;
     if (idx < list.length - 5) return;
     loadingMore = true;
-    fetchMore(list.length).then(more => {
+    fetchMore(mediaCount()).then(more => {
       if (!more || more.length === 0) {
         allLoaded = true;
       } else {
