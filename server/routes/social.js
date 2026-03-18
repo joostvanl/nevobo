@@ -6,6 +6,7 @@ const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
+const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
 const sharp = require('sharp');
 const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
 
@@ -1333,8 +1334,15 @@ router.post('/teams/:teamId/social-links', verifyToken, async (req, res) => {
   }
 
   const { url } = req.body;
-  const parsed = parseSocialUrlForSocial(url);
-  const urlToStore = (url || '').trim();
+  let parsed = parseSocialUrlForSocial(url);
+  let urlToStore = (url || '').trim();
+  if (!parsed && /vm\.tiktok\.com\/[^/?#]+/i.test(urlToStore)) {
+    const resolved = await resolveVmTiktokToVideoId(url);
+    if (resolved) {
+      parsed = { platform: 'tiktok', embed_id: resolved.videoId };
+      urlToStore = resolved.finalUrl;
+    }
+  }
   if (!parsed) {
     return res.status(400).json({ ok: false, error: 'Ongeldige URL. Gebruik een TikTok video-URL of Instagram post/reel-URL.' });
   }
