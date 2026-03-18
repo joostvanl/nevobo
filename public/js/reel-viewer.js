@@ -395,9 +395,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         ${m.file_type === 'image'
           ? `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`
           : m.file_type === 'tiktok'
-            ? `<iframe class="rv-media rv-embed"
-                src="https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=${i === startIdx ? 0 : 1}&loop=1&rel=0&controls=1"
-                allowfullscreen allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+            ? `<iframe class="rv-media rv-embed" data-embed-id="${esc(m.embed_id)}" data-embed-type="tiktok"
+                allowfullscreen allow="autoplay; fullscreen"></iframe>
                <div class="rv-embed-shield"></div>`
             : m.file_type === 'instagram'
               ? `<div class="rv-embed rv-ig-wrap">
@@ -442,6 +441,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       vid.classList.add('rv-media');
       slide.appendChild(vid);
     });
+
+    // Lazy-load TikTok embeds only for initial slide and neighbors (reduces console noise from TikTok's React)
+    loadTiktokEmbedIfNeeded(startIdx, startIdx);
+    loadTiktokEmbedIfNeeded(startIdx - 1, startIdx);
+    loadTiktokEmbedIfNeeded(startIdx + 1, startIdx);
   }
 
   function syncTrackSize() {
@@ -476,9 +480,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       if (m.file_type === 'image') {
         slide.innerHTML = clubLogoOverlay(m) + `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
       } else if (m.file_type === 'tiktok') {
-        slide.innerHTML = clubLogoOverlay(m) + `<iframe class="rv-media rv-embed"
-          src="https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=1&loop=1&rel=0&controls=1"
-          allowfullscreen allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+        slide.innerHTML = clubLogoOverlay(m) + `<iframe class="rv-media rv-embed" data-embed-id="${esc(m.embed_id)}" data-embed-type="tiktok"
+          allowfullscreen allow="autoplay; fullscreen"></iframe>
           <div class="rv-embed-shield"></div>`;
       } else if (m.file_type === 'instagram') {
         slide.innerHTML = clubLogoOverlay(m) + `<div class="rv-embed rv-ig-wrap">
@@ -510,6 +513,19 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       track.appendChild(slide);
     });
     track.style.width = (w * list.length) + 'px';
+  }
+
+  // Lazy-load TikTok iframe src only when slide is visible (±1) to reduce "Consume appContext before init" from TikTok's embed
+  function loadTiktokEmbedIfNeeded(slideIndex, currentIndex) {
+    if (Math.abs(slideIndex - currentIndex) > 1) return;
+    const slide = track.querySelector(`#rv-slide-${slideIndex}`);
+    const m = list[slideIndex];
+    if (!slide || !m || m.file_type !== 'tiktok') return;
+    const iframe = slide.querySelector('iframe[data-embed-type="tiktok"]');
+    if (!iframe || !iframe.dataset.embedId) return;
+    if (iframe.src && iframe.src.includes('tiktok.com/player')) return; // already loaded
+    const muted = slideIndex !== currentIndex ? 1 : 0;
+    iframe.src = `https://www.tiktok.com/player/v1/${encodeURIComponent(iframe.dataset.embedId)}?autoplay=1&muted=${muted}&loop=1&rel=0&controls=1`;
   }
 
   // Preload media for slides within ±3 of current index; unload the rest to save memory
@@ -544,10 +560,10 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     });
   }
 
-  // Trigger background load when within 2 items of the end
+  // Trigger background load when within 5 items of the end (so next batch is ready before user reaches end)
   function maybeLoadMore() {
     if (allLoaded || loadingMore || !fetchMore) return;
-    if (idx < list.length - 2) return;
+    if (idx < list.length - 5) return;
     loadingMore = true;
     fetchMore(list.length).then(more => {
       if (!more || more.length === 0) {
@@ -602,20 +618,22 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       }
     });
 
-    // Mute/unmute TikTok iframes by swapping the src (postMessage is unreliable cross-origin)
+    // Lazy-load TikTok iframes for current slide and neighbors; mute/unmute by swapping src
+    loadTiktokEmbedIfNeeded(i - 1, i);
+    loadTiktokEmbedIfNeeded(i, i);
+    loadTiktokEmbedIfNeeded(i + 1, i);
     track.querySelectorAll('.rv-slide').forEach(slide => {
       const si = parseInt(slide.dataset.i);
       const m  = list[si];
       if (!m || m.file_type !== 'tiktok') return;
       const iframe = slide.querySelector('iframe');
-      if (!iframe) return;
+      if (!iframe || !iframe.src || !iframe.src.includes('tiktok.com/player')) return;
       const muted = si !== i ? 1 : 0;
       const newSrc = `https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=${muted}&loop=1&rel=0&controls=1`;
-      // Only reload if mute state actually changed
-      const cur = new URL(iframe.src);
-      if (cur.searchParams.get('muted') !== String(muted)) {
-        iframe.src = newSrc;
-      }
+      try {
+        const cur = new URL(iframe.src);
+        if (cur.searchParams.get('muted') !== String(muted)) iframe.src = newSrc;
+      } catch (_) {}
     });
 
     track.querySelectorAll('.rv-slide').forEach(slide => {
@@ -860,6 +878,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   updateMeta();
   recordView();
   preloadAround(startIdx);
+  maybeLoadMore(); // if opened near end, start loading next batch immediately
 
   // Klik op video → pause/resume toggle (not in blur mode)
   track.addEventListener('click', e => {
