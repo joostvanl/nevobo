@@ -15,6 +15,15 @@ const fs       = require('fs');
 const path     = require('path');
 const { verifyToken, optionalToken } = require('../middleware/auth');
 const db       = require('../db/db');
+const { isScoutEnabled } = require('../lib/featureSettings');
+
+router.use((req, res, next) => {
+  if (req.method === 'GET' && req.path === '/') return next();
+  if (!isScoutEnabled()) {
+    return res.status(403).json({ ok: false, error: 'Scouting is uitgeschakeld door de beheerder.' });
+  }
+  next();
+});
 
 const DATA_DIR = path.join(__dirname, '../../server/data/scout');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

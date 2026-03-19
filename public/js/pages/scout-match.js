@@ -3,7 +3,7 @@
  * Injecteert de volledige HTML van het wedstrijdscherm en laadt de scout JS-bestanden.
  * De scout JS-bestanden communiceren via window globals (SCOUT_API_BASE, _scoutToken).
  */
-import { state, api } from '../app.js';
+import { state, api, navigate } from '../app.js';
 
 // Track loaded scripts so we don't double-load on revisit
 const loadedScripts = new Set();
@@ -120,6 +120,14 @@ export async function render(container, params = {}) {
     container.innerHTML = `<div class="container mt-4"><div class="card"><div class="card-body text-center">
       <p>Je moet ingelogd zijn om te scouten.</p>
       <button class="btn btn-primary" onclick="navigate('login')">Inloggen</button>
+    </div></div></div>`;
+    return;
+  }
+
+  if (state.features?.scout === false) {
+    container.innerHTML = `<div class="container mt-4"><div class="card"><div class="card-body text-center">
+      <p>Scouting is uitgeschakeld voor dit platform.</p>
+      <button class="btn btn-primary mt-2" onclick="navigate('matches')">Naar wedstrijden</button>
     </div></div></div>`;
     return;
   }

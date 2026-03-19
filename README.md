@@ -14,6 +14,12 @@ Mobile-first web app for Dutch volleyball clubs. Built with Vanilla JS + Node.js
 - **PWA** — Installable, works offline (service worker caches static assets)
 - **Multi-club** — Any Dutch volleyball club can register with their Nevobo code
 
+## Technical documentation (for developers & AI agents)
+
+Structured module docs, API overview, database notes, and known pitfalls:
+
+**→ [docs/technical/INDEX.md](docs/technical/INDEX.md)**
+
 ## Tech Stack
 
 | Layer | Technology |

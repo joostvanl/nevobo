@@ -712,7 +712,7 @@ function renderMatchDetail(container, match, club, fromTab, canInteract = true, 
         (match.home_team || '').toLowerCase().includes(clubNameLower) ||
         (match.away_team || '').toLowerCase().includes(clubNameLower)
       ) ? myTeams[0] : null);
-  const isScoutAllowed = canInteract && matchingTeam && (
+  const isScoutAllowed = state.features?.scout !== false && canInteract && matchingTeam && (
     (state.user?.memberships?.some(m => m.team_id === matchingTeam.id && m.membership_type === 'coach'))
     || (state.user?.roles?.some(r =>
       r.role === 'super_admin'

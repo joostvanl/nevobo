@@ -8,6 +8,7 @@ const { verifyToken, optionalToken } = require('../middleware/auth');
 const { awardBadgeIfNew } = require('./auth');
 const sharp = require('sharp');
 const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
+const { isSocialEmbedsEnabled, isFaceBlurDebugEnabled } = require('../lib/featureSettings');
 
 // Multer storage: save to public/uploads/<year>/<month>/
 const storage = multer.diskStorage({
@@ -249,7 +250,7 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
   mediaItems.forEach(m => delete m._qualityWarnings);
 
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(postId);
-  const debugEnabled = (process.env.FACE_BLUR_DEBUG || '').trim() === 'true';
+  const debugEnabled = isFaceBlurDebugEnabled();
   res.status(201).json({ ok: true, post, media: mediaItems, qualityIssues, qualityDebug: debugEnabled ? (req._qualityDebug || []) : [] });
 });
 
@@ -493,7 +494,7 @@ router.get('/media/:id/detect-faces', verifyToken, async (req, res) => {
   try {
     const faces      = await detectAllFaces(basePath);
     const blurRegions = item.blur_regions ? JSON.parse(item.blur_regions) : [];
-    const debugOverlay = (process.env.FACE_BLUR_DEBUG || '').trim() === 'true';
+    const debugOverlay = isFaceBlurDebugEnabled();
     res.json({ ok: true, faces, blurRegions, debugOverlay });
   } catch (err) {
     console.error('[detect-faces] Error:', err.message);
@@ -878,7 +879,7 @@ router.get('/home-summary', verifyToken, (req, res) => {
   }
 
   // Append social embeds from relevant teams (interleaved every 4th position)
-  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  const embedsEnabled = isSocialEmbedsEnabled();
   if (embedsEnabled && relevantTeamIds.length > 0) {
     const ph = relevantTeamIds.map(() => '?').join(',');
     const socialLinks = db.prepare(
@@ -1007,7 +1008,7 @@ router.get('/media-feed', verifyToken, (req, res) => {
   `).all(userId, ...args, limit, offset);
 
   // Append social embeds from relevant teams (interleaved every 4th position)
-  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  const embedsEnabled = isSocialEmbedsEnabled();
   let socialItems = [];
   if (embedsEnabled && relevantTeamIds.length > 0 && offset === 0) {
     // Only interleave social links on the first page to avoid duplicates
@@ -1125,7 +1126,7 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
   `).all(...args);
 
   // Append social media embeds (TikTok / Instagram) when feature is enabled
-  const embedsEnabled = process.env.SOCIAL_EMBEDS_ENABLED !== 'false';
+  const embedsEnabled = isSocialEmbedsEnabled();
   let socialItems = [];
   if (embedsEnabled && offset === 0) {
     const links = db.prepare(

@@ -3,6 +3,8 @@ export const state = {
   user: null,
   token: null,
   currentRoute: 'home',
+  /** Platform feature flags from API — { scout, social_embeds, face_blur } */
+  features: null,
 };
 
 // ─── API helper ──────────────────────────────────────────────────────────────
@@ -365,11 +367,12 @@ export function formatTime(dateStr) {
 }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
-function saveSession(token, user) {
+function saveSession(token, user, features = null) {
   localStorage.setItem('vb_token', token);
   localStorage.setItem('vb_user', JSON.stringify(user));
   state.token = token;
   state.user = user;
+  if (features) state.features = features;
 }
 
 function clearSession() {
@@ -377,6 +380,7 @@ function clearSession() {
   localStorage.removeItem('vb_user');
   state.token = null;
   state.user = null;
+  state.features = null;
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -480,7 +484,7 @@ async function initAuth() {
         method: 'POST',
         body: { email: document.getElementById('login-email').value, password: document.getElementById('login-password').value },
       });
-      saveSession(data.token, data.user);
+      saveSession(data.token, data.user, data.features);
       showApp();
       navigate('home');
     } catch (err) {
@@ -507,7 +511,7 @@ async function initAuth() {
           club_id: document.getElementById('reg-club').value || null,
         },
       });
-      saveSession(data.token, data.user);
+      saveSession(data.token, data.user, data.features);
       showApp();
       navigate('home');
       showToast('Welkom bij VolleyApp! 🏐', 'success');
@@ -536,6 +540,7 @@ async function boot() {
     import('./pages/profile.js'),
     import('./pages/team.js'),
     import('./pages/admin.js'),
+    import('./pages/settings.js'),
     import('./pages/privacy.js'),
     import('./pages/scout-setup.js'),
     import('./pages/scout-match.js'),
@@ -554,6 +559,7 @@ async function boot() {
     try {
       const me = await api('/api/auth/me');
       state.user = me.user;
+      state.features = me.features || null;
       localStorage.setItem('vb_user', JSON.stringify(me.user));
       sessionValid = true;
     } catch (_) {
@@ -561,7 +567,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, privacyPage, scoutSetupPage, scoutMatchPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, privacyPage, scoutSetupPage, scoutMatchPage] = await pagesPromise;
 
   registerRoute('home',         homePage.render);
   registerRoute('matches',      matchesPage.render);
@@ -571,6 +577,7 @@ async function boot() {
   registerRoute('profile',      profilePage.render);
   registerRoute('team',         teamPage.render);
   registerRoute('admin',        adminPage.render);
+  registerRoute('settings',     settingsPage.render);
   registerRoute('privacy',      privacyPage.render);
   registerRoute('scout-setup',  scoutSetupPage.render);
   registerRoute('scout-match',  scoutMatchPage.render);

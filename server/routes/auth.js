@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken } = require('../middleware/auth');
+const { getClientFeatures } = require('../lib/featureSettings');
 
 // Multer for avatar + face reference uploads
 const avatarStorage = multer.diskStorage({
@@ -71,7 +72,7 @@ router.post('/register', async (req, res) => {
   }
 
   const token = generateToken(user);
-  res.status(201).json({ ok: true, token, user: safeUser(user) });
+  res.status(201).json({ ok: true, token, user: safeUser(user), features: getClientFeatures() });
 });
 
 // POST /api/auth/login
@@ -92,7 +93,7 @@ router.post('/login', async (req, res) => {
   }
 
   const token = generateToken(user);
-  res.json({ ok: true, token, user: safeUser(user) });
+  res.json({ ok: true, token, user: safeUser(user), features: getClientFeatures() });
 });
 
 // GET /api/auth/me
@@ -135,7 +136,15 @@ router.get('/me', verifyToken, (req, res) => {
     ORDER BY c.name, t.display_name
   `).all(user.id);
 
-  res.json({ ok: true, user: { ...safeUser(user), roles, memberships }, badges, goals, nextLevel, currentLevel });
+  res.json({
+    ok: true,
+    user: { ...safeUser(user), roles, memberships },
+    badges,
+    goals,
+    nextLevel,
+    currentLevel,
+    features: getClientFeatures(),
+  });
 });
 
 // GET /api/auth/memberships — list own team memberships

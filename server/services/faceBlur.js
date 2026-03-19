@@ -14,6 +14,7 @@ const path  = require('path');
 const fs    = require('fs');
 const sharp = require('sharp');
 const db    = require('../db/db');
+const { isFaceBlurEnabled } = require('../lib/featureSettings');
 
 const MODELS_PATH       = path.join(__dirname, '../models');
 // Euclidean distance threshold for face matching.
@@ -39,9 +40,6 @@ const QUALITY_GRAIN_SIZE    = 80;   // extreme downscale for grain ratio referen
 const REF_MIN_FACE_RATIO    = 0.05; // face width must be ≥ 5 % of image width
 const REF_MIN_FACE_CONF     = 0.65; // face detection confidence for reference photos
 
-/** Feature toggle — set FACE_BLUR_ENABLED=true in .env to enable */
-const ENABLED = (process.env.FACE_BLUR_ENABLED || '').trim() === 'true';
-
 let modelsLoaded = false;
 let faceapi      = null;
 
@@ -51,8 +49,8 @@ const descriptorCache = new Map();
 /* ─── Public: load models (call once at server startup) ──────────────────── */
 
 async function loadModels() {
-  if (!ENABLED) {
-    console.log('[faceBlur] Feature disabled (FACE_BLUR_ENABLED != true) — skipping model load');
+  if (!isFaceBlurEnabled()) {
+    console.log('[faceBlur] Feature disabled — skipping model load');
     return;
   }
   if (modelsLoaded) return;
@@ -182,7 +180,7 @@ async function getAnonymousDescriptors(teamId) {
 // entirely without loading models or running detection.
 
 async function blurFacesIfNeeded(absoluteFilePath, teamId) {
-  if (!ENABLED || !modelsLoaded) return false;
+  if (!isFaceBlurEnabled() || !modelsLoaded) return false;
 
   // Fast-path: skip when no relevant anonymous users exist
   if (teamId) {
