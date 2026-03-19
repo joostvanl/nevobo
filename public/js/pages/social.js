@@ -369,7 +369,7 @@ function renderDiscoverTab(data, user, followingTeamIds, followingClubIds) {
                   <div class="avatar avatar-md" style="background:linear-gradient(135deg,var(--secondary),var(--primary));font-size:1.2rem">🏐</div>
                   <div style="flex:1">
                     <div style="font-weight:700">${club.name}</div>
-                    <div class="text-muted text-small">${club.nevobo_code}${club.region ? ' · ' + club.region : ''}</div>
+                    ${club.region ? `<div class="text-muted text-small">${club.region}</div>` : ''}
                   </div>
                   <button class="btn btn-sm ${isFollowing ? 'btn-secondary' : 'btn-accent'} follow-club-btn"
                     data-id="${club.id}" data-following="${isFollowing}">
@@ -383,7 +383,7 @@ function renderDiscoverTab(data, user, followingTeamIds, followingClubIds) {
   }
 
   if (!html) {
-    html = `<div class="empty-state"><div class="empty-icon">🏐</div><p>Geen clubs of teams gevonden. Voeg eerst een club toe via Profiel.</p></div>`;
+    html = `<div class="empty-state"><div class="empty-icon">🏐</div><p>Geen clubs of teams gevonden. Kies je vereniging in je profiel.</p></div>`;
   }
 
   return html;

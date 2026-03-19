@@ -126,7 +126,7 @@ Team/
 
 ### Clubs
 - `GET /api/clubs` — All clubs
-- `POST /api/clubs` — Create club
+- `POST /api/clubs` — Create club (super_admin only)
 - `GET /api/clubs/:id` — Club + teams
 - `POST /api/clubs/:id/teams` — Add team to club
 

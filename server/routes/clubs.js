@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/db');
-const { verifyToken } = require('../middleware/auth');
+const { verifyToken, requireSuperAdmin } = require('../middleware/auth');
 const RSSParser = require('rss-parser');
 const fetch = require('node-fetch');
 
@@ -113,8 +113,8 @@ router.get('/', (req, res) => {
   res.json({ ok: true, clubs });
 });
 
-// POST /api/clubs — register a club + auto-sync teams
-router.post('/', verifyToken, async (req, res) => {
+// POST /api/clubs — register a club + auto-sync teams (platform / opperbeheerder)
+router.post('/', verifyToken, requireSuperAdmin, async (req, res) => {
   const { name, nevobo_code, region } = req.body;
   if (!name || !nevobo_code) {
     return res.status(400).json({ ok: false, error: 'Naam en Nevobo-code zijn verplicht' });

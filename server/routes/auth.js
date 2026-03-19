@@ -58,11 +58,19 @@ router.post('/register', async (req, res) => {
     return res.status(409).json({ ok: false, error: 'E-mailadres is al in gebruik' });
   }
 
+  let regClubId = null;
+  if (club_id !== undefined && club_id !== null && club_id !== '') {
+    regClubId = parseInt(String(club_id), 10);
+    if (Number.isNaN(regClubId) || !db.prepare('SELECT id FROM clubs WHERE id = ?').get(regClubId)) {
+      return res.status(400).json({ ok: false, error: 'Ongeldige vereniging' });
+    }
+  }
+
   const password_hash = await bcrypt.hash(password, 12);
 
   const result = db.prepare(
     'INSERT INTO users (name, email, password_hash, club_id, team_id) VALUES (?, ?, ?, ?, ?)'
-  ).run(name, email, password_hash, club_id || null, team_id || null);
+  ).run(name, email, password_hash, regClubId, team_id || null);
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
 
@@ -173,6 +181,14 @@ router.post('/memberships', verifyToken, (req, res) => {
   const team = db.prepare('SELECT t.*, c.name AS club_name FROM teams t JOIN clubs c ON c.id=t.club_id WHERE t.id = ?').get(team_id);
   if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
 
+  const user = db.prepare('SELECT team_id, club_id FROM users WHERE id = ?').get(req.user.id);
+  if (user.club_id != null && team.club_id !== user.club_id) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Je hoort al bij een andere vereniging. Pas je vereniging aan in je profiel om over te stappen.',
+    });
+  }
+
   try {
     db.prepare('INSERT OR IGNORE INTO team_memberships (team_id, user_id, membership_type) VALUES (?, ?, ?)')
       .run(team_id, req.user.id, membership_type);
@@ -180,11 +196,12 @@ router.post('/memberships', verifyToken, (req, res) => {
     return res.status(409).json({ ok: false, error: 'Je bent al lid van dit team' });
   }
 
-  // If user has no primary team yet, set this as their primary team + club
-  const user = db.prepare('SELECT team_id, club_id FROM users WHERE id = ?').get(req.user.id);
+  // Primary team + club: fill club when missing; set primary team when missing
+  if (!user.club_id) {
+    db.prepare('UPDATE users SET club_id = ? WHERE id = ?').run(team.club_id, req.user.id);
+  }
   if (!user.team_id) {
-    db.prepare('UPDATE users SET team_id = ?, club_id = ? WHERE id = ?')
-      .run(team_id, team.club_id, req.user.id);
+    db.prepare('UPDATE users SET team_id = ? WHERE id = ?').run(team_id, req.user.id);
   }
 
   const memberships = db.prepare(`
@@ -233,11 +250,85 @@ router.delete('/memberships/:teamId', verifyToken, (req, res) => {
 // PATCH /api/auth/profile
 router.patch('/profile', verifyToken, (req, res) => {
   const { name, team_id, club_id, anonymous_mode } = req.body;
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+
   const updates = {};
   if (name) updates.name = name;
-  if (team_id !== undefined) updates.team_id = team_id;
-  if (club_id !== undefined) updates.club_id = club_id;
   if (anonymous_mode !== undefined) updates.anonymous_mode = anonymous_mode ? 1 : 0;
+
+  if (club_id !== undefined) {
+    let newClubId = null;
+    if (club_id === null || club_id === '') {
+      newClubId = null;
+    } else {
+      newClubId = parseInt(String(club_id), 10);
+      if (Number.isNaN(newClubId)) {
+        return res.status(400).json({ ok: false, error: 'Ongeldige club' });
+      }
+      if (!db.prepare('SELECT id FROM clubs WHERE id = ?').get(newClubId)) {
+        return res.status(400).json({ ok: false, error: 'Club niet gevonden' });
+      }
+    }
+
+    const applyClubChange = db.transaction(() => {
+      if (newClubId === null) {
+        db.prepare('DELETE FROM team_memberships WHERE user_id = ?').run(user.id);
+      } else {
+        db.prepare(
+          `DELETE FROM team_memberships WHERE user_id = ? AND team_id IN (SELECT id FROM teams WHERE club_id != ?)`
+        ).run(user.id, newClubId);
+      }
+
+      let nextTeamId = user.team_id;
+      const primaryStillValid =
+        newClubId !== null &&
+        nextTeamId &&
+        db.prepare(
+          `SELECT 1 FROM team_memberships tm JOIN teams t ON t.id = tm.team_id
+           WHERE tm.user_id = ? AND tm.team_id = ? AND t.club_id = ?`
+        ).get(user.id, nextTeamId, newClubId);
+
+      if (!primaryStillValid) {
+        const next =
+          newClubId === null
+            ? null
+            : db.prepare(
+                `SELECT tm.team_id FROM team_memberships tm
+                 JOIN teams t ON t.id = tm.team_id
+                 WHERE tm.user_id = ? AND t.club_id = ? LIMIT 1`
+              ).get(user.id, newClubId);
+        nextTeamId = next ? next.team_id : null;
+      }
+
+      updates.club_id = newClubId;
+      updates.team_id = nextTeamId;
+    });
+    applyClubChange();
+  }
+
+  if (team_id !== undefined) {
+    const tid =
+      team_id === null || team_id === '' ? null : parseInt(String(team_id), 10);
+    if (tid !== null && Number.isNaN(tid)) {
+      return res.status(400).json({ ok: false, error: 'Ongeldig team' });
+    }
+    const effClub = updates.club_id !== undefined ? updates.club_id : user.club_id;
+    if (tid === null) {
+      updates.team_id = null;
+    } else {
+      const t = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(tid);
+      if (!t) return res.status(400).json({ ok: false, error: 'Team niet gevonden' });
+      if (effClub != null && t.club_id !== effClub) {
+        return res.status(400).json({ ok: false, error: 'Dit team hoort niet bij jouw vereniging' });
+      }
+      const mem = db.prepare('SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ?').get(user.id, tid);
+      if (!mem) {
+        return res.status(400).json({ ok: false, error: 'Je bent geen lid van dit team' });
+      }
+      updates.team_id = tid;
+    }
+  }
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ ok: false, error: 'Geen velden om bij te werken' });
@@ -246,8 +337,8 @@ router.patch('/profile', verifyToken, (req, res) => {
   const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   db.prepare(`UPDATE users SET ${setClauses} WHERE id = ?`).run(...Object.values(updates), req.user.id);
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  res.json({ ok: true, user: safeUser(user) });
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  res.json({ ok: true, user: safeUser(updated) });
 });
 
 // POST /api/auth/avatar — upload profile photo

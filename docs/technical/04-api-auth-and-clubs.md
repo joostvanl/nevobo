@@ -30,9 +30,9 @@
 | POST | `/api/auth/login` | — | Token + user object |
 | GET | `/api/auth/me` | verify | Huidige user + uitbreidingen |
 | GET | `/api/auth/memberships` | verify | `team_memberships` |
-| POST | `/api/auth/memberships` | verify | Lid worden van team |
+| POST | `/api/auth/memberships` | verify | Lid worden van team (alleen teams van `users.club_id`; anders 403) |
 | DELETE | `/api/auth/memberships/:teamId` | verify | Verlaten |
-| PATCH | `/api/auth/profile` | verify | Profielvelden |
+| PATCH | `/api/auth/profile` | verify | Profielvelden; bij wijziging `club_id` worden lidmaatschappen van andere clubs verwijderd |
 | POST | `/api/auth/avatar` | verify | Multer upload avatar |
 | POST | `/api/auth/face-reference` | verify | Referentie voor blur-matching |
 | … | face-references | verify | Lijst/verwijderen referenties |
@@ -41,7 +41,8 @@
 
 - **GET `/api/clubs`** — publiek: lijst clubs (o.a. registratieformulier)  
 - **GET `/api/clubs/:id`**, **`/:id/teams`**, **`/:id/teams/:teamId`** — detail + teams  
-- **POST** routes — `verifyToken`; sync met NeVoBo (`sync-teams`) voor actuele teamlijst
+- **POST `/api/clubs`** — `verifyToken` + **`requireSuperAdmin`**: nieuwe vereniging + Nevobo-sync  
+- Overige **POST** (b.v. `/:id/teams`, `sync-teams`) — `verifyToken`; sync met NeVoBo voor actuele teamlijst
 
 **Afhankelijkheid:** NeVoBo-routes/data voor `nevobo_code` validatie/sync.
 

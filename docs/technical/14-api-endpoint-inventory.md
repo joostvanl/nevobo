@@ -36,7 +36,7 @@
 | Methode | Pad | Middleware |
 |---------|-----|------------|
 | GET | `/` | — |
-| POST | `/` | V |
+| POST | `/` | V + `requireSuperAdmin` |
 | GET | `/:id` | — |
 | GET | `/:id/teams` | — |
 | GET | `/:id/teams/:teamId` | — |

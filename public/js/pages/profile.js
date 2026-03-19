@@ -2,6 +2,68 @@ import { api, state, renderAvatar, showToast, navigate } from '../app.js';
 import { escHtml as esc } from '../escape-html.js';
 import { openReelViewer } from '../reel-viewer.js';
 
+/** Veelgestelde vragen — inhoud afgestemd op de huidige app (geen dynamische user-input). */
+const PROFILE_FAQ_ITEMS = [
+  {
+    q: 'Wat is VolleyApp?',
+    a: 'VolleyApp is een mobiele webapp voor Nederlandse volleybalverenigingen: programma en uitslagen (via Nevobo), je teampagina met media, een sociale feed, carpool rond wedstrijden, XP/badges en optioneel wedstrijd-scouting.',
+  },
+  {
+    q: 'Hoe koppel ik mijn vereniging?',
+    a: 'Tik op het potlood bij je profiel en kies onder „Mijn vereniging” je club. Bij registreren kun je ook meteen een vereniging kiezen. Je hoort maar bij één vereniging tegelijk; als je wisselt, vervallen team-lidmaatschappen van andere clubs automatisch.',
+  },
+  {
+    q: 'Mijn vereniging staat niet in de lijst — wat nu?',
+    a: 'Nieuwe verenigingen worden door een platformbeheerder toegevoegd. Neem contact op met je club of met degene die de app beheert. Als gebruiker hoef je geen Nevobo-code in te voeren om je club te kiezen.',
+  },
+  {
+    q: 'Waar vind ik wedstrijden en uitslagen?',
+    a: 'Onder het tabblad „Wedstrijden” zie je het programma en de uitslagen van je club (en detail per wedstrijd). Op de startpagina staan vaak ook komende wedstrijden en recente uitslagen. De gegevens komen uit de officiële Nevobo-feeds.',
+  },
+  {
+    q: 'Ik heb meerdere teams — welk team zie ik op het tabblad Team?',
+    a: 'Als je lid bent van meer dan één team binnen dezelfde vereniging, kun je bij het openen van Team een team kiezen. Je „primaire” team wordt ook gebruikt waar de app één team nodig heeft (bijv. uploads of posts).',
+  },
+  {
+    q: 'Hoe werkt carpool?',
+    a: 'Bij een wedstrijd kun je een rit aanbieden of bij iemand meerijden, afhankelijk van wat er voor die wedstrijd beschikbaar is. Carpool is gekoppeld aan je club; zorg dat je vereniging in je profiel staat.',
+  },
+  {
+    q: 'Wat zijn XP, badges en de clubranglijst?',
+    a: 'Door activiteit in de app verdien je XP en stijg je van niveau. Badges zijn extra mijlpalen. Onder „Ranglijst club” zie je hoe je scoort ten opzichte van anderen binnen jouw vereniging (als je een club gekoppeld hebt).',
+  },
+  {
+    q: 'Wat doet „Ik wil anoniem blijven”?',
+    a: 'Als je dit aanzet, kunnen we je gezicht automatisch vervagen op foto’s en video’s die anderen plaatsen. Daarvoor gebruiken we maximaal vijf referentiefoto’s van jezelf; die worden niet gedeeld. Zie ook „Privacy & AVG” onderaan dit scherm voor je rechten en gegevens.',
+  },
+  {
+    q: 'Hoe zet ik foto’s of video’s op mijn team?',
+    a: 'Ga naar het tabblad Team, open je team en gebruik de uploadknop op de teampagina. Je kunt een korte tekst toevoegen. De app kan je waarschuwen als de kwaliteit laag is (bijv. donker of wazig).',
+  },
+  {
+    q: 'Wat is het tabblad Sociaal?',
+    a: 'Daar vind je de feed van je club en kun je teams en andere clubs volgen. Bij het plaatsen van een bericht kies je (als dat nodig is) bij welk team je post.',
+  },
+  {
+    q: 'Wat is wedstrijd-scouting?',
+    a: 'Vanaf een wedstrijd kun je (als de functie voor jou beschikbaar is) naar Scout gaan: opstelling en acties vastleggen tijdens de wedstrijd. Dat is los van het normale programma/uitslagen-scherm.',
+  },
+  {
+    q: 'Wat zijn Platform en Gebruikersbeheer?',
+    a: 'Die knoppen zie je alleen als je daarvoor rechten hebt gekregen (bijv. opperbeheerder of club-/teambeheerder). Andere gebruikers hebben ze niet.',
+  },
+];
+
+function renderProfileFaqHtml() {
+  return PROFILE_FAQ_ITEMS.map(
+    item => `
+    <details class="faq-item">
+      <summary>${esc(item.q)}</summary>
+      <p class="faq-a">${esc(item.a)}</p>
+    </details>`
+  ).join('');
+}
+
 export async function render(container) {
   container.innerHTML = '<div class="spinner"></div>';
 
@@ -22,7 +84,6 @@ export async function render(container) {
     ]);
 
     const me = meData.user;
-    if (meData.features) state.features = meData.features;
     if (meData.features) state.features = meData.features;
     const isSuperAdmin = me.roles?.some(r => r.role === 'super_admin');
     const badges = meData.badges?.filter(b => b.earned_at) || [];
@@ -109,6 +170,16 @@ export async function render(container) {
           </div>
         </div>
 
+        <!-- FAQ -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-title">❓ Veelgestelde vragen</span>
+          </div>
+          <div class="profile-faq" id="profile-faq" aria-label="Veelgestelde vragen">
+            ${renderProfileFaqHtml()}
+          </div>
+        </div>
+
         <!-- Privacy & Legal -->
         <div class="section">
           <div class="card">
@@ -153,7 +224,7 @@ export async function render(container) {
 
     // Edit profile overlay
     document.getElementById('edit-profile-btn')?.addEventListener('click', () => {
-      showEditOverlay(me, clubs, container);
+      showEditOverlay(me, clubs, container, isSuperAdmin);
     });
 
     // Avatar click → upload new profile photo
@@ -261,7 +332,7 @@ async function loadMyMedia(userId, container) {
 }
 
 /* ─── Edit profile overlay ───────────────────────────────────────────────── */
-function showEditOverlay(me, clubs, container) {
+function showEditOverlay(me, clubs, container, isSuperAdmin = false) {
   const memberships = me.memberships || [];
 
   const overlay = document.createElement('div');
@@ -280,11 +351,12 @@ function showEditOverlay(me, clubs, container) {
           <input type="text" id="prof-name" class="form-input" value="${esc(me.name)}" required />
         </div>
         <div class="form-group">
-          <label class="form-label">Primaire club</label>
+          <label class="form-label">Mijn vereniging</label>
           <select class="form-select" id="prof-club">
-            <option value="">— Geen club —</option>
-            ${clubs.map(c => `<option value="${c.id}" ${c.id === me.club_id ? 'selected' : ''}>${c.name}</option>`).join('')}
+            <option value="">— Geen vereniging —</option>
+            ${clubs.map(c => `<option value="${c.id}" ${c.id === me.club_id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
           </select>
+          <p class="form-hint">Je kunt maar bij één vereniging horen. Als je wisselt, verdwijnen team-lidmaatschappen van andere clubs.</p>
         </div>
 
         <!-- Privacy / anonymous mode -->
@@ -318,25 +390,25 @@ function showEditOverlay(me, clubs, container) {
         <button type="submit" class="btn btn-primary btn-block" id="prof-save" style="margin-top:0.75rem">Opslaan</button>
       </form>
 
+      ${isSuperAdmin ? `
       <hr style="margin:1.25rem 0;border:none;border-top:1px solid var(--border)" />
-
-      <!-- Add club -->
-      <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.75rem">🏐 Club toevoegen</div>
+      <div style="font-weight:700;font-size:0.9rem;margin-bottom:0.75rem">🏐 Nieuwe vereniging (platform)</div>
+      <p class="form-hint" style="margin-bottom:0.75rem">Alleen voor opperbeheerder: koppel een nieuwe club aan Nevobo.</p>
       <form id="club-form">
         <div class="form-group">
           <label class="form-label">Clubnaam</label>
           <input type="text" id="club-name" class="form-input" placeholder="bijv. VTC Woerden" required />
         </div>
         <div class="form-group">
-          <label class="form-label">Nevobo-code</label>
+          <label class="form-label">Nevobo-code (vereniging)</label>
           <div class="flex gap-2">
             <input type="text" id="club-code" class="form-input" placeholder="bijv. ckl9x7n" required style="flex:1;text-transform:lowercase" />
             <button type="button" class="btn btn-secondary" id="validate-code-btn" title="Code valideren">✓</button>
           </div>
-          <p class="form-hint" id="code-hint">Voer de Nevobo-code in en klik ✓ om te valideren</p>
+          <p class="form-hint" id="code-hint">Valideer de code voordat je opslaat</p>
         </div>
         <div style="background:rgba(33,150,243,0.07);border-radius:var(--radius);padding:0.75rem;margin-bottom:0.75rem;border:1px solid rgba(33,150,243,0.2);font-size:0.78rem;color:var(--text-muted)">
-          Ga naar <a href="https://www.volleybal.nl" target="_blank" style="color:var(--accent)">volleybal.nl</a>, zoek je club, klik Programma → RSS Feed. De code staat in de URL: <code>/vereniging/<strong>ckl9x7n</strong>/</code>
+          Code vind je op <a href="https://www.volleybal.nl" target="_blank" style="color:var(--accent)">volleybal.nl</a> onder Programma → RSS: <code>/vereniging/<strong>…</strong>/</code>
         </div>
         <div class="form-group">
           <label class="form-label">Regio</label>
@@ -346,8 +418,8 @@ function showEditOverlay(me, clubs, container) {
             <option>regio-zuid</option><option>nationale-competitie</option>
           </select>
         </div>
-        <button type="submit" class="btn btn-secondary btn-block" id="club-save">Club toevoegen</button>
-      </form>
+        <button type="submit" class="btn btn-secondary btn-block" id="club-save">Vereniging toevoegen</button>
+      </form>` : ''}
     </div>`;
 
   document.body.appendChild(overlay);
@@ -418,50 +490,51 @@ function showEditOverlay(me, clubs, container) {
     }
   });
 
-  // Club form
-  overlay.querySelector('#club-form').addEventListener('submit', async e => {
-    e.preventDefault();
-    const btn = overlay.querySelector('#club-save');
-    btn.disabled = true; btn.textContent = 'Bezig…';
-    try {
-      await api('/api/clubs', {
-        method: 'POST',
-        body: {
-          name: overlay.querySelector('#club-name').value,
-          nevobo_code: overlay.querySelector('#club-code').value.trim().toLowerCase(),
-          region: overlay.querySelector('#club-region').value,
-        },
-      });
-      showToast('Club toegevoegd! 🏐', 'success');
-      overlay.remove();
-      setTimeout(() => render(container), 500);
-    } catch (err) {
-      showToast(err.message, 'error');
-      btn.disabled = false; btn.textContent = 'Club toevoegen';
-    }
-  });
+  const clubForm = overlay.querySelector('#club-form');
+  if (clubForm) {
+    clubForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = overlay.querySelector('#club-save');
+      btn.disabled = true; btn.textContent = 'Bezig…';
+      try {
+        await api('/api/clubs', {
+          method: 'POST',
+          body: {
+            name: overlay.querySelector('#club-name').value,
+            nevobo_code: overlay.querySelector('#club-code').value.trim().toLowerCase(),
+            region: overlay.querySelector('#club-region').value,
+          },
+        });
+        showToast('Vereniging toegevoegd! 🏐', 'success');
+        overlay.remove();
+        setTimeout(() => render(container), 500);
+      } catch (err) {
+        showToast(err.message, 'error');
+        btn.disabled = false; btn.textContent = 'Vereniging toevoegen';
+      }
+    });
 
-  // Validate Nevobo code
-  overlay.querySelector('#validate-code-btn').addEventListener('click', async () => {
-    const code = overlay.querySelector('#club-code').value.trim();
-    const hint = overlay.querySelector('#code-hint');
-    const btn  = overlay.querySelector('#validate-code-btn');
-    if (!code) { showToast('Voer een code in', 'error'); return; }
-    btn.disabled = true; btn.textContent = '⏳';
-    hint.textContent = 'Controleren…'; hint.style.color = 'var(--text-muted)';
-    try {
-      await api('/api/nevobo/validate', { method: 'POST', body: { code } });
-      hint.textContent = '✅ Geldige code!'; hint.style.color = 'var(--success)';
-      btn.textContent = '✓';
-    } catch (err) {
-      hint.textContent = '❌ Ongeldige code'; hint.style.color = 'var(--danger)';
-      btn.textContent = '✗';
-    } finally {
-      btn.disabled = false;
-    }
-  });
+    overlay.querySelector('#validate-code-btn').addEventListener('click', async () => {
+      const code = overlay.querySelector('#club-code').value.trim();
+      const hint = overlay.querySelector('#code-hint');
+      const btn  = overlay.querySelector('#validate-code-btn');
+      if (!code) { showToast('Voer een code in', 'error'); return; }
+      btn.disabled = true; btn.textContent = '⏳';
+      hint.textContent = 'Controleren…'; hint.style.color = 'var(--text-muted)';
+      try {
+        await api('/api/nevobo/validate', { method: 'POST', body: { code } });
+        hint.textContent = '✅ Geldige code!'; hint.style.color = 'var(--success)';
+        btn.textContent = '✓';
+      } catch (err) {
+        hint.textContent = '❌ Ongeldige code'; hint.style.color = 'var(--danger)';
+        btn.textContent = '✗';
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
-  overlay.querySelector('#club-code').addEventListener('input', function () { this.value = this.value.toLowerCase(); });
+    overlay.querySelector('#club-code').addEventListener('input', function () { this.value = this.value.toLowerCase(); });
+  }
 }
 
 /* ─── Avatar picker ─────────────────────────────────────────────────────── */

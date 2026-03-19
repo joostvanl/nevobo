@@ -466,7 +466,7 @@ async function initAuth() {
     clubs.forEach(c => {
       const opt = document.createElement('option');
       opt.value = c.id;
-      opt.textContent = `${c.name} (${c.nevobo_code})`;
+      opt.textContent = c.name;
       select.appendChild(opt);
     });
   } catch (_) {}
