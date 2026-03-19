@@ -235,8 +235,22 @@ router.patch('/teams/:teamId/members/:userId', requireTeamAdmin('teamId'), (req,
 
 // DELETE /api/admin/teams/:teamId/members/:userId
 router.delete('/teams/:teamId/members/:userId', requireTeamAdmin('teamId'), (req, res) => {
-  db.prepare('DELETE FROM team_memberships WHERE team_id = ? AND user_id = ?')
-    .run(req.params.teamId, req.params.userId);
+  const teamId = parseInt(req.params.teamId, 10);
+  const targetUserId = parseInt(req.params.userId, 10);
+  db.prepare('DELETE FROM team_memberships WHERE team_id = ? AND user_id = ?').run(teamId, targetUserId);
+
+  const user = db.prepare('SELECT team_id, club_id FROM users WHERE id = ?').get(targetUserId);
+  if (user && String(user.team_id) === String(teamId)) {
+    const next = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ? LIMIT 1').get(targetUserId);
+    if (next) {
+      const t = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(next.team_id);
+      db.prepare('UPDATE users SET team_id = ?, club_id = ? WHERE id = ?')
+        .run(next.team_id, t?.club_id ?? user.club_id, targetUserId);
+    } else {
+      db.prepare('UPDATE users SET team_id = NULL WHERE id = ?').run(targetUserId);
+    }
+  }
+
   res.json({ ok: true });
 });
 

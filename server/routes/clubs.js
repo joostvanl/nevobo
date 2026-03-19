@@ -192,14 +192,15 @@ router.get('/:id/teams/:teamId', async (req, res) => {
   const team = db.prepare('SELECT * FROM teams WHERE id = ? AND club_id = ?').get(req.params.teamId, club.id);
   if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
 
+  // Alleen echte team_memberships — niet users.team_id (die kan achterlopen na verwijderen lidmaatschap)
   const members = db.prepare(`
-    SELECT DISTINCT u.id, u.name, u.avatar_url, u.level, u.xp,
-      COALESCE(tm.membership_type, u.role) AS membership_type
-    FROM users u
-    LEFT JOIN team_memberships tm ON tm.user_id = u.id AND tm.team_id = ?
-    WHERE u.team_id = ? OR tm.team_id = ?
+    SELECT u.id, u.name, u.avatar_url, u.level, u.xp,
+      tm.membership_type AS membership_type
+    FROM team_memberships tm
+    JOIN users u ON u.id = tm.user_id
+    WHERE tm.team_id = ?
     ORDER BY
-      CASE COALESCE(tm.membership_type, u.role)
+      CASE tm.membership_type
         WHEN 'player' THEN 1
         WHEN 'coach'  THEN 2
         WHEN 'staff'  THEN 3
@@ -207,7 +208,7 @@ router.get('/:id/teams/:teamId', async (req, res) => {
         ELSE 5
       END,
       u.xp DESC
-  `).all(team.id, team.id, team.id);
+  `).all(team.id);
 
   const followerCount = db.prepare(
     "SELECT COUNT(*) AS n FROM user_follows WHERE followee_type = 'team' AND followee_id = ?"
