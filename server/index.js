@@ -7,6 +7,10 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const featureSettings = require('./lib/featureSettings');
+const { loadModels } = require('./services/faceBlur');
+const { verifyToken, requireSuperAdmin } = require('./middleware/auth');
+
 // ─── Security & Parsing ───────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: false, // disabled so CDN scripts work
@@ -16,10 +20,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ─── Static files (frontend) ─────────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, '../public')));
-
-// ─── API Routes ───────────────────────────────────────────────────────────────
+// ─── API routes vóór static: voorkomt dat een toekomstig bestand onder public/
+//     ooit /api/* overschaduwt; relative fetch('/api/...') blijft dezelfde host.
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/clubs',         require('./routes/clubs'));
 app.use('/api/nevobo',        require('./routes/nevobo'));
@@ -27,6 +29,33 @@ app.use('/api/carpool',       require('./routes/carpool'));
 app.use('/api/social',        require('./routes/social'));
 app.use('/api/gamification',  require('./routes/gamification'));
 app.use('/api/admin',         require('./routes/admin'));
+// Platform toggles — expliciet op app (niet sub-router) voor betrouwbare matching op Express 5
+app.get('/api/platform/settings', verifyToken, requireSuperAdmin, (req, res) => {
+  res.json({ ok: true, settings: featureSettings.getAdminSettingsList() });
+});
+app.patch('/api/platform/settings', verifyToken, requireSuperAdmin, (req, res) => {
+  const raw = req.body && typeof req.body === 'object' ? req.body : {};
+  const patch = raw.settings && typeof raw.settings === 'object' ? raw.settings : raw;
+  for (const key of Object.keys(featureSettings.DEFINITIONS)) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+    const v = patch[key];
+    if (typeof v !== 'boolean' && typeof v !== 'string' && typeof v !== 'number') continue;
+    const bool = v === true || v === 1 || v === 'true' || v === '1' || v === 'on';
+    featureSettings.setBoolean(key, bool);
+  }
+  if (featureSettings.isFaceBlurEnabled()) {
+    loadModels().catch(err => console.error('[platform/settings] loadModels:', err.message));
+  }
+  res.json({
+    ok: true,
+    settings: featureSettings.getAdminSettingsList(),
+    features: featureSettings.getClientFeatures(),
+  });
+});
+app.use('/api/scout',         require('./routes/scout'));
+
+// ─── Static files (frontend) ─────────────────────────────────────────────────
+app.use(express.static(path.join(__dirname, '../public')));
 
 // ─── Global error handler ────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
@@ -46,9 +75,10 @@ app.listen(PORT, () => {
   console.log(`🏐 Volleyball App running on http://localhost:${PORT}`);
 });
 
-// Load face detection models in the background after startup
-const { loadModels } = require('./services/faceBlur');
-loadModels().catch(err => console.error('[faceBlur] Model load failed:', err.message));
+// Load face detection models when feature is enabled
+if (featureSettings.isFaceBlurEnabled()) {
+  loadModels().catch(err => console.error('[faceBlur] Model load failed:', err.message));
+}
 
 // Prevent uncaught TF/WASM errors from killing the server process
 process.on('uncaughtException', err => {

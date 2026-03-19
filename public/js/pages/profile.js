@@ -21,6 +21,9 @@ export async function render(container) {
     ]);
 
     const me = meData.user;
+    if (meData.features) state.features = meData.features;
+    if (meData.features) state.features = meData.features;
+    const isSuperAdmin = me.roles?.some(r => r.role === 'super_admin');
     const badges = meData.badges?.filter(b => b.earned_at) || [];
     const clubs = clubsData.clubs || [];
     const nextLevel = meData.nextLevel;
@@ -52,13 +55,17 @@ export async function render(container) {
 
       <div class="container" style="padding-bottom:5rem">
 
-        <!-- Action row: admin + logout -->
-        <div style="display:flex;gap:0.75rem;margin-top:1rem;margin-bottom:1rem">
+        <!-- Action row: settings (super admin) + admin + logout -->
+        <div style="display:flex;gap:0.75rem;margin-top:1rem;margin-bottom:1rem;flex-wrap:wrap">
+          ${me.roles?.some(r => r.role === 'super_admin') ? `
+            <button class="btn btn-secondary" style="flex:1;min-width:140px;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="settings-btn">
+              🎛️ Platform
+            </button>` : ''}
           ${me.roles?.length > 0 ? `
-            <button class="btn btn-secondary" style="flex:1;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="admin-btn">
+            <button class="btn btn-secondary" style="flex:1;min-width:140px;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="admin-btn">
               ⚙️ Gebruikersbeheer
             </button>` : ''}
-          <button class="btn btn-secondary" style="flex:1" id="logout-btn">Uitloggen</button>
+          <button class="btn btn-secondary" style="flex:1;min-width:120px" id="logout-btn">Uitloggen</button>
         </div>
 
         <!-- Media section -->
@@ -128,7 +135,7 @@ export async function render(container) {
     // Load leaderboard
     if (me.club_id) loadLeaderboard(me.club_id, me.id);
 
-    // Admin button
+    document.getElementById('settings-btn')?.addEventListener('click', () => navigate('settings'));
     document.getElementById('admin-btn')?.addEventListener('click', () => navigate('admin'));
 
     // Privacy
@@ -365,7 +372,11 @@ function showEditOverlay(me, clubs, container) {
       const f = inp.files?.[0]; inp.remove();
       if (f) uploadFaceRef(f, overlay);
     });
-    inp.click();
+    try {
+      inp.click();
+    } catch (e) {
+      if (/permission|Permissions/i.test(String(e))) { delete inp.capture; inp.click(); } else { throw e; }
+    }
   });
 
   // Face reference: file upload
@@ -498,7 +509,11 @@ function showAvatarPicker(me, container) {
     inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'user'; inp.style.display = 'none';
     document.body.appendChild(inp);
     inp.addEventListener('change', () => { const f = inp.files?.[0]; inp.remove(); if (f) doUpload(f); });
-    inp.click();
+    try {
+      inp.click();
+    } catch (e) {
+      if (/permission|Permissions/i.test(String(e))) { delete inp.capture; inp.click(); } else { throw e; }
+    }
   });
 
   overlay.querySelector('#av-upload').addEventListener('click', () => {

@@ -124,6 +124,11 @@ const migrations = [
     UNIQUE(team_id, embed_id)
   )`,
   `ALTER TABLE team_social_links ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
