@@ -1,6 +1,7 @@
 import { api, state, renderAvatar, relativeTime, showToast, showQualityWarningModal } from '../app.js';
 import { escHtml } from '../escape-html.js';
 import { FilePicker } from '../file-picker.js';
+import { isDetached } from '../dom-guards.js';
 
 let currentTab = 'feed';
 
@@ -31,6 +32,8 @@ async function renderSocialPage(container, tab) {
         : Promise.resolve(null),
       api('/api/social/following').catch(() => ({ follows: [] })),
     ]);
+
+    if (isDetached(container)) return;
 
     const posts = feedData.posts || [];
     const following = followingData.follows || [];

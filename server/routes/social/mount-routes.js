@@ -1,94 +1,29 @@
-const express = require('express');
-const router = express.Router();
-const multer = require('multer');
+﻿'use strict';
+
 const path = require('path');
 const fs = require('fs');
-const db = require('../db/db');
-const { verifyToken, optionalToken } = require('../middleware/auth');
-const { awardBadgeIfNew } = require('./auth');
-const { resolveVmTiktokToVideoId } = require('../lib/tiktok-scraper');
+const db = require('../../db/db');
+const { verifyToken, optionalToken } = require('../../middleware/auth');
+const { awardBadgeIfNew } = require('../auth');
+const { resolveVmTiktokToVideoId } = require('../../lib/tiktok-scraper');
 const sharp = require('sharp');
-const { blurFacesIfNeeded, applyBlurRegions, detectAllFaces, detectFaceAtPoint, checkUploadedPhotoQuality, teamHasAnonymousMembers, getOriginalBackupPath, revertBlur } = require('../services/faceBlur');
-const { isSocialEmbedsEnabled, isFaceBlurDebugEnabled } = require('../lib/featureSettings');
+const {
+  blurFacesIfNeeded,
+  applyBlurRegions,
+  detectAllFaces,
+  detectFaceAtPoint,
+  checkUploadedPhotoQuality,
+  teamHasAnonymousMembers,
+  getOriginalBackupPath,
+  revertBlur,
+} = require('../../services/faceBlur');
+const { isSocialEmbedsEnabled, isFaceBlurDebugEnabled } = require('../../lib/featureSettings');
+const { getMatchTeamsMap, addMatchOpponentToMediaItems } = require('./helpers');
+const { publicPath } = require('./paths');
+const upload = require('./multer-upload');
+const parseSocialUrlForSocial = require('./parse-social-url');
 
-// Multer storage: save to public/uploads/<year>/<month>/
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const now = new Date();
-    const dir = path.join(__dirname, '../../public/uploads', String(now.getFullYear()), String(now.getMonth() + 1).padStart(2, '0'));
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
-    cb(null, name);
-  },
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowed = /image\/(jpeg|png|gif|webp)|video\/(mp4|webm|ogg)/;
-  cb(null, allowed.test(file.mimetype));
-};
-
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
-});
-
-// Build match_id -> { home_team, away_team } from feed_cache for opponent resolution
-function getMatchTeamsMap(database) {
-  const map = {};
-  const rows = database.prepare('SELECT data_json FROM feed_cache').all();
-  for (const row of rows) {
-    try {
-      const data = JSON.parse(row.data_json);
-      for (const m of (data.matches || [])) {
-        if (m.match_id && (m.home_team || m.away_team)) {
-          const entry = { home_team: m.home_team || '', away_team: m.away_team || '' };
-          map[m.match_id] = entry;
-          try { map[encodeURIComponent(m.match_id)] = entry; } catch (_) {}
-        }
-      }
-    } catch (_) {}
-  }
-  return map;
-}
-
-function addMatchOpponentToMediaItems(items, matchMap) {
-  for (const item of items) {
-    const home = (item.match_home_team || '').trim();
-    const away = (item.match_away_team || '').trim();
-    let home_team = home;
-    let away_team = away;
-    if (!home_team || !away_team) {
-      if (!item.match_id) continue;
-      let rawId = item.match_id;
-      if (typeof item.match_id === 'string') {
-        try { rawId = decodeURIComponent(item.match_id); } catch (_) {}
-      }
-      const matchData = matchMap[item.match_id] || matchMap[rawId];
-      if (!matchData) continue;
-      home_team = home_team || matchData.home_team || '';
-      away_team = away_team || matchData.away_team || '';
-    }
-    const team = (item.team_name || '').trim();
-    const teamLower = team.toLowerCase();
-    const homeLower = (home_team || '').toLowerCase();
-    const awayLower = (away_team || '').toLowerCase();
-    const isHome = homeLower && (homeLower === teamLower || homeLower.includes(teamLower) || teamLower.includes(homeLower));
-    const isAway = awayLower && (awayLower === teamLower || awayLower.includes(teamLower) || teamLower.includes(awayLower));
-    if (isHome) {
-      item.match_opponent_team = away_team || '';
-    } else if (isAway) {
-      item.match_opponent_team = home_team || '';
-    } else {
-      item.match_opponent_team = [home_team, away_team].filter(Boolean).join(' – ') || '';
-    }
-  }
-}
-
+module.exports = function mountSocialRoutes(router) {
 // GET /api/social/feed — personalized feed (follows + own club)
 router.get('/feed', verifyToken, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 50);
@@ -460,7 +395,7 @@ router.delete('/media/:id', verifyToken, (req, res) => {
 
   // Remove file from disk
   try {
-    const fullPath = path.join(__dirname, '../../public', item.file_path);
+    const fullPath = publicPath(item.file_path);
     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
   } catch (_) {}
 
@@ -489,7 +424,7 @@ router.get('/media/:id/has-original', verifyToken, (req, res) => {
     WHERE mm.id = ?
   `).get(req.params.id);
   if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
-  const fullPath   = path.join(__dirname, '../../public', item.file_path);
+  const fullPath   = publicPath(item.file_path);
   const hasOriginal = !!getOriginalBackupPath(fullPath);
 
   // Check if team has anonymous members.
@@ -524,7 +459,7 @@ router.post('/media/:id/revert-blur', verifyToken, (req, res) => {
     return res.status(403).json({ ok: false, error: 'Geen toegang' });
   }
 
-  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const fullPath = publicPath(item.file_path);
   const reverted = revertBlur(fullPath);
   if (!reverted) {
     return res.status(404).json({ ok: false, error: 'Geen originele versie beschikbaar (foto is niet geblurd of backup ontbreekt)' });
@@ -550,7 +485,7 @@ router.post('/media/:id/reblur', verifyToken, async (req, res) => {
     return res.status(403).json({ ok: false, error: 'Geen toegang' });
   }
 
-  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const fullPath = publicPath(item.file_path);
   if (!require('fs').existsSync(fullPath)) {
     return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
   }
@@ -589,7 +524,7 @@ router.get('/media/:id/detect-faces', verifyToken, async (req, res) => {
   if (!item) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
 
   const fs = require('fs');
-  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const fullPath = publicPath(item.file_path);
   if (!fs.existsSync(fullPath)) {
     return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
   }
@@ -632,7 +567,7 @@ router.post('/media/:id/toggle-face-blur', verifyToken, async (req, res) => {
   }
 
   const fs = require('fs');
-  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const fullPath = publicPath(item.file_path);
   if (!fs.existsSync(fullPath)) {
     return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
   }
@@ -722,7 +657,7 @@ router.post('/media/:id/blur-at-point', verifyToken, async (req, res) => {
   }
 
   const fs = require('fs');
-  const fullPath = path.join(__dirname, '../../public', item.file_path);
+  const fullPath = publicPath(item.file_path);
   if (!fs.existsSync(fullPath)) {
     return res.status(404).json({ ok: false, error: 'Bestand niet gevonden' });
   }
@@ -846,7 +781,7 @@ router.post('/follow', verifyToken, (req, res) => {
     // Fire-and-forget: warm the RSS cache for the followed club so the
     // homepage has fresh data on the next load without delay
     if (externalNevoboCode) {
-      const { warmClubCache } = require('./nevobo');
+      const { warmClubCache } = require('../nevobo');
       warmClubCache(externalNevoboCode).catch(() => {});
     }
 
@@ -927,7 +862,7 @@ router.get('/home-summary', verifyToken, (req, res) => {
     followedTeamRows.map(t => t.nevobo_code).filter(c => c && !ownCodes.has(c))
   )];
   if (externalCodes.length > 0) {
-    const { warmClubCache } = require('./nevobo');
+    const { warmClubCache } = require('../nevobo');
     for (const code of externalCodes) warmClubCache(code).catch(() => {});
   }
 
@@ -1404,17 +1339,5 @@ router.post('/social-links/:id/view', (req, res) => {
   }
 });
 
-// Shared URL parser (mirrors the one in admin.js)
-function parseSocialUrlForSocial(url) {
-  if (!url) return null;
-  const clean = url.trim();
-  const ttMatch = clean.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
-  if (ttMatch) return { platform: 'tiktok', embed_id: ttMatch[1] };
-  const igReel = clean.match(/instagram\.com\/reel\/([A-Za-z0-9_-]+)/);
-  if (igReel) return { platform: 'instagram', embed_id: igReel[1] };
-  const igPost = clean.match(/instagram\.com\/p\/([A-Za-z0-9_-]+)/);
-  if (igPost) return { platform: 'instagram', embed_id: igPost[1] };
-  return null;
-}
+};
 
-module.exports = router;

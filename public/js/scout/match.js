@@ -299,10 +299,11 @@
   }
 
   var escapeHtml = (window.scoutUtils && window.scoutUtils.escapeHtml) || function (s) {
-    if (!s) return '';
-    var div = document.createElement('div');
-    div.textContent = s;
-    return div.innerHTML;
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   };
   var escapeAttr = (window.scoutUtils && window.scoutUtils.escapeAttr) || function (s) {
     if (!s) return '';
@@ -1440,11 +1441,6 @@
       overlay.classList.remove('hidden');
       overlay.setAttribute('aria-hidden', 'false');
     }
-  }
-
-  function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function formatMarkdownBasic(text) {

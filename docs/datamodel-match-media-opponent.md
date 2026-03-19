@@ -74,7 +74,7 @@ Er zijn **geen** aparte kolommen `match_home_team` / `match_away_team` in de hui
 - `GET /api/social/match/:matchId/media` — direct op `match_media.match_id`.
 - Team/home feeds in `social.js` — complexe SQL met `match_id` + `posts.team_id` + optioneel `match_id`-set uit `feed_cache` voor “wedstrijden van dit team”.
 
-Zie code in `server/routes/social.js` (zoek op `cacheMatchIds`, `feed_cache`).
+Zie code in `server/routes/social/mount-routes.js` (zoek op `cacheMatchIds`, `feed_cache`).
 
 ---
 

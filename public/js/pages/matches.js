@@ -3,95 +3,15 @@ import { FilePicker } from '../file-picker.js';
 import { openReelViewer } from '../reel-viewer.js';
 import { buildReelStripCardsHtml, setupReelStripVideoAutoplay } from '../reel-strip.js';
 import { escHtml } from '../escape-html.js';
+import { isDetached } from '../dom-guards.js';
+import {
+  loadOpponentClubs,
+  resolveClubCode,
+  resolveTeamLogo,
+} from '../matches-opponent-lookup.js';
 
 let currentTab    = 'schedule';
 let currentFilter = 'my-team'; // 'my-team' | 'club' | 'followed'
-
-// Club-code lookup: clubCode → { clubCode, clubName, logoUrl }
-// Populated lazily on first match render.
-let opponentClubs   = null; // null = not loaded yet, Map when loaded
-let teamCodeLookup  = new Map(); // teamName (normalized) → clubCode — direct & reliable
-let ownClubCode     = null;
-
-// Normalize a team name for lookup: lowercase + unified apostrophes + trim.
-// This handles e.g. Go'97 where RSS uses U+0027 but LD+JSON API may use U+2019.
-function normalizeTeamName(n) {
-  if (!n) return '';
-  return n
-    .toLowerCase()
-    .replace(/[\u2018\u2019\u201A\u201B\u0060\u00B4]/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function loadOpponentClubs(nevoboCode) {
-  if (opponentClubs && ownClubCode === nevoboCode) return;
-  ownClubCode = nevoboCode;
-  try {
-    const data = await api(`/api/nevobo/opponent-clubs?code=${nevoboCode}`);
-    opponentClubs  = new Map((data.clubs || []).map(c => [c.clubCode, c]));
-    // Normalize keys so apostrophe variants all map to the same key
-    teamCodeLookup = new Map(
-      Object.entries(data.teamCodes || {}).map(([k, v]) => [normalizeTeamName(k), v])
-    );
-  } catch (_) {
-    opponentClubs  = new Map();
-    teamCodeLookup = new Map();
-  }
-}
-
-/**
- * Resolve the Nevobo club code for a given team name.
- * Priority: 1) direct normalized lookup, 2) endsWith fuzzy, 3) club name substring.
- * Falls back to ownNevoboCode when nothing matches.
- */
-// When strict=true, returns null instead of ownNevoboCode when no confident match is found.
-// Use strict=true for logo resolution to avoid showing the own club logo for unknown opponents.
-function resolveClubCode(teamName, ownNevoboCode, strict = false) {
-  if (!teamName) return strict ? null : ownNevoboCode;
-  const norm = normalizeTeamName(teamName);
-
-  // 1. Direct team name lookup (most accurate — covers abbreviations like OKV, Go'97)
-  if (teamCodeLookup.size > 0) {
-    if (teamCodeLookup.has(norm)) return teamCodeLookup.get(norm);
-
-    // 2. Fuzzy: one name ends with the other (handles sponsor prefixes)
-    for (const [tName, code] of teamCodeLookup) {
-      if (norm.endsWith(tName) || tName.endsWith(norm)) return code;
-    }
-  }
-
-  // 3. Club name substring fallback (works when team names match official club name)
-  if (opponentClubs) {
-    if (ownNevoboCode) {
-      const own = opponentClubs.get(ownNevoboCode);
-      if (own?.clubName && norm.includes(normalizeTeamName(own.clubName))) return ownNevoboCode;
-    }
-    for (const [code, club] of opponentClubs) {
-      if (!club.clubName) continue;
-      if (norm.includes(normalizeTeamName(club.clubName))) return code;
-    }
-  }
-
-  return strict ? null : ownNevoboCode;
-}
-
-/**
- * Try to find a club logo URL for a given team name.
- * Uses resolveClubCode to find the club, then returns the logo URL.
- */
-function resolveTeamLogo(teamName, ownNevoboCode) {
-  if (!teamName) return null;
-  // Use strict mode: if no confident match found, return null rather than showing the wrong logo
-  const code = resolveClubCode(teamName, ownNevoboCode, true);
-  if (!code) return null;
-
-  if (opponentClubs) {
-    const club = opponentClubs.get(code);
-    if (club?.logoUrl) return club.logoUrl;
-  }
-  return `https://assets.nevobo.nl/organisatie/logo/${code.toUpperCase()}.jpg`;
-}
 
 export async function render(container, params = {}) {
   container.innerHTML = '<div class="spinner"></div>';
@@ -115,6 +35,7 @@ export async function render(container, params = {}) {
       api(`/api/clubs/${user.club_id}`),
       user.club_id ? api(`/api/clubs/${user.club_id}/teams?userId=${user.id}`).catch(() => ({ teams: [] })) : Promise.resolve({ teams: [] }),
     ]);
+    if (isDetached(container)) return;
     club = clubData.club;
     const teams = teamsData.teams || [];
 
@@ -131,7 +52,7 @@ export async function render(container, params = {}) {
     const myTeamIds = new Set(myTeams.map(t => t.id));
     followedTeams = teams.filter(t => t.is_following && !myTeamIds.has(t.id));
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
     return;
   }
 
@@ -318,7 +239,7 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
       });
     }
   } catch (err) {
-    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${err.message}</p></div>`;
+    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -393,7 +314,7 @@ async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
       });
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${err.message}</p></div>`;
+    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -496,7 +417,7 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       });
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${err.message}</p></div>`;
+    listEl.innerHTML = `<div class="empty-state" style="padding:1rem 0"><div class="empty-icon">🔌</div><p style="font-size:0.85rem">${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -561,7 +482,7 @@ async function loadFollowedTeamsSection(listEl, club, followedTeams, tab) {
       });
     });
   } catch (err) {
-    listEl.innerHTML = `<p class="text-muted text-small">${err.message}</p>`;
+    listEl.innerHTML = `<p class="text-muted text-small">${escHtml(err.message)}</p>`;
   }
 }
 
@@ -994,7 +915,7 @@ async function renderMatchDetailById(container, matchId, club, canInteract, myTe
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Wedstrijd niet gevonden</p><button class="btn btn-primary mt-3" onclick="navigate('matches')">Terug</button></div>`;
     }
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
   }
 }
 
@@ -1020,7 +941,7 @@ async function renderMatchDetailByTeamFeed(container, matchId, teamName, nevoboC
       container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>Wedstrijd niet gevonden</p><button class="btn btn-primary mt-3" onclick="navigate('matches')">Terug</button></div>`;
     }
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
   }
 }
 

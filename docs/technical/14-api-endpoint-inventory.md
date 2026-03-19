@@ -83,7 +83,7 @@
 
 ---
 
-## `/api/social` — `routes/social.js`
+## `/api/social` — `routes/social/` (`index.js` + `mount-routes.js`, helpers in zelfde map)
 
 | Methode | Pad | Middleware |
 |---------|-----|------------|

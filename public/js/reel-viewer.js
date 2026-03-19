@@ -21,6 +21,7 @@
  */
 import { api, state, showToast } from './app.js';
 import { escHtml } from './escape-html.js';
+import { isDetached } from './dom-guards.js';
 
 /** Aantal items dat meetelt voor SQL OFFSET/LIMIT (geen synthetische tiktok/instagram slides). */
 export function countReelSqlOffsetItems(items) {
@@ -146,6 +147,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
 
     try {
       const data = await api(`/api/social/media/${m.id}/detect-faces`);
+      if (isDetached(overlay)) return;
       detectedFaces = data.faces || [];
       renderFaceOverlays(slide, img, detectedFaces, data.blurRegions || [], !!data.debugOverlay);
       if (detectedFaces.length > 0) {
@@ -834,6 +836,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     listEl.innerHTML = '<p class="rv-comments-empty">Laden…</p>';
     try {
       const { comments } = await api(`/api/social/media/${list[idx].id}/comments`);
+      if (isDetached(overlay)) return;
       if (!comments?.length) {
         listEl.innerHTML = '<p class="rv-comments-empty">Nog geen reacties. Wees de eerste!</p>';
       } else {

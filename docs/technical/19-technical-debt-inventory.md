@@ -28,12 +28,12 @@ Enkele bestanden concentreren veel verantwoordelijkheid (regels bij benadering, 
 
 | Bestand | ~regels | Risico |
 |---------|---------|--------|
-| `server/routes/social.js` | 1400+ | Moeilijk te reviewen; upload, feed, blur, comments, follow, embeds in één router |
-| `public/js/pages/matches.js` | 1450+ | Wedstrijd-UI, kaart, gallery, carpool-touchpoints door elkaar |
+| `server/routes/social/mount-routes.js` | 1300+ | Alle HTTP-handlers nog in één mount; wel opgesplitst: `social/helpers.js`, `paths.js`, `multer-upload.js`, `parse-social-url.js`, `index.js` |
+| `public/js/pages/matches.js` | ~1360 | Wedstrijd-UI, kaart, gallery, carpool — opponent-lookup uitgelicht naar `matches-opponent-lookup.js` |
 | `public/js/reel-viewer.js` | 980+ | Fullscreen reel + interacties in één module |
-| `public/js/pages/team.js` | 970+ | Team hero, media, results, modals |
+| `public/js/pages/team.js` | ~910 | Compacte wedstrijdregels uitgelicht naar `team-schedule-helpers.js` |
 
-**Mogelijke richting:** router/helpers splitsen (`social` → o.a. media-upload, feed, comments), pagina’s opknippen in kleinere imports (zonder verplichte build-stap als ES-modules behouden blijven).
+**Mogelijke richting:** `mount-routes.js` verder knippen (feed / media / follow), `matches.js` en `reel-viewer.js` verder modulair maken.
 
 ---
 
@@ -42,6 +42,7 @@ Enkele bestanden concentreren veel verantwoordelijkheid (regels bij benadering, 
 - **`npm test`** — `node --test` over:
   - [`test/html-escape.test.mjs`](../../test/html-escape.test.mjs) — `escHtml` (frontend-module; Node kan een module-type waarschuwing tonen)
   - [`test/api-app.test.cjs`](../../test/api-app.test.cjs) — **supertest** tegen `require('../server/app')`: 404 op onbekende `/api/*`, publieke gamification/clubs-routes, SPA `/`, 401 op `/api/platform/settings` zonder JWT
+  - [`test/auth-api.test.cjs`](../../test/auth-api.test.cjs) — register, login, `/api/auth/me`, `PATCH /api/auth/profile`, 404 club
   - [`test/feature-settings-parse.test.cjs`](../../test/feature-settings-parse.test.cjs) — `parseStoredValue` (`featureSettings.js`), geen HTTP
 - **Eerste run / CI:** bij eerste `require('../server/app')` opent `server/db/db.js` `data/volleyball.db` (map + bestand + schema/migraties).
 - **Nog niet afgedekt:** auth-flows, uploads, Nevobo-fetch, E2E browser — uitbreiden naar wens.
@@ -55,6 +56,7 @@ Enkele bestanden concentreren veel verantwoordelijkheid (regels bij benadering, 
 - **HTML als template strings** over vrijwel alle `public/js/pages/*.js` — elke nieuwe interpolatie van gebruikersdata vraagt bewuste escaping.
 - **Gedeelde helper:** [`public/js/escape-html.js`](../../public/js/escape-html.js) exporteert `escHtml` — gebruikt door o.a. `app.js`, `reel-viewer.js`, home/team/matches/social/admin/profile. **Uitzondering:** `public/js/scout/match.js` is een IIFE zonder ES-import; houdt een lokale `escapeHtml`.
 - **`onclick="navigate(...)"` en vergelijkbare inline handlers** — werkt met globale `navigate`, maar bindt aan [CSP uit te houden](./10-deployment-pwa-and-caching.md) en maakt refactors lastiger.
+- **Gedeelde guard:** [`public/js/dom-guards.js`](../../public/js/dom-guards.js) — `isDetached(el)` na async navigatie (o.a. matches, social, reel blur-editor, team).
 
 ---
 

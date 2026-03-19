@@ -2,7 +2,7 @@
 
 ## Router
 
-`server/routes/social.js` — multer uploads naar `public/uploads/YYYY/MM/`.
+`server/routes/social/` (`multer-upload.js`, `mount-routes.js`) — multer uploads naar `public/uploads/YYYY/MM/`.
 
 ## Upload (`POST /api/social/upload`)
 

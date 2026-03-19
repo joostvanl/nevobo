@@ -3,6 +3,8 @@ import { openReelViewer } from '../reel-viewer.js';
 import { buildReelStripCardsHtml, setupReelStripVideoAutoplay } from '../reel-strip.js';
 import { escHtml } from '../escape-html.js';
 import { FilePicker } from '../file-picker.js';
+import { isDetached } from '../dom-guards.js';
+import { renderCompactMatch as renderCompactMatchRow } from '../team-schedule-helpers.js';
 
 /**
  * Params:
@@ -21,9 +23,12 @@ export async function render(container, params = {}) {
     try {
       data = await api(`/api/clubs/${params.clubId}/teams/${params.teamId}${userQuery}`);
     } catch (err) {
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
+      if (!isDetached(container)) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
+      }
       return;
     }
+    if (isDetached(container)) return;
 
     const { team, club, members, followerCount, isOwnTeam } = data;
     const { isFollowing } = data;
@@ -65,9 +70,12 @@ export async function render(container, params = {}) {
     const q = `name=${encodeURIComponent(teamName)}&code=${encodeURIComponent(nevoboCode)}${userId ? '&userId=' + userId : ''}`;
     data = await api(`/api/nevobo/team-by-name?${q}`);
   } catch (err) {
-    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
+    if (!isDetached(container)) {
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
+    }
     return;
   }
+  if (isDetached(container)) return;
 
   const effectiveCode = data.resolvedNevoboCode || nevoboCode;
   renderPage(container, {
@@ -211,7 +219,7 @@ function renderPage(container, opts) {
           ${loading ? nevoboSkeleton
             : schedule.length === 0
               ? `<p class="text-muted text-small" style="padding:1rem">Geen geplande wedstrijden gevonden.</p>`
-              : schedule.map((m, i) => renderCompactMatch(m, false, displayName, nevoboCode, i)).join('')}
+              : schedule.map((m, i) => renderCompactMatchRow(m, false, displayName, nevoboCode, formatDate, formatTime, i)).join('')}
         </div>
       </div>
 
@@ -225,10 +233,10 @@ function renderPage(container, opts) {
           ${loading ? nevoboSkeleton
             : results.length === 0
               ? `<p class="text-muted text-small" style="padding:1rem">Nog geen resultaten gevonden${isOwnTeam ? '' : ' — dit team heeft nog niet gespeeld tegen andere clubs in de app'}.</p>`
-              : results.slice(0, 5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
+              : results.slice(0, 5).map(m => renderCompactMatchRow(m, true, displayName, nevoboCode, formatDate, formatTime)).join('')}
           ${!loading && results.length > 5 ? `
             <div id="results-more" style="display:none">
-              ${results.slice(5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
+              ${results.slice(5).map(m => renderCompactMatchRow(m, true, displayName, nevoboCode, formatDate, formatTime)).join('')}
             </div>
             <button id="results-toggle" class="btn btn-ghost btn-sm" style="width:100%;padding:0.6rem;border-top:1px solid var(--border);border-radius:0">
               Toon alle ${results.length} uitslagen ↓
@@ -578,7 +586,7 @@ function fillNevoboData(container, teamData, displayName, nevoboCode) {
   if (scheduleList) {
     scheduleList.innerHTML = schedule.length === 0
       ? `<p class="text-muted text-small" style="padding:1rem">Geen geplande wedstrijden gevonden.</p>`
-      : schedule.map((m, i) => renderCompactMatch(m, false, displayName, nevoboCode, i)).join('');
+      : schedule.map((m, i) => renderCompactMatchRow(m, false, displayName, nevoboCode, formatDate, formatTime, i)).join('');
 
     // Re-attach match row click handlers for new schedule rows
     scheduleList.querySelectorAll('.compact-match-row.clickable-row').forEach(row => {
@@ -612,12 +620,12 @@ function fillNevoboData(container, teamData, displayName, nevoboCode) {
   if (resultsList) {
     resultsList.innerHTML = results.length === 0
       ? `<p class="text-muted text-small" style="padding:1rem">Nog geen resultaten gevonden${isOwnTeam ? '' : ' — dit team heeft nog niet gespeeld tegen andere clubs in de app'}.</p>`
-      : results.slice(0, 5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('');
+      : results.slice(0, 5).map(m => renderCompactMatchRow(m, true, displayName, nevoboCode, formatDate, formatTime)).join('');
 
     if (results.length > 5) {
       resultsList.insertAdjacentHTML('beforeend', `
         <div id="results-more" style="display:none">
-          ${results.slice(5).map(m => renderCompactMatch(m, true, displayName, nevoboCode)).join('')}
+          ${results.slice(5).map(m => renderCompactMatchRow(m, true, displayName, nevoboCode, formatDate, formatTime)).join('')}
         </div>
         <button id="results-toggle" class="btn btn-ghost btn-sm" style="width:100%;padding:0.6rem;border-top:1px solid var(--border);border-radius:0">
           Toon alle ${results.length} uitslagen ↓
@@ -823,70 +831,6 @@ async function doTeamUpload(teamId, displayName, nevoboCode, files, caption = ''
   } catch (err) {
     showToast(err.message || 'Upload mislukt', 'error');
   }
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function makeFilter(nameLower) {
-  return m => {
-    const home = (m.home_team || '').toLowerCase();
-    const away = (m.away_team || '').toLowerCase();
-    return home === nameLower || away === nameLower
-      || home.endsWith(nameLower) || away.endsWith(nameLower)
-      || home.includes(nameLower) || away.includes(nameLower);
-  };
-}
-
-function computeRecord(matches, nameLower) {
-  let wins = 0, losses = 0, draws = 0;
-  matches.forEach(m => {
-    if (m.score_home === null) return;
-    const isHome = (m.home_team || '').toLowerCase().includes(nameLower);
-    const myScore  = isHome ? m.score_home : m.score_away;
-    const oppScore = isHome ? m.score_away : m.score_home;
-    if (myScore > oppScore) wins++;
-    else if (myScore < oppScore) losses++;
-    else draws++;
-  });
-  return { wins, losses, draws };
-}
-
-function renderCompactMatch(m, isResult, myTeamName, nevoboCode, scheduleIdx = null) {
-  const nameLower = myTeamName.toLowerCase();
-  const homeIsMe = (m.home_team || '').toLowerCase().includes(nameLower);
-
-  let resultClass = '';
-  if (isResult && m.score_home !== null) {
-    const myScore  = homeIsMe ? m.score_home : m.score_away;
-    const oppScore = homeIsMe ? m.score_away : m.score_home;
-    resultClass = myScore > oppScore ? 'win' : myScore < oppScore ? 'loss' : 'draw';
-  }
-
-  const score = isResult && m.score !== null
-    ? `<span class="compact-score ${resultClass}">${m.score_home}–${m.score_away}</span>`
-    : `<span class="compact-score tbd">vs</span>`;
-
-  const matchId = encodeURIComponent(m.match_id || m.link?.replace(/.*\//, '') || m.title?.slice(0, 40) || 'onbekend');
-
-  // Placeholder for meetup time — only for scheduled (non-result) rows with an index
-  const meetupPlaceholder = (!isResult && scheduleIdx !== null)
-    ? `<div class="compact-meetup" data-schedule-idx="${scheduleIdx}" style="display:none"></div>`
-    : '';
-
-  return `
-    <div class="compact-match-row clickable-row" data-match-id="${matchId}"
-         data-team-name="${escHtml(myTeamName)}" data-nevobo-code="${escHtml(nevoboCode)}">
-      <div class="compact-teams">
-        <span class="compact-team ${homeIsMe ? 'me' : ''}">${m.home_team || '—'}</span>
-        ${score}
-        <span class="compact-team away ${!homeIsMe ? 'me' : ''}">${m.away_team || '—'}</span>
-      </div>
-      <div class="compact-meta">
-        ${m.datetime ? `<span>📅 ${formatDate(m.datetime)}</span>` : ''}
-        ${m.datetime ? `<span>🕐 ${formatTime(m.datetime)}</span>` : ''}
-        ${m.venue_name ? `<span>📍 ${m.venue_name}</span>` : ''}
-      </div>
-      ${meetupPlaceholder}
-    </div>`;
 }
 
 // ─── Meetup time loader ────────────────────────────────────────────────────────

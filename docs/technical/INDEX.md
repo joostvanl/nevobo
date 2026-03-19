@@ -47,7 +47,7 @@
 | `routes/auth.js` | Register/login/me, memberships, profile, avatar, face references |
 | `routes/clubs.js` | Clubs CRUD, teams, sync van NeVoBo |
 | `routes/nevobo.js` | RSS/ical, `feed_cache`, schedule/results, search, travel |
-| `routes/social.js` | Posts, upload, match/team/home media, likes, comments, follow, embeds |
+| `routes/social/` | Posts, upload, match/team/home media, likes, comments, follow, embeds (`index.js`, `mount-routes.js`, helpers) |
 | `routes/carpool.js` | Offers, bookings per `match_id` |
 | `routes/gamification.js` | Badges, goals, leaderboard, XP |
 | `routes/admin.js` | Super/club/team admin, users, social links (admin) |
