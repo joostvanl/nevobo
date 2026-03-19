@@ -20,7 +20,8 @@
 2. SQLite `feed_cache` (`cache_key`, `data_json`, `fetched_at`, `ttl_ms`)  
 3. Bij miss: fetch RSS → parse → schrijf DB + memory
 
-**Reden:** NeVoBo rate limits / traagheid; server herstart behoudt cache.
+**Reden:** NeVoBo rate limits / traagheid; server herstart behoudt cache.  
+**TTL:** o.a. gekoppeld aan **volgende wedstrijd** (cache verloopt rond de dag vóór aftrap); details in [15](./15-nevobo-rss-parse-and-merge.md).
 
 ## Belangrijke routes (selectie)
 

@@ -226,33 +226,58 @@ const MEM_TTL_MS            = 30 * 60_000;           // 30 min — competition t
 const DB_TEAMS_TTL_MS       = 24 * 3600_000;         // 24 h   — competition_teams DB
 const DB_OPP_TTL_MS         = 7  * 24 * 3600_000;   // 7 days — club_opponents DB
 const OPPONENT_CACHE_TTL_MS = 6  * 3600_000;         // 6 h    — opponentClubsCache mem
-const CACHE_TTL_MS          = 3600_000;              // 1 h    — stand RSS cache
+const CACHE_TTL_MS          = 3600_000;              // 1 h    — stand RSS minimum / default
+const MS_DAY                  = 86400_000;
+const FEED_TTL_MAX_MS       = 7 * MS_DAY;            // veiligheid: max 7 dagen zonder fetch
+const FEED_TTL_MIN_MS       = 5 * 60_000;
+const RECENT_PLAYED_WINDOW_MS = 4 * 3600_000;
+const IMMINENT_MATCH_MS     = 3 * 3600_000;
 
-// Smart TTL for schedule feeds: how long until the next match?
+/** Vroegste toekomstige aftrap uit match-lijst (ms), of null. */
+function nextFutureKickoffMs(matches, now = Date.now()) {
+  const future = (matches || [])
+    .map(m => m.datetime ? new Date(m.datetime).getTime() : 0)
+    .filter(t => t > now);
+  return future.length ? Math.min(...future) : null;
+}
+
+/**
+ * Hoe lang we deze feed mogen cachen tot we opnieuw fetchen.
+ * Doel: cache verloopt rond het begin van de dag vóór de wedstrijd (≈ 24u voor aftrap),
+ * zodat programma/uitslagen/stand rond wedstrijddag weer vers opgehaald worden.
+ */
+function ttlMsUntilRefreshBeforeNextKickoff(nextKickoffMs, now = Date.now()) {
+  if (nextKickoffMs == null || !Number.isFinite(nextKickoffMs)) return null;
+  const untilKick = nextKickoffMs - now;
+  if (untilKick <= 0) return FEED_TTL_MIN_MS;
+  const ttl = nextKickoffMs - MS_DAY - now;
+  return Math.min(FEED_TTL_MAX_MS, Math.max(FEED_TTL_MIN_MS, ttl));
+}
+
+// Programma-RSS: kort bij net gespeeld / bijna wedstrijd; anders TTL tot ~dag voor volgende wedstrijd
 function scheduleSmartTtl(matches) {
   const now = Date.now();
-  const futureTimes = (matches || [])
-    .map(m => m.datetime ? new Date(m.datetime).getTime() : 0)
-    .filter(t => t > now)
-    .sort((a, b) => a - b);
 
-  // Check if any match was very recently played (within 4 hours) — refresh often so it disappears
   const recentlyPlayed = (matches || []).some(m => {
     if (!m.datetime) return false;
     const t = new Date(m.datetime).getTime();
-    return t < now && t > now - 4 * 3600_000;
+    return t < now && t > now - RECENT_PLAYED_WINDOW_MS;
   });
-  if (recentlyPlayed) return 5 * 60_000; // 5 min — need to pick up result quickly
+  if (recentlyPlayed) return FEED_TTL_MIN_MS;
 
-  if (futureTimes.length === 0) return 24 * 3600_000; // no upcoming → 24 h
-  const nextMs = futureTimes[0] - now;
-  if (nextMs <  3 * 3600_000) return  5 * 60_000;    // next match within 3 h  → 5 min
-  if (nextMs < 24 * 3600_000) return      3600_000;   // next match today/soon  → 1 h
-  return 24 * 3600_000;                               // match far away         → 24 h
+  const nextKick = nextFutureKickoffMs(matches, now);
+  if (nextKick == null) return 12 * 3600_000;
+
+  const untilKick = nextKick - now;
+  if (untilKick < IMMINENT_MATCH_MS) return FEED_TTL_MIN_MS;
+  if (untilKick < MS_DAY) return 30 * 60_000;
+
+  const longTtl = ttlMsUntilRefreshBeforeNextKickoff(nextKick, now);
+  return longTtl != null ? longTtl : 60 * 60_000;
 }
 
-// Smart TTL for results feeds: how fresh is the latest result?
-function resultsSmartTtl(matches) {
+/** Resultaten-RSS: basis op leeftijd laatste wedstrijd; met schedule-hint langer cachen tot dag vóór volgende. */
+function resultsSmartTtlBase(matches) {
   const isWeekend = [0, 6].includes(new Date().getDay());
   const times = (matches || [])
     .map(m => m.datetime ? new Date(m.datetime).getTime() : 0)
@@ -261,11 +286,63 @@ function resultsSmartTtl(matches) {
   if (times.length === 0) return 6 * 3600_000;
   const ageMs = Date.now() - times[0];
   let ttl;
-  if (ageMs < 24 * 3600_000)      ttl = 30 * 60_000;  // result from today    → 30 min
-  else if (ageMs < 48 * 3600_000) ttl =  2 * 3600_000; // result from yesterday → 2 h
-  else                             ttl =  6 * 3600_000; // older result          → 6 h
-  // On weekends matches are happening — check more often
+  if (ageMs < 24 * 3600_000)      ttl = 30 * 60_000;
+  else if (ageMs < 48 * 3600_000) ttl =  2 * 3600_000;
+  else                             ttl =  6 * 3600_000;
   return isWeekend ? Math.min(ttl, 30 * 60_000) : ttl;
+}
+
+function getScheduleMatchesFromFeedCacheKey(cacheKey) {
+  if (!cacheKey) return null;
+  try {
+    const db = require('../db/db');
+    const row = db.prepare('SELECT data_json FROM feed_cache WHERE cache_key = ?').get(cacheKey);
+    if (!row?.data_json) return null;
+    const data = JSON.parse(row.data_json);
+    return Array.isArray(data.matches) ? data.matches : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Resultaten-feed TTL: nooit trager verversen dan resultsSmartTtlBase bij verse uitslagen;
+ * als laatste uitslag al wat ouder is, mag TTL oplopen tot de dag vóór de volgende wedstrijd
+ * (schedule-cache key =zelfde club/team programma-entry in feed_cache).
+ */
+function resultsSmartTtlForResultsFeed(resultMatches, scheduleCacheKey) {
+  const base = resultsSmartTtlBase(resultMatches);
+  const hint = getScheduleMatchesFromFeedCacheKey(scheduleCacheKey);
+  const nk = nextFutureKickoffMs(hint || []);
+  if (nk == null || nk - Date.now() < MS_DAY) return base;
+  const span = ttlMsUntilRefreshBeforeNextKickoff(nk);
+  if (span == null) return base;
+  if (base < 2 * 3600_000) return base;
+  return Math.min(FEED_TTL_MAX_MS, Math.max(base, span));
+}
+
+/** Poule-stand RSS: minimaal CACHE_TTL_MS; met ver programma tot dag-vóór-wedstrijd verlengen. */
+function standRssTtlMsForClub(nevoboCode) {
+  const hint = getScheduleMatchesFromFeedCacheKey(`schedule:club:${(nevoboCode || '').toLowerCase()}`);
+  const nk = nextFutureKickoffMs(hint || []);
+  if (nk == null) return CACHE_TTL_MS;
+  const untilKick = nk - Date.now();
+  if (untilKick < MS_DAY) return CACHE_TTL_MS;
+  const span = ttlMsUntilRefreshBeforeNextKickoff(nk);
+  if (span == null) return CACHE_TTL_MS;
+  return Math.min(FEED_TTL_MAX_MS, Math.max(CACHE_TTL_MS, span));
+}
+
+/** LD+JSON poule-indelingen: minimaal 6 h; verlengen als volgende wedstrijd ver weg is. */
+function indelingenSmartTtlMs(nevoboCode) {
+  const base = 6 * 3600_000;
+  const hint = getScheduleMatchesFromFeedCacheKey(`schedule:club:${(nevoboCode || '').toLowerCase()}`);
+  const nk = nextFutureKickoffMs(hint || []);
+  if (nk == null) return base;
+  if (nk - Date.now() < MS_DAY) return base;
+  const span = ttlMsUntilRefreshBeforeNextKickoff(nk);
+  if (span == null) return base;
+  return Math.min(FEED_TTL_MAX_MS, Math.max(base, span));
 }
 
 // ── Two-layer feed cache (memory + SQLite) ───────────────────────────────────
@@ -1060,7 +1137,7 @@ router.get('/poule-stand', async (req, res) => {
     const { data: indelingen } = await withFeedCache(
       indelingenKey,
       () => ldGet(`/competitie/pouleindelingen.jsonld?team=${encodeURIComponent(teamPath)}&limit=20`),
-      () => 6 * 3600_000,
+      () => indelingenSmartTtlMs(nevoboCode),
     );
     const regularMembers = (indelingen?.['hydra:member'] || [])
       .filter(ind => ind.poule && !ind.poule.includes('bekertoernooi'));
@@ -1091,10 +1168,10 @@ router.get('/poule-stand', async (req, res) => {
         ? `${member.positie}e — ${member.gespeeld} gespeeld, ${member.punten} pnt`
         : '';
 
-      // Check standCache first
+      const standTtlMs = standRssTtlMsForClub(nevoboCode);
       const cached = standCache.get(poulePath);
       let standRows, resolvedCompName = compName;
-      if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+      if (cached && Date.now() - cached.fetchedAt < (cached.ttlMs ?? CACHE_TTL_MS)) {
         standRows = cached.rows;
         resolvedCompName = cached.compTitle || compName;
       } else {
@@ -1102,7 +1179,7 @@ router.get('/poule-stand', async (req, res) => {
         const result = await fetchStandRows(standRssUrl);
         standRows = result.rows;
         resolvedCompName = result.compTitle || compName;
-        standCache.set(poulePath, { rows: standRows, compTitle: result.compTitle, fetchedAt: Date.now() });
+        standCache.set(poulePath, { rows: standRows, compTitle: result.compTitle, fetchedAt: Date.now(), ttlMs: standTtlMs });
       }
 
       return {
@@ -1166,7 +1243,7 @@ router.get('/team-recent-results', async (req, res) => {
           const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${clubCode}/resultaten.rss`);
           return { matches: (feed.items || []).map(parseMatchItem) };
         },
-        d => resultsSmartTtl(d.matches),
+        d => resultsSmartTtlForResultsFeed(d.matches, `schedule:club:${clubCode}`),
         opts,
       ).then(({ data }) => data.matches || []).catch(() => []);
     });
@@ -1230,7 +1307,7 @@ router.get('/club/:code/results', async (req, res) => {
         const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${code}/resultaten.rss`);
         return { matches: (feed.items || []).map(parseMatchItem) };
       },
-      d => resultsSmartTtl(d.matches),
+      d => resultsSmartTtlForResultsFeed(d.matches, `schedule:club:${code}`),
     );
     res.json({ ok: true, ...data, matches: enrichWithClubCodes(data.matches), stale });
   } catch (err) {
@@ -1272,7 +1349,7 @@ router.get('/team/:code/:type/:number/results', async (req, res) => {
         const feed = await parser.parseURL(`${NEVOBO_BASE}/team/${code}/${type}/${number}/resultaten.rss`);
         return { matches: (feed.items || []).map(parseMatchItem) };
       },
-      d => resultsSmartTtl(d.matches),
+      d => resultsSmartTtlForResultsFeed(d.matches, `schedule:team:${code}:${type}:${number}`),
     );
     res.json({ ok: true, ...data, matches: enrichWithClubCodes(data.matches), stale });
   } catch (err) {
@@ -1455,8 +1532,7 @@ module.exports.warmClubCache = async function warmClubCache(nevoboCode) {
           const feed = await parser.parseURL(`${NEVOBO_BASE}/vereniging/${code}/resultaten.rss`);
           return { matches: (feed.items || []).map(parseMatchItem) };
         },
-        d => resultsSmartTtl(d.matches),
-        { maxAgeMs: 1 * 3600_000 }, // force refresh if older than 1h
+        d => resultsSmartTtlForResultsFeed(d.matches, `schedule:club:${code}`),
       ),
       withFeedCache(
         `schedule:club:${code}`,
@@ -1465,7 +1541,6 @@ module.exports.warmClubCache = async function warmClubCache(nevoboCode) {
           return { matches: (feed.items || []).map(parseMatchItem), club_name: feed.title };
         },
         d => scheduleSmartTtl(d.matches),
-        { maxAgeMs: 1 * 3600_000 },
       ),
       // Also populate competition_teams so the team→code lookup works instantly
       fetchClubCompetitionTeams(code),

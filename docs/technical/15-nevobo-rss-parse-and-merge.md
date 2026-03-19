@@ -57,10 +57,12 @@ new RSSParser({
 
 **Bij fout:** serveer **stale** data uit memory of DB; alleen als beide ontbreken → error doorgeven.
 
-**Smart TTL:**
+**Smart TTL** (`server/routes/nevobo.js`):
 
-- `scheduleSmartTtl(matches)` — korter als er binnenkort een wedstrijd is of net gespeeld (4 uur venster → 5 min); anders 1 h / 24 h.
-- `resultsSmartTtl(matches)` — afhankelijk van leeftijd laatste wedstrijd + weekend (max 30 min op weekend).
+- **Programma-RSS** (`scheduleSmartTtl`) — bij net gespeeld (4 u venster) of aftrap &lt; 3 u → 5 min; aftrap &lt; 24 u → 30 min; anders TTL tot ongeveer **start van de dag vóór de wedstrijd** (`aftrap − 24 u − nu`), begrensd (min 5 min, max 7 dagen). Geen toekomst in feed → 12 h.
+- **Resultaten-RSS** (`resultsSmartTtlForResultsFeed`) — basis `resultsSmartTtlBase` (leeftijd laatste uitslag + weekend); als de **schedule**-entry voor dezelfde club/team al in `feed_cache` staat, mag TTL oplopen tot dezelfde dag-vóór-aftrap-regel (mits basis al ≥ 2 u — verse uitslagen blijven kort).
+- **Poule-stand RSS** — minimaal 1 h; met programma-hint (`schedule:club:…`) verlengd tot dag vóór volgende wedstrijd (max 7 dagen). In-memory `standCache` slaat `ttlMs` per poule op.
+- **Poule-indelingen** (LD+JSON) — minimaal 6 h; zelfde verlenglogica op basis van club-programma-cache.
 
 ---
 
