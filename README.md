@@ -50,6 +50,9 @@ npm run dev
 
 # Start the server (production)
 npm start
+
+# Automated tests (API + feature-settings + escHtml)
+npm test
 ```
 
 The app runs at **http://localhost:3000**
@@ -79,7 +82,8 @@ Your match schedule and results will then be automatically fetched from Nevobo.
 ```
 Team/
 ├── server/
-│   ├── index.js              # Express entry point
+│   ├── app.js                # Express-app (export o.a. voor tests)
+│   ├── index.js              # listen + loadModels + process handlers
 │   ├── routes/
 │   │   ├── auth.js           # Register, login, profile
 │   │   ├── nevobo.js         # Nevobo API proxy (RSS/ICS → JSON)
@@ -106,6 +110,7 @@ Team/
 │           ├── badges.js     # Badges, goals, level map
 │           ├── social.js     # Social feed, composer, follow/discover
 │           └── profile.js    # Profile edit, leaderboard, add club
+├── test/                     # node --test + supertest (see npm test)
 ├── data/                     # Auto-created, contains volleyball.db
 ├── .env
 └── package.json

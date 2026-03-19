@@ -1,4 +1,8 @@
 import { api, state, showToast } from '../app.js';
+import { escHtml } from '../escape-html.js';
+
+/** Same as escHtml — data-* and quoted attribute values */
+const escAttr = escHtml;
 
 export async function render(container) {
   container.innerHTML = '<div class="spinner"></div>';
@@ -707,15 +711,6 @@ function showEditPlayerModal({ userId, teamId, name, email, shirt, position, bir
       saveBtn.textContent = 'Opslaan';
     }
   });
-}
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-function escHtml(str) {
-  return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function escAttr(str) {
-  return (str || '').replace(/"/g, '&quot;');
 }
 
 // ─── Edit user modal (club admin) ─────────────────────────────────────────────

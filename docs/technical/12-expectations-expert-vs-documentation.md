@@ -33,7 +33,7 @@ De docs zijn bedoeld als **versnellingsbaan**: snel de architectuur, modules, va
 
 Na het lezen van `INDEX.md` + 01–11 + **13** + **14**:
 
-1. Open `server/index.js` en bevestig alle `app.use('/api/...')` mounts.  
+1. Open `server/app.js` en bevestig alle `app.use('/api/...')` mounts (platform-routes staan hier ook; `index.js` alleen `listen`).  
 2. Traceer één user flow end-to-end (bijv. home reel → `media-feed` → `reel-viewer` → `fetchMore`).  
 3. Traceer één upload flow (`POST /upload` → `posts` + `match_media`).  
 4. Lees `middleware/auth.js` en één `requireTeamAdmin` route volledig door.  

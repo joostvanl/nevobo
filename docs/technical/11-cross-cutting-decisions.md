@@ -42,6 +42,10 @@ Meerdere readers + één writer; backups tijdens schrijven: gebruik SQLite backu
 
 Als alleen `sw.js` bump zonder `app.js?v=`, kunnen sommige clients toch oude entrypoint cachen — beide bumpen bij release.
 
+**Conventie:** bij **elke** relevante JS/CSS-wijziging `CACHE_NAME` in `public/sw.js` én `app.js?v=` in `public/index.html` verhogen (zie [10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md)).
+
 ---
 
 *Voeg nieuwe valkuilen hier toe na incidenten of refactors.*
+
+Structurele onderhoudbaarheidsthema’s (grote modules, tests, XSS-oppervlak): [19-technical-debt-inventory.md](./19-technical-debt-inventory.md).

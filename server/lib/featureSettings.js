@@ -103,6 +103,7 @@ function setBoolean(key, value) {
 
 module.exports = {
   DEFINITIONS,
+  parseStoredValue,
   getBoolean,
   getClientFeatures,
   getAdminSettingsList,

@@ -29,6 +29,7 @@
 | Admin-autorisatie (profile, delete, rollen) | [16-admin-authorization-detailed.md](./16-admin-authorization-detailed.md) |
 | `FUNCTIONELE_DOCUMENTATIE.md` — scope | [17-functional-documentation-scope.md](./17-functional-documentation-scope.md) |
 | Face blur drempels & foutpaden | [18-face-blur-thresholds-and-error-paths.md](./18-face-blur-thresholds-and-error-paths.md) |
+| Technical debt (inventaris, onderhoudbaarheid) | [19-technical-debt-inventory.md](./19-technical-debt-inventory.md) |
 
 ---
 
@@ -38,7 +39,8 @@
 
 | Pad | Rol |
 |-----|-----|
-| `index.js` | Express-app: middleware, static `public/`, mount van alle `/api/*` routers, SPA-fallback, faceBlur model preload |
+| `index.js` | `app.listen`, `loadModels`, process error handlers |
+| `app.js` | Express-app (middleware, `/api/*`, static, SPA-fallback) — export voor **supertest** |
 | `db/db.js` | SQLite (`data/volleyball.db`), schema + incrementele migraties |
 | `db/schema.sql` | Basis-tabellen (clubs, teams, users, posts, match_media, …) |
 | `middleware/auth.js` | JWT verify/optional, `user_roles`, club/team admin checks |
@@ -59,8 +61,10 @@
 |-----|-----|
 | `index.html` | Shell, auth + app, externe libs (Leaflet, Chart.js, cookie consent), `app.js?v=…` cache-bust |
 | `js/app.js` | State, `api()`, routing (`registerRoute` / `navigate`), toasts, team picker, badge unlock |
+| `js/escape-html.js` | `escHtml()` — gedeelde escaping voor template strings |
 | `js/pages/*.js` | Eén (logische) pagina per bestand: home, matches, team, profile, admin, … |
 | `js/reel-viewer.js` | Fullscreen reel: video/foto/TikTok/Instagram, lazy TikTok, `fetchMore` + `mediaCount()` |
+| `js/reel-strip.js` | Horizontale reel-thumbnails (home / team / wedstrijd) |
 | `js/scout/*.js` | Client scout-hulpmodules — routes: [08](./08-api-scout.md) |
 | `sw.js` | Service worker: cache-naam bump, network-first voor JS/CSS |
 | `css/app.css` | Styling |
@@ -85,8 +89,9 @@
 5. [11-cross-cutting-decisions.md](./11-cross-cutting-decisions.md) voor valkuilen (pagination, `match_id`, embeds).  
 6. [12-expectations-expert-vs-documentation.md](./12-expectations-expert-vs-documentation.md) — realistische verwachting “expert”.  
 7. [13-environment-security-and-secrets.md](./13-environment-security-and-secrets.md) + [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) — env, security-kader, alle routes.  
-8. [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md), [15](./15-nevobo-rss-parse-and-merge.md), [16](./16-admin-authorization-detailed.md), [17](./17-functional-documentation-scope.md), [18](./18-face-blur-thresholds-and-error-paths.md) — waar nodig voor de taak.
+8. [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md), [15](./15-nevobo-rss-parse-and-merge.md), [16](./16-admin-authorization-detailed.md), [17](./17-functional-documentation-scope.md), [18](./18-face-blur-thresholds-and-error-paths.md) — waar nodig voor de taak.  
+9. [19](./19-technical-debt-inventory.md) — bewuste schuld en verbeterkansen (niet elke bug).
 
 ---
 
-*Laatste uitbreiding: datamodel-doc + 15–18 (NeVoBo diepgaand, admin-auth, functionele doc-scope, face-blur foutpaden).*
+*Laatste uitbreiding: 19 technical-debt-inventory.*

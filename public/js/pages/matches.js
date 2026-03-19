@@ -1,6 +1,8 @@
 import { api, state, formatDate, formatTime, showToast, navigate, showQualityWarningModal, showQualityDebugPanel } from '../app.js';
 import { FilePicker } from '../file-picker.js';
 import { openReelViewer } from '../reel-viewer.js';
+import { buildReelStripCardsHtml, setupReelStripVideoAutoplay } from '../reel-strip.js';
+import { escHtml } from '../escape-html.js';
 
 let currentTab    = 'schedule';
 let currentFilter = 'my-team'; // 'my-team' | 'club' | 'followed'
@@ -621,14 +623,14 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
   const teamLink = (name) => {
     if (!nevoboCode || !name) return `class="match-team-name"`;
     const code = resolveClubCode(name, nevoboCode);
-    return `class="match-team-name team-name-link" data-teamname="${escapeAttr(name)}" data-nevobocode="${escapeAttr(code)}"`;
+    return `class="match-team-name team-name-link" data-teamname="${escHtml(name)}" data-nevobocode="${escHtml(code)}"`;
   };
 
   const teamLogo = (name, directCode) => {
     const code = directCode || resolveClubCode(name, nevoboCode, true);
     if (!code) return '';
     const url = resolveTeamLogo(name, nevoboCode) || `https://assets.nevobo.nl/organisatie/logo/${code.toUpperCase()}.jpg`;
-    return `<img src="${url}" alt="${escapeAttr(name)}"
+    return `<img src="${url}" alt="${escHtml(name)}"
       onload="this.style.opacity=1"
       onerror="this.style.display='none'"
       style="width:34px;height:34px;border-radius:8px;object-fit:contain;background:#fff;flex-shrink:0;opacity:0;transition:opacity .15s;border:1px solid var(--border)" />`;
@@ -1129,27 +1131,18 @@ async function loadMatchGallery(matchId, canInteract = true, match = null) {
 }
 
 function renderMatchReel(el, items, canInteract) {
-  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
   el.innerHTML = `
     <div class="hm-reel" id="match-reel-track" style="padding:0 0.75rem 0.75rem">
-      ${items.map((m, i) => `
-        <div class="hm-reel-card" data-index="${i}">
-          ${m.file_type === 'video'
-            ? `<video class="hm-reel-media" src="${esc(m.file_path)}" muted playsinline loop preload="metadata"></video>
-               <div class="hm-reel-play-icon">▶</div>`
-            : `<img class="hm-reel-media" src="${esc(m.file_path)}" alt="Media" loading="lazy" />`}
-          <div class="hm-reel-gradient"></div>
-          <div class="hm-reel-info">
-            <div class="hm-reel-stats">
-              ${m.like_count > 0 ? `<span>❤️ ${m.like_count}</span>` : ''}
-              ${m.comment_count > 0 ? `<span>💬 ${m.comment_count}</span>` : ''}
-            </div>
-          </div>
-        </div>`).join('')}
+      ${buildReelStripCardsHtml(items, escHtml, {
+        getClubLogoUrl: () => null,
+        showTeamCaption: false,
+        statsMode: 'likes_comments',
+        includeSocialEmbeds: false,
+      })}
     </div>`;
 
   const reelTrack = el.querySelector('#match-reel-track');
+  if (!reelTrack) return;
 
   // Tap → open shared fullscreen reel viewer
   reelTrack.querySelectorAll('.hm-reel-card').forEach(card => {
@@ -1185,21 +1178,7 @@ function renderMatchReel(el, items, canInteract) {
     });
   });
 
-  // Auto-play videos when scrolled into view
-  const videos = reelTrack.querySelectorAll('video.hm-reel-media');
-  if (!videos.length) return;
-  const obs = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      const vid = e.target;
-      if (e.isIntersecting) {
-        vid.play().catch(() => {});
-        vid.closest('.hm-reel-card')?.querySelector('.hm-reel-play-icon')?.style.setProperty('display','none');
-      } else {
-        vid.pause();
-      }
-    });
-  }, { threshold: 0.6 });
-  videos.forEach(v => obs.observe(v));
+  setupReelStripVideoAutoplay(reelTrack);
 }
 
 function openCapturePicker(accept, matchId, teamId, match = null) {
@@ -1478,8 +1457,4 @@ async function fetchCarpoolSummaries(matchIds) {
     } catch (_) {}
   }));
   return map;
-}
-
-function escapeAttr(str) {
-  return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

@@ -9,17 +9,23 @@
  *     sourceVideo: HTMLVideoElement | null       — already-playing video to reuse
  *     onDelete:   async (item) => boolean        — called when user deletes; return true to confirm removal from list
  *     canDelete:  (item) => boolean              — whether to show delete button for an item
- *     fetchMore:  async (offset) => item[]       — load more items when near the end; return [] when exhausted
+ *     fetchMore:  async (offset) => item[]       — pagination for media-feed / team-media:
+ *                    **offset** = aantal reeds geladen **DB-media** (image/video), dus **niet** list.length
+ *                    wanneer de API op pagina 1 TikTok/Instagram tussen items heeft geïnterleefd.
+ *                    Gebruik `countReelSqlOffsetItems(items)` op de huidige lijst of `next_media_offset` uit de API.
  *   }
  *
  * Behaviour:
- *   - When fetchMore is provided and user is within 2 slides of the end, more items are loaded.
+ *   - When fetchMore is provided and user is within 5 slides of the end, more items are prefetched.
  *   - Once all items are loaded (fetchMore returns []), swiping past the last item wraps back to the first.
  */
 import { api, state, showToast } from './app.js';
+import { escHtml } from './escape-html.js';
 
-function esc(str) {
-  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+/** Aantal items dat meetelt voor SQL OFFSET/LIMIT (geen synthetische tiktok/instagram slides). */
+export function countReelSqlOffsetItems(items) {
+  if (!items?.length) return 0;
+  return items.filter(m => m.file_type !== 'tiktok' && m.file_type !== 'instagram').length;
 }
 
 export function openReelViewer(items, startIdx = 0, options = {}) {
@@ -383,8 +389,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     const label = opponent ? (teamName ? `${teamName} vs. ${opponent}` : opponent) : teamName;
     if (!url && !label) return '';
     return `<div class="rv-club-badge">
-      ${url ? `<div class="rv-club-logo"><img src="${esc(url)}" alt="" /></div>` : ''}
-      ${label ? `<span class="rv-club-team-name">${esc(label)}</span>` : ''}
+      ${url ? `<div class="rv-club-logo"><img src="${escHtml(url)}" alt="" /></div>` : ''}
+      ${label ? `<span class="rv-club-team-name">${escHtml(label)}</span>` : ''}
     </div>`;
   }
 
@@ -393,15 +399,15 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       <div class="rv-slide" data-i="${i}" id="rv-slide-${i}">
         ${clubLogoOverlay(m)}
         ${m.file_type === 'image'
-          ? `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`
+          ? `<img class="rv-media" src="${escHtml(m.file_path)}" alt="" loading="lazy" />`
           : m.file_type === 'tiktok'
-            ? `<iframe class="rv-media rv-embed" data-embed-id="${esc(m.embed_id)}" data-embed-type="tiktok"
+            ? `<iframe class="rv-media rv-embed" data-embed-id="${escHtml(m.embed_id)}" data-embed-type="tiktok"
                 allowfullscreen allow="autoplay; fullscreen"></iframe>
                <div class="rv-embed-shield"></div>`
             : m.file_type === 'instagram'
               ? `<div class="rv-embed rv-ig-wrap">
                   <blockquote class="instagram-media rv-ig-post"
-                    data-instgrm-permalink="${esc(m.url)}"
+                    data-instgrm-permalink="${escHtml(m.url)}"
                     data-instgrm-version="14"
                     style="width:100%;max-width:540px;margin:0 auto;">
                   </blockquote>
@@ -478,15 +484,15 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       slide.style.width  = w + 'px';
       slide.style.height = h + 'px';
       if (m.file_type === 'image') {
-        slide.innerHTML = clubLogoOverlay(m) + `<img class="rv-media" src="${esc(m.file_path)}" alt="" loading="lazy" />`;
+        slide.innerHTML = clubLogoOverlay(m) + `<img class="rv-media" src="${escHtml(m.file_path)}" alt="" loading="lazy" />`;
       } else if (m.file_type === 'tiktok') {
-        slide.innerHTML = clubLogoOverlay(m) + `<iframe class="rv-media rv-embed" data-embed-id="${esc(m.embed_id)}" data-embed-type="tiktok"
+        slide.innerHTML = clubLogoOverlay(m) + `<iframe class="rv-media rv-embed" data-embed-id="${escHtml(m.embed_id)}" data-embed-type="tiktok"
           allowfullscreen allow="autoplay; fullscreen"></iframe>
           <div class="rv-embed-shield"></div>`;
       } else if (m.file_type === 'instagram') {
         slide.innerHTML = clubLogoOverlay(m) + `<div class="rv-embed rv-ig-wrap">
           <blockquote class="instagram-media rv-ig-post"
-            data-instgrm-permalink="${esc(m.url)}"
+            data-instgrm-permalink="${escHtml(m.url)}"
             data-instgrm-version="14"
             style="width:100%;max-width:540px;margin:0 auto;">
           </blockquote>
@@ -501,7 +507,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
           const label = opponent ? `${teamName} vs. ${opponent}` : teamName;
           const badge = document.createElement('div');
           badge.className = 'rv-club-badge';
-          badge.innerHTML = `<div class="rv-club-logo"><img src="${esc(logoUrl)}" alt="" /></div>${label ? `<span class="rv-club-team-name">${esc(label)}</span>` : ''}`;
+          badge.innerHTML = `<div class="rv-club-logo"><img src="${escHtml(logoUrl)}" alt="" /></div>${label ? `<span class="rv-club-team-name">${escHtml(label)}</span>` : ''}`;
           slide.appendChild(badge);
         }
         const vid = document.createElement('video');
@@ -560,9 +566,8 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     });
   }
 
-  // Number of "media" items (excl. TikTok/Instagram embeds) — API pagination uses this offset
   function mediaCount() {
-    return list.filter(m => m.file_type !== 'tiktok' && m.file_type !== 'instagram').length;
+    return countReelSqlOffsetItems(list);
   }
 
   // Trigger background load when within 5 items of the end (so next batch is ready before user reaches end)
@@ -634,7 +639,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       const iframe = slide.querySelector('iframe');
       if (!iframe || !iframe.src || !iframe.src.includes('tiktok.com/player')) return;
       const muted = si !== i ? 1 : 0;
-      const newSrc = `https://www.tiktok.com/player/v1/${esc(m.embed_id)}?autoplay=1&muted=${muted}&loop=1&rel=0&controls=1`;
+      const newSrc = `https://www.tiktok.com/player/v1/${escHtml(m.embed_id)}?autoplay=1&muted=${muted}&loop=1&rel=0&controls=1`;
       try {
         const cur = new URL(iframe.src);
         if (cur.searchParams.get('muted') !== String(muted)) iframe.src = newSrc;
@@ -664,7 +669,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     heartEl.classList.toggle('rv-heart--liked', !!m.liked_by_me);
     likeBtn.dataset.liked = m.liked_by_me ? 'true' : 'false';
     overlay.querySelector('#rv-bg').style.backgroundImage =
-      m.file_type === 'image' ? `url(${esc(m.file_path)})` : '';
+      m.file_type === 'image' ? `url(${escHtml(m.file_path)})` : '';
 
     // Embed items (TikTok/Instagram) — hide interactive controls that don't apply
     const isEmbed = m.file_type === 'tiktok' || m.file_type === 'instagram';
@@ -834,10 +839,10 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
       } else {
         listEl.innerHTML = comments.map(c => `
           <div class="rv-comment-row">
-            <img src="${esc(c.author_avatar||'')}" class="rv-comment-avatar" onerror="this.style.display='none'" />
+            <img src="${escHtml(c.author_avatar||'')}" class="rv-comment-avatar" onerror="this.style.display='none'" />
             <div class="rv-comment-body">
-              <strong>${esc(c.author_name)}</strong>
-              <span>${esc(c.body)}</span>
+              <strong>${escHtml(c.author_name)}</strong>
+              <span>${escHtml(c.body)}</span>
             </div>
           </div>`).join('');
         listEl.scrollTop = listEl.scrollHeight;

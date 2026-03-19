@@ -1,4 +1,5 @@
 import { api, state, renderAvatar, relativeTime, showToast, showQualityWarningModal } from '../app.js';
+import { escHtml } from '../escape-html.js';
 import { FilePicker } from '../file-picker.js';
 
 let currentTab = 'feed';
@@ -457,12 +458,7 @@ function renderPostCard(post) {
           <div class="post-author-meta">${relativeTime(post.created_at)}${post.team_name ? ' · ' + post.team_name : ''}${post.club_name ? ' · ' + post.club_name : ''}</div>
         </div>
       </div>
-      ${post.body ? `<div class="post-body">${escapeHtml(post.body)}</div>` : ''}
+      ${post.body ? `<div class="post-body">${escHtml(post.body)}</div>` : ''}
       ${mediaHtml}
     </div>`;
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }

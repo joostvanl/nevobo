@@ -1,3 +1,5 @@
+import { escHtml } from './escape-html.js';
+
 // ─── App State ───────────────────────────────────────────────────────────────
 export const state = {
   user: null,
@@ -42,8 +44,6 @@ export function showQualityDebugPanel(qualityDebug) {
   const existing = document.getElementById('quality-debug-panel');
   if (existing) existing.remove();
 
-  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
   function bar(value, min, max, low, high) {
     // Renders a small visual bar showing where the value falls within 0-255
     const pct = Math.round((value / 255) * 100);
@@ -81,7 +81,7 @@ export function showQualityDebugPanel(qualityDebug) {
         const res = (q.width && q.height) ? `${q.width}×${q.height}` : '?';
         return `
           <div style="margin-bottom:0.9rem;padding-bottom:0.9rem;border-bottom:1px solid #eee">
-            <div style="font-weight:700;color:#333;margin-bottom:0.5rem;font-size:0.8rem">📁 ${esc(q.file)}</div>
+            <div style="font-weight:700;color:#333;margin-bottom:0.5rem;font-size:0.8rem">📁 ${escHtml(q.file)}</div>
 
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem">
               <div style="background:${bOk?'#f0fff4':'#fff5f5'};border:1px solid ${bOk?'#b7ebc0':'#ffd0d0'};border-radius:6px;padding:0.4rem 0.5rem">
@@ -134,8 +134,6 @@ export function showQualityDebugPanel(qualityDebug) {
 export function showQualityWarningModal(qualityIssues, onDelete) {
   if (!qualityIssues?.length) return;
 
-  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
   const modal = document.createElement('div');
   modal.className = 'badge-unlock-overlay';
   modal.style.cssText = 'z-index:9999';
@@ -168,9 +166,9 @@ export function showQualityWarningModal(qualityIssues, onDelete) {
       .filter(q => remaining.has(q.mediaId))
       .map(q => `
         <div style="display:flex;align-items:center;gap:0.75rem;background:rgba(220,53,69,0.05);border:1px solid rgba(220,53,69,0.2);border-radius:10px;padding:0.6rem 0.75rem" data-mid="${q.mediaId}">
-          <img src="${esc(q.file_path)}" style="width:52px;height:52px;object-fit:cover;border-radius:7px;flex-shrink:0" />
+          <img src="${escHtml(q.file_path)}" style="width:52px;height:52px;object-fit:cover;border-radius:7px;flex-shrink:0" />
           <div style="flex:1;min-width:0">
-            ${q.warnings.map(w => `<div style="font-size:0.75rem;color:var(--danger)">• ${esc(w.replace(/—.*/, '').trim())}</div>`).join('')}
+            ${q.warnings.map(w => `<div style="font-size:0.75rem;color:var(--danger)">• ${escHtml(w.replace(/—.*/, '').trim())}</div>`).join('')}
           </div>
           <button class="btn btn-sm" data-del="${q.mediaId}"
             style="background:var(--danger);color:#fff;flex-shrink:0;padding:0.35rem 0.7rem;font-size:0.78rem;border-radius:8px">

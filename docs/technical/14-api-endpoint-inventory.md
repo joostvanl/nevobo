@@ -1,7 +1,7 @@
 # 14 — API-endpoint inventory
 
 **Doel:** Machine- en mens-leesbaar overzicht van alle gemounte routes.  
-**Prefix:** elk pad hieronder is relatief ten opzichte van de mount in `server/index.js`.
+**Prefix:** elk pad hieronder is relatief ten opzichte van de mount in `server/app.js` (Express-app; `server/index.js` start alleen de server).
 
 **Legenda middleware (afkorting):**  
 - `V` = `verifyToken`  
@@ -158,7 +158,7 @@
 
 ---
 
-## `/api/platform/*` — `server/index.js`
+## `/api/platform/*` — `server/app.js`
 
 **Middleware:** `verifyToken` + `requireSuperAdmin` per route.
 

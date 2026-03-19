@@ -1176,7 +1176,8 @@ router.get('/media-feed', verifyToken, (req, res) => {
     while (si < socialItems.length) combined.push(socialItems[si++]);
   }
 
-  res.json({ ok: true, media: combined });
+  const nextMediaOffset = offset + media.length;
+  res.json({ ok: true, media: combined, next_media_offset: nextMediaOffset });
 });
 
 // GET /api/social/team-media/:teamId — media for a specific team (public, no auth required)
@@ -1302,7 +1303,8 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
     while (si < socialItems.length) combined.push(socialItems[si++]);
   }
 
-  res.json({ ok: true, media: combined });
+  const nextMediaOffset = offset + media.length;
+  res.json({ ok: true, media: combined, next_media_offset: nextMediaOffset });
 });
 
 

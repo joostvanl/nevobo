@@ -1,4 +1,5 @@
 import { api, state, renderAvatar, showToast, navigate } from '../app.js';
+import { escHtml as esc } from '../escape-html.js';
 import { openReelViewer } from '../reel-viewer.js';
 
 export async function render(container) {
@@ -640,7 +641,3 @@ async function loadLeaderboard(clubId, myId) {
 }
 
 /* ─── Helpers ────────────────────────────────────────────────────────────── */
-function esc(str) {
-  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-

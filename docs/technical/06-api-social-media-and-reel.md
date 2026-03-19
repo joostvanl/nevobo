@@ -25,6 +25,7 @@
 - **Filter:** `posts` waar `p.team_id` in (lid + gevolgde teams) **of** `p.club_id` in relevante clubs  
 - **ORDER BY `mm.created_at DESC`** + `LIMIT`/`OFFSET`  
 - **Eerste pagina (`offset===0`):** TikTok/Instagram uit `team_social_links` worden **ingesloten** om de 4e positie (interleave). Response = `combined` array.  
+- **`next_media_offset`:** `offset + media.length` vóór interleave — volgende SQL-offset voor paginatie (client gebruikt ook `countReelSqlOffsetItems` in `reel-viewer.js` op de slide-lijst).  
 - **Tegenstander:** `addMatchOpponentToMediaItems` gebruikt `feed_cache` + query-context; zie `social.js` en [datamodel](../datamodel-match-media-opponent.md)
 
 ## Team reel: `GET /api/social/team-media/:teamId`
@@ -35,7 +36,8 @@
   2. Zelfde `match_id` als andere posts van dit team
   3. `match_id` in set uit `feed_cache` waar teamnaam in home/away voorkomt **én** `p.team_id = teamId`
 
-**Reden:** media moet bij het team blijven hangen via post-team; match-ids uit cache helpen consistentie.
+**Reden:** media moet bij het team blijven hangen via post-team; match-ids uit cache helpen consistentie.  
+Response bevat ook **`next_media_offset`** (zelfde betekenis als bij `media-feed`).
 
 ## Overige social endpoints (hoofdlijnen)
 
@@ -54,11 +56,12 @@
 - Gebruikt in `social.js` en `admin.js` bij toevoegen team social link  
 - Timeout + try/catch zodat ontbrekende/broken TikTok de server niet crasht
 
-## Frontend reel (`reel-viewer.js`)
+## Frontend reel (`reel-viewer.js`, `reel-strip.js`)
 
 - **Types:** `image`, `video`, `tiktok`, `instagram`  
 - TikTok: lazy iframe `src` alleen voor huidige slide ±1 (minder console-noise van hun React)  
-- **`fetchMore(mediaCount())`** — zie [11-cross-cutting-decisions.md](./11-cross-cutting-decisions.md)
+- **`fetchMore(mediaCount())`** — zie [11-cross-cutting-decisions.md](./11-cross-cutting-decisions.md)  
+- **Strip:** horizontale thumbnails (home / team / wedstrijd) delen `buildReelStripCardsHtml` + `setupReelStripVideoAutoplay` in `public/js/reel-strip.js`
 
 ## Zie ook
 

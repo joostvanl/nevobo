@@ -14,18 +14,21 @@
 
 ## Entrypoints
 
-1. **`server/index.js`**  
+1. **`server/app.js`**  
    - Laadt `.env` (`dotenv`)  
-   - `express.static(public)`  
-   - Mount routers onder `/api/...`  
-   - 404 JSON voor onbekende `/api/*`; anders `index.html` (SPA)  
-   - Start `loadModels()` uit `faceBlur` (achtergrond)
+   - Bouwt de Express-app: `express.static(public)`, mount van alle `/api/...` routers, globale foutafhandeling, SPA-fallback  
+   - `module.exports = app` — gebruikt door **`server/index.js`** (start luisterpoort + `loadModels`) en door **tests** (`supertest`)
 
-2. **`public/index.html`**  
+2. **`server/index.js`**  
+   - `require('./app')`, `app.listen(PORT)`  
+   - `loadModels()` uit `faceBlur` wanneer face blur aan staat  
+   - `uncaughtException` / `unhandledRejection` handlers
+
+3. **`public/index.html`**  
    - Laadt `/js/app.js` (met query `?v=N` voor cache-bust)  
    - Registreert service worker `sw.js`
 
-3. **`public/js/app.js`**  
+4. **`public/js/app.js`**  
    - Registreert routes via `registerRoute(name, fn)`  
    - `navigate(route, params)` roept de juiste page-functie aan
 
@@ -33,7 +36,8 @@
 
 ```
 server/
-  index.js
+  index.js          # listen + loadModels + process handlers
+  app.js            # Express-app (export voor tests)
   db/db.js, schema.sql
   middleware/auth.js
   routes/*.js
