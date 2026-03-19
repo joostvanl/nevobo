@@ -874,7 +874,7 @@ function renderCompactMatch(m, isResult, myTeamName, nevoboCode, scheduleIdx = n
 
   return `
     <div class="compact-match-row clickable-row" data-match-id="${matchId}"
-         data-team-name="${escapeAttr(myTeamName)}" data-nevobo-code="${escapeAttr(nevoboCode)}">
+         data-team-name="${escHtml(myTeamName)}" data-nevobo-code="${escHtml(nevoboCode)}">
       <div class="compact-teams">
         <span class="compact-team ${homeIsMe ? 'me' : ''}">${m.home_team || '—'}</span>
         ${score}
