@@ -1,4 +1,4 @@
-import { api, state, formatDate, formatTime, showToast, navigate, showQualityWarningModal, showQualityDebugPanel } from '../app.js';
+import { api, state, formatDate, formatTime, showToast, navigate, scrollAppToTop, showQualityWarningModal, showQualityDebugPanel } from '../app.js';
 import { FilePicker } from '../file-picker.js';
 import { openReelViewer } from '../reel-viewer.js';
 import { buildReelStripCardsHtml, setupReelStripVideoAutoplay } from '../reel-strip.js';
@@ -211,20 +211,10 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
 
     listEl.innerHTML = matches.map((m, i) => renderMatchCard(m, i, tab, canInteract, club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, club.name || '')).join('');
 
-    // Team name → team page
-    listEl.querySelectorAll('.team-name-link').forEach(el => {
-      el.addEventListener('click', e => {
-        e.stopPropagation();
-        const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
-        navigate('team', { teamName, nevoboCode: code });
-      });
-    });
-
     // Card click → detail
     listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
+        if (e.target.closest('.match-carpool-btn')) return;
         const idx = parseInt(card.dataset.matchIdx);
         renderMatchDetail(listEl.closest('.container').parentElement, matches[idx], club, tab, canInteract, team ? [team] : []);
       });
@@ -289,18 +279,9 @@ async function loadAllMyTeamsSection(listEl, club, myTeams, tab) {
 
     listEl.innerHTML = sorted.map((m, i) => renderMatchCard(m, i, tab, true, club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, club.name || '')).join('');
 
-    listEl.querySelectorAll('.team-name-link').forEach(el => {
-      el.addEventListener('click', e => {
-        e.stopPropagation();
-        const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
-        navigate('team', { teamName, nevoboCode: code });
-      });
-    });
-
     listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
+        if (e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
         // Use the already-resolved _matchingTeam so uploads get the right team_id
         if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, true, m._matchingTeam ? [m._matchingTeam] : myTeams);
@@ -378,16 +359,6 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       renderMatchCard(m, i, tab, canInteractFor(m), club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, club.name || '')
     ).join('');
 
-    // Team name links → team page
-    listEl.querySelectorAll('.team-name-link').forEach(el => {
-      el.addEventListener('click', e => {
-        e.stopPropagation();
-        const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
-        navigate('team', { teamName, nevoboCode: code });
-      });
-    });
-
     // Pre-resolve which of the user's teams each match belongs to
     sorted.forEach(m => {
       if (m._matchingTeam) return;
@@ -404,7 +375,7 @@ async function loadClubSection(listEl, club, myTeams, tab) {
     // Card click → detail
     listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.team-name-link') || e.target.closest('.match-carpool-btn')) return;
+        if (e.target.closest('.match-carpool-btn')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
         if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, canInteractFor(m), m._matchingTeam ? [m._matchingTeam] : myTeams);
       });
@@ -463,20 +434,9 @@ async function loadFollowedTeamsSection(listEl, club, followedTeams, tab) {
       renderMatchCard(m, i, tab, false, club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, '')
     ).join('');
 
-    // Team name → team page
-    listEl.querySelectorAll('.team-name-link').forEach(el => {
-      el.addEventListener('click', e => {
-        e.stopPropagation();
-        const teamName = el.dataset.teamname;
-        const code = resolveClubCode(teamName, el.dataset.nevobocode, true) || el.dataset.nevobocode;
-        navigate('team', { teamName, nevoboCode: code });
-      });
-    });
-
     // Card click → read-only detail
     listEl.querySelectorAll('.mc-card[data-match-idx]').forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.closest('.team-name-link')) return;
         const m = sorted[parseInt(card.dataset.matchIdx)];
         if (m) renderMatchDetail(listEl.closest('.container').parentElement, m, club, tab, false);
       });
@@ -538,14 +498,12 @@ function renderSetGraph(match) {
 
 function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats = null, clubName = '') {
   const isResult = tab === 'results';
+  const isSchedule = tab === 'schedule';
   const isHomeGame = canInteract && clubName.length > 0
     && (match.home_team || '').toLowerCase().includes(clubName.toLowerCase());
 
-  const teamLink = (name) => {
-    if (!nevoboCode || !name) return `class="match-team-name"`;
-    const code = resolveClubCode(name, nevoboCode);
-    return `class="match-team-name team-name-link" data-teamname="${escHtml(name)}" data-nevobocode="${escHtml(code)}"`;
-  };
+  const teamNameHtml = (name) =>
+    `<span class="match-team-name mc-name">${escHtml(name || '—')}</span>`;
 
   const teamLogo = (name, directCode) => {
     const code = directCode || resolveClubCode(name, nevoboCode, true);
@@ -557,13 +515,17 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
       style="width:34px;height:34px;border-radius:8px;object-fit:contain;background:#fff;flex-shrink:0;opacity:0;transition:opacity .15s;border:1px solid var(--border)" />`;
   };
 
-  // Centre column: score pill for results, VS badge for schedule
+  // Centre: alleen totaalscore of VS — setstanden staan eronder (uitslagen)
   const centreHtml = isResult && match.score_home != null
-    ? `<div class="mc-score">
-        <span class="mc-score-num">${match.score_home}–${match.score_away}</span>
-        ${match.sets?.length ? `<span class="mc-sets">${match.sets.join(' ')}</span>` : ''}
-       </div>`
+    ? `<div class="mc-score mc-score--inline"><span class="mc-score-num">${match.score_home}–${match.score_away}</span></div>`
     : `<div class="mc-vs"><span>VS</span></div>`;
+
+  const setsBelowHtml = isResult && match.sets?.length
+    ? `<div class="mc-sets-row" aria-label="Setstanden">${match.sets.map((s) => {
+        const safe = escHtml(String(s));
+        return `<span class="mc-set-pill">${safe}</span>`;
+      }).join('')}</div>`
+    : '';
 
   const carpoolBadge = canInteract && !isResult && !isHomeGame && carpoolSeats !== null
     ? carpoolSeats > 0
@@ -571,43 +533,45 @@ function renderMatchCard(match, idx, tab, canInteract, nevoboCode, carpoolSeats 
       : `<span class="mc-badge">🚗 Vol</span>`
     : '';
 
-  const readOnlyBadge = !canInteract
-    ? `<span class="mc-badge">👁 volgend</span>`
+  const carpoolBtn = canInteract && !isResult && !isHomeGame
+    ? `<button type="button" class="mc-action-btn match-carpool-btn" data-matchid="${encodeMatchId(match)}">🚗 Carpool</button>`
     : '';
 
-  const carpoolBtn = canInteract && !isResult && !isHomeGame
-    ? `<button class="mc-action-btn match-carpool-btn" data-matchid="${encodeMatchId(match)}">🚗 Carpool</button>`
+  // Geen poule/wedstrijdcode-badge op het programma-overzicht
+  const pouleBadge = !isSchedule && match.poule_code
+    ? `<span class="mc-badge">${escHtml(match.poule_code)}</span>`
     : '';
+
+  const footRight = carpoolBtn ? `<div class="mc-foot-right">${carpoolBtn}</div>` : '';
 
   return `
     <div class="mc-card" data-match-idx="${idx}">
       <div class="mc-teams">
         <div class="mc-side">
           ${teamLogo(match.home_team, match.home_club_code)}
-          <span ${teamLink(match.home_team)} class="mc-name">${match.home_team || '—'}</span>
+          ${teamNameHtml(match.home_team)}
         </div>
         ${centreHtml}
         <div class="mc-side mc-side-right">
           ${teamLogo(match.away_team, match.away_club_code)}
-          <span ${teamLink(match.away_team)} class="mc-name">${match.away_team || '—'}</span>
+          ${teamNameHtml(match.away_team)}
         </div>
       </div>
+      ${setsBelowHtml}
       <div class="mc-foot">
         <div class="mc-foot-left">
           ${match.datetime ? `<span class="mc-dt">${formatDate(match.datetime)} · ${formatTime(match.datetime)}</span>` : ''}
           ${match.venue_name ? `<span class="mc-venue">📍 ${match.venue_name}</span>` : ''}
-          ${match.poule_code ? `<span class="mc-badge">${match.poule_code}</span>` : ''}
-          ${carpoolBadge}${readOnlyBadge}
+          ${pouleBadge}
+          ${carpoolBadge}
         </div>
-        <div class="mc-foot-right">
-          ${carpoolBtn}
-          <button class="mc-action-btn details-btn">Details →</button>
-        </div>
+        ${footRight}
       </div>
     </div>`;
 }
 
 function renderMatchDetail(container, match, club, fromTab, canInteract = true, myTeams = []) {
+  scrollAppToTop();
   const isResult = match.status === 'gespeeld';
   const matchId = encodeMatchId(match);
 

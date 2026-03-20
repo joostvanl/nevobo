@@ -133,6 +133,7 @@ p  { line-height: 1.6; }
   align-items: center;
   padding: 0 1rem;
   gap: 0.75rem;
+  overflow: visible;
 }
 
 .app-header .logo {
@@ -147,6 +148,57 @@ p  { line-height: 1.6; }
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text);
+  min-width: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.header-gear-wrap {
+  position: relative;
+}
+
+.header-gear-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.35rem;
+  z-index: 300;
+}
+
+.header-gear-menu.hidden { display: none; }
+
+.header-gear-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.header-gear-item:hover,
+.header-gear-item:focus {
+  background: var(--bg);
+  outline: none;
 }
 
 .app-header .header-action {
@@ -162,9 +214,32 @@ p  { line-height: 1.6; }
   font-size: 1.25rem;
   color: var(--text-muted);
   transition: background var(--transition);
+  flex-shrink: 0;
 }
+
+/* Profielknop: avatar (foto of initialen) vult de cirkel */
+.app-header .header-action--profile {
+  padding: 0;
+  overflow: hidden;
+}
+
+.app-header .header-action--profile .avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 0.8rem;
+}
+
+.app-header .header-action--profile .avatar img {
+  border-radius: 50%;
+}
+
 .app-header .header-action:hover,
 .app-header .header-action:focus { background: var(--border); }
+
+.app-header .header-action--profile:hover,
+.app-header .header-action--profile:focus {
+  background: var(--border);
+}
 
 /* ─── Bottom Navigation ─────────────────────────────────────────────────────── */
 .bottom-nav {
@@ -2395,6 +2470,9 @@ p  { line-height: 1.6; }
   gap: 0.5rem;
   margin-bottom: 0.6rem;
 }
+.mc-card:has(.mc-sets-row) .mc-teams {
+  margin-bottom: 0.35rem;
+}
 .mc-side {
   display: flex;
   align-items: center;
@@ -2435,6 +2513,10 @@ p  { line-height: 1.6; }
   flex-shrink: 0;
   gap: 0.1rem;
 }
+.mc-score--inline {
+  flex-direction: row;
+  justify-content: center;
+}
 .mc-score-num {
   font-size: 1rem;
   font-weight: 900;
@@ -2448,6 +2530,30 @@ p  { line-height: 1.6; }
   font-weight: 600;
   letter-spacing: 0.04em;
 }
+/* Setstanden op uitslagenkaart: vaste rij onder teamnamen */
+.mc-sets-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  padding: 0.4rem 0.2rem 0.5rem;
+  margin: 0 0 0.45rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.mc-set-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.045);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 0.22rem 0.5rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
 .mc-foot {
   display: flex;
   align-items: center;
@@ -2456,6 +2562,10 @@ p  { line-height: 1.6; }
   border-top: 1px solid rgba(0,0,0,0.06);
   padding-top: 0.5rem;
   flex-wrap: wrap;
+}
+.mc-card:has(.mc-sets-row) .mc-foot {
+  border-top: none;
+  padding-top: 0.35rem;
 }
 .mc-foot-left {
   display: flex;

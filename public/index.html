@@ -31,7 +31,13 @@
   <header class="app-header">
     <span class="logo">🏐 VolleyApp</span>
     <span class="page-title" id="header-title">Home</span>
-    <button class="header-action" id="header-profile-btn" title="Profiel">👤</button>
+    <div class="header-actions">
+      <div id="header-gear-wrap" class="header-gear-wrap hidden">
+        <button type="button" class="header-action" id="header-gear-btn" title="Beheer" aria-haspopup="true" aria-expanded="false" aria-controls="header-gear-menu">⚙️</button>
+        <div id="header-gear-menu" class="header-gear-menu hidden" role="menu" aria-hidden="true"></div>
+      </div>
+      <button type="button" class="header-action header-action--profile" id="header-profile-btn" title="Profiel">👤</button>
+    </div>
   </header>
 
   <!-- Page container -->
@@ -115,7 +121,7 @@
 <!-- Scripts -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="/js/app.js?v=153" type="module"></script>
+<script src="/js/app.js?v=159" type="module"></script>
 <script>
   // Suppress bekende niet-app fouten (extensions, camera-context)
   window.addEventListener('unhandledrejection', function(e) {

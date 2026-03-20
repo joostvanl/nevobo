@@ -1,4 +1,4 @@
-import { api, state, renderAvatar, showToast, navigate } from '../app.js';
+import { api, state, renderAvatar, showToast, navigate, syncAppHeaderChrome } from '../app.js';
 import { escHtml as esc } from '../escape-html.js';
 import { openReelViewer } from '../reel-viewer.js';
 
@@ -50,7 +50,7 @@ const PROFILE_FAQ_ITEMS = [
   },
   {
     q: 'Wat zijn Platform en Gebruikersbeheer?',
-    a: 'Die knoppen zie je alleen als je daarvoor rechten hebt gekregen (bijv. opperbeheerder of club-/teambeheerder). Andere gebruikers hebben ze niet.',
+    a: 'Als je daarvoor rechten hebt (bijv. opperbeheerder of club-/teambeheerder), vind je die onder het tandwiel ⚙️ rechtsboven in de app-balk. Andere gebruikers zien dat icoon niet.',
   },
 ];
 
@@ -84,6 +84,8 @@ export async function render(container) {
     ]);
 
     const me = meData.user;
+    state.user = me;
+    localStorage.setItem('vb_user', JSON.stringify(me));
     if (meData.features) state.features = meData.features;
     const isSuperAdmin = me.roles?.some(r => r.role === 'super_admin');
     const badges = meData.badges?.filter(b => b.earned_at) || [];
@@ -117,16 +119,7 @@ export async function render(container) {
 
       <div class="container" style="padding-bottom:5rem">
 
-        <!-- Action row: settings (super admin) + admin + logout -->
         <div style="display:flex;gap:0.75rem;margin-top:1rem;margin-bottom:1rem;flex-wrap:wrap">
-          ${me.roles?.some(r => r.role === 'super_admin') ? `
-            <button class="btn btn-secondary" style="flex:1;min-width:140px;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="settings-btn">
-              🎛️ Platform
-            </button>` : ''}
-          ${me.roles?.length > 0 ? `
-            <button class="btn btn-secondary" style="flex:1;min-width:140px;display:flex;align-items:center;justify-content:center;gap:0.5rem" id="admin-btn">
-              ⚙️ Gebruikersbeheer
-            </button>` : ''}
           <button class="btn btn-secondary" style="flex:1;min-width:120px" id="logout-btn">Uitloggen</button>
         </div>
 
@@ -208,8 +201,7 @@ export async function render(container) {
     // Load leaderboard
     if (me.club_id) loadLeaderboard(me.club_id, me.id);
 
-    document.getElementById('settings-btn')?.addEventListener('click', () => navigate('settings'));
-    document.getElementById('admin-btn')?.addEventListener('click', () => navigate('admin'));
+    syncAppHeaderChrome();
     document.getElementById('help-full-link')?.addEventListener('click', () => navigate('help'));
 
     // Privacy
@@ -483,6 +475,7 @@ function showEditOverlay(me, clubs, container, isSuperAdmin = false) {
       const meRefresh = await api('/api/auth/me');
       state.user = meRefresh.user;
       localStorage.setItem('vb_user', JSON.stringify(state.user));
+      syncAppHeaderChrome();
       showToast('Profiel opgeslagen! ✅', 'success');
       overlay.remove();
       render(container);
@@ -574,6 +567,7 @@ function showAvatarPicker(me, container) {
       if (!data.ok) throw new Error(data.error);
       state.user = data.user;
       localStorage.setItem('vb_user', JSON.stringify(state.user));
+      syncAppHeaderChrome();
       showToast('Profielfoto bijgewerkt! 🎉', 'success');
       render(container);
     } catch (err) { showToast(err.message || 'Upload mislukt', 'error'); }

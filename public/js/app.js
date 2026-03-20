@@ -404,7 +404,125 @@ const PAGE_TITLES = {
   'scout-match': '🏐 Scouting',
 };
 
+/** Zet document-scroll bovenaan (SPA: nieuwe route of volledige inhoudswissel). */
+export function scrollAppToTop() {
+  // Directe toewijzing om html { scroll-behavior: smooth } te omzeilen
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  window.scrollTo(0, 0);
+}
+
+let headerGearMenuBound = false;
+
+function bindHeaderGearMenu() {
+  if (headerGearMenuBound) return;
+  const gearWrap = document.getElementById('header-gear-wrap');
+  const gearBtn = document.getElementById('header-gear-btn');
+  const menu = document.getElementById('header-gear-menu');
+  if (!gearWrap || !gearBtn || !menu) return;
+  headerGearMenuBound = true;
+
+  const closeMenu = () => {
+    menu.classList.add('hidden');
+    menu.setAttribute('aria-hidden', 'true');
+    gearBtn.setAttribute('aria-expanded', 'false');
+  };
+
+  gearBtn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const opening = menu.classList.contains('hidden');
+    if (opening) {
+      // Na document-handlers laten lopen, anders sluit buitenklik het menu direct weer
+      requestAnimationFrame(() => {
+        menu.classList.remove('hidden');
+        menu.setAttribute('aria-hidden', 'false');
+        gearBtn.setAttribute('aria-expanded', 'true');
+      });
+    } else {
+      closeMenu();
+    }
+  });
+
+  menu.addEventListener('click', e => {
+    const item = e.target.closest('[data-nav]');
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeMenu();
+    const r = item.dataset.nav;
+    if (r === 'settings' || r === 'admin') navigate(r);
+  });
+
+  // Sluit alleen bij klik buiten tandwiel + dropdown (capture: vóór andere handlers)
+  document.addEventListener(
+    'click',
+    e => {
+      if (gearWrap.classList.contains('hidden')) return;
+      const t = e.target;
+      const el = t && t.nodeType === Node.ELEMENT_NODE ? t : t?.parentElement;
+      if (!el || gearWrap.contains(el)) return;
+      closeMenu();
+    },
+    true
+  );
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeMenu();
+  });
+}
+
+/** Profielfoto/initialen + beheer-menu in de app-header (na login of user-update). */
+export function syncAppHeaderChrome() {
+  const profileBtn = document.getElementById('header-profile-btn');
+  const gearWrap = document.getElementById('header-gear-wrap');
+  const menu = document.getElementById('header-gear-menu');
+  const gearBtn = document.getElementById('header-gear-btn');
+  if (!profileBtn) return;
+
+  bindHeaderGearMenu();
+
+  if (menu) {
+    menu.classList.add('hidden');
+    menu.setAttribute('aria-hidden', 'true');
+  }
+  if (gearBtn) gearBtn.setAttribute('aria-expanded', 'false');
+
+  const user = state.user;
+  if (!user) {
+    profileBtn.innerHTML = '👤';
+    profileBtn.classList.remove('header-action--profile');
+    gearWrap?.classList.add('hidden');
+    if (menu) menu.innerHTML = '';
+    return;
+  }
+
+  profileBtn.classList.add('header-action--profile');
+  profileBtn.innerHTML = renderAvatar(user.name, user.avatar_url, 'sm');
+
+  const isSuperAdmin = user.roles?.some(r => r.role === 'super_admin');
+  const hasAdminRole = (user.roles?.length ?? 0) > 0;
+  const showGear = isSuperAdmin || hasAdminRole;
+
+  if (!showGear || !gearWrap || !menu) {
+    gearWrap?.classList.add('hidden');
+    menu && (menu.innerHTML = '');
+    return;
+  }
+
+  let items = '';
+  if (isSuperAdmin) {
+    items += '<button type="button" class="header-gear-item" data-nav="settings" role="menuitem">🎛️ Platform</button>';
+  }
+  if (hasAdminRole) {
+    items += '<button type="button" class="header-gear-item" data-nav="admin" role="menuitem">⚙️ Gebruikersbeheer</button>';
+  }
+  menu.innerHTML = items;
+  gearWrap.classList.remove('hidden');
+}
+
 export function navigate(route, params = {}) {
+  scrollAppToTop();
   state.currentRoute = route;
   // Persist so the route survives a camera-triggered page reload
   try { sessionStorage.setItem('vb_route', JSON.stringify({ route, params })); } catch (_) {}
@@ -419,6 +537,8 @@ export function navigate(route, params = {}) {
   // Update header title
   const titleEl = document.getElementById('header-title');
   if (titleEl) titleEl.textContent = PAGE_TITLES[route] || route;
+
+  syncAppHeaderChrome();
 
   const container = document.getElementById('page-container');
   container.innerHTML = '<div class="spinner"></div>';
@@ -626,6 +746,7 @@ async function boot() {
     if (!restored) navigate('home');
   } else {
     showAuth();
+    syncAppHeaderChrome();
   }
 }
 
