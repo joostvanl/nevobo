@@ -129,6 +129,14 @@ const migrations = [
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS carpool_coach_drive_stats (
+    team_id     INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    drive_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (team_id, user_id)
+  )`,
+  `ALTER TABLE carpool_offers ADD COLUMN team_id INTEGER REFERENCES teams(id)`,
+  `ALTER TABLE carpool_offers ADD COLUMN coach_planned INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

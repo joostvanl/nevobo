@@ -4,6 +4,8 @@
 
 **Repo-root:** projectmap `Team/` (Node + Express + vanilla ES-modules frontend + SQLite).
 
+**Serverwijzigingen — altijd herstarten:** code onder `server/` (o.a. `app.js`, `routes/*`, `middleware/*`, `db/db.js`, `services/*`) wordt pas actief na een **nieuwe Node-start**. Zonder herstart draait het oude proces verder en zie je geen API-gedragswijzigingen. Zie [01-architecture-overview.md](./01-architecture-overview.md) § “Node-proces” en [11-cross-cutting-decisions.md](./11-cross-cutting-decisions.md) §9. Voor frontend: cache-bump + refresh ([10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md)).
+
 ---
 
 ## Snel zoeken (onderwerp → document)
@@ -17,6 +19,7 @@
 | NeVoBo RSS, wedstrijden, `match_id`, geocoding | [05-api-nevobo.md](./05-api-nevobo.md) |
 | Upload, reel, media-feed, team-media, TikTok/Instagram, blur | [06-api-social-media-and-reel.md](./06-api-social-media-and-reel.md) |
 | Carpool, badges, XP, admin endpoints | [07-api-carpool-gamification-admin.md](./07-api-carpool-gamification-admin.md) |
+| **Carpool: autorisatie, zichtbaarheid, mounts, frontend (agent)** | [20-carpool-behavior-and-authorization.md](./20-carpool-behavior-and-authorization.md) |
 | Scout (JSON files, locks, match state) | [08-api-scout.md](./08-api-scout.md) |
 | faceBlur, TensorFlow, Sharp, tiktok-scraper | [09-services-face-blur-and-libs.md](./09-services-face-blur-and-libs.md) |
 | Docker, env, CSP, cache-busting | [10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md) |
@@ -90,8 +93,9 @@
 6. [12-expectations-expert-vs-documentation.md](./12-expectations-expert-vs-documentation.md) — realistische verwachting “expert”.  
 7. [13-environment-security-and-secrets.md](./13-environment-security-and-secrets.md) + [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) — env, security-kader, alle routes.  
 8. [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md), [15](./15-nevobo-rss-parse-and-merge.md), [16](./16-admin-authorization-detailed.md), [17](./17-functional-documentation-scope.md), [18](./18-face-blur-thresholds-and-error-paths.md) — waar nodig voor de taak.  
-9. [19](./19-technical-debt-inventory.md) — bewuste schuld en verbeterkansen (niet elke bug).
+9. [19](./19-technical-debt-inventory.md) — bewuste schuld en verbeterkansen (niet elke bug).  
+10. [20](./20-carpool-behavior-and-authorization.md) — **carpool-taken** (auth, privacy, Express-mounts).
 
 ---
 
-*Laatste uitbreiding: 19 technical-debt-inventory.*
+*Laatste uitbreiding: 20 carpool-behavior-and-authorization.*

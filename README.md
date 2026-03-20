@@ -57,6 +57,8 @@ npm test
 
 The app runs at **http://localhost:3000**
 
+**After changing server code** (`server/` — routes, middleware, `app.js`, database init, etc.), **restart the Node process** (`npm start` again, or rely on `npm run dev` / nodemon). The running server does not hot-reload Express routers from disk. See [docs/technical/01-architecture-overview.md](docs/technical/01-architecture-overview.md) and [docs/technical/11-cross-cutting-decisions.md](docs/technical/11-cross-cutting-decisions.md) §9.
+
 ### Environment Variables
 
 Create a `.env` file in the project root:

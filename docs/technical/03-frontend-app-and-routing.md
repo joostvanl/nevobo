@@ -41,7 +41,7 @@ Sessie: `localStorage` keys `vb_token`, `vb_user` — bij login gezet, bij logou
 | `profile.js` | `profile` | Eigen profiel, media |
 | `social.js` | `social` | Feed-achtig overzicht |
 | `badges.js` | `badges` | Gamification UI |
-| `carpool.js` | `carpool` | Per-match carpool |
+| `carpool.js` | `carpool` | Carpool-landing (eigen teams), coach-planner, detail; zie [20-carpool-behavior-and-authorization.md](./20-carpool-behavior-and-authorization.md) |
 | `admin.js` | `admin` | Rollen, leden, social links |
 | `privacy.js` | privacy-achtige flows | |
 | `scout-setup.js`, `scout-match.js` | scout | Feature branch |

@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS carpool_offers (
   departure_point  TEXT,
   departure_time   TEXT,
   note             TEXT,
+  team_id          INTEGER REFERENCES teams(id),
+  coach_planned    INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(match_id, user_id)
 );

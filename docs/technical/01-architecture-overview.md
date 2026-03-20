@@ -32,6 +32,17 @@
    - Registreert routes via `registerRoute(name, fn)`  
    - `navigate(route, params)` roept de juiste page-functie aan
 
+## Node-proces: wanneer herstarten?
+
+Express laadt routes en middleware **eenmalig bij `require()` / processtart**. Wijzig je iets onder **`server/`** (inclusief `server/app.js`, `routes/`, `middleware/`, `db/db.js`, `services/`, …), dan moet het **Node-proces opnieuw gestart** worden voordat gedrag of API-responses veranderen.
+
+- **`npm start`** — handmatig opnieuw starten na elke server-edit.  
+- **`npm run dev` (nodemon)** — herstart meestal automatisch bij bestandswijzigingen; controleer of nodemon de aangepaste paden watcht.
+
+Dit geldt **app-breed** (auth, carpool, NeVoBo-routes, DB-migraties bij startup, enz.), niet alleen voor één feature.
+
+**Frontend** (`public/**`) wordt bij een draaiende server meestal direct van schijf geserveerd; voor de browser zelf: harde refresh en bij PWA/service worker de cache-bump-conventie ([10](./10-deployment-pwa-and-caching.md), [11 §8](./11-cross-cutting-decisions.md)).
+
 ## Directory-structuur (relevant)
 
 ```

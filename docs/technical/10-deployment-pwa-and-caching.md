@@ -7,6 +7,12 @@
 - **`DOTENV`** — `.env` niet in git; `.env.example` als sjabloon  
 - **`SOCIAL_EMBEDS_ENABLED`** — `false` schakelt interleave van TikTok/IG in feeds uit (string vergelijking `!== 'false'`)
 
+### Server vs. frontend (lokaal)
+
+- **`server/`** aangepast → **Node herstarten** (`npm start` opnieuw, of `npm run dev` met nodemon). Zonder herstart blijft oude API-gedrag actief. Zie [01-architecture-overview.md](./01-architecture-overview.md) § “Node-proces”, [11 §9](./11-cross-cutting-decisions.md).  
+  **Agent-verplichting:** een AI-agent die `server/`-bestanden wijzigt **moet** het Node-proces zelf herstarten via de shell — niet aan de gebruiker overlaten.
+- **`public/`** (JS/CSS) aangepast → **cache-bump** (`sw.js` + `index.html` `app.js?v=`) en browser refresh; zie hieronder.
+
 ## Docker (typisch)
 
 - `Dockerfile` + `docker-compose.yml` in repo-root  

@@ -57,6 +57,32 @@ function hasTeamAdmin(userId, teamId) {
   ).get(userId, teamId);
 }
 
+/**
+ * Teamcarpool op wedstrijdniveau beheren (passagier eruit, geplande lift verwijderen):
+ * coach-lidmaatschap, team_admin, club_admin of super_admin.
+ */
+function canManageTeamCarpool(userId, teamId) {
+  const tid = parseInt(teamId, 10);
+  if (!tid) return false;
+  if (hasSuperAdmin(userId)) return true;
+  const team = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(tid);
+  if (!team) return false;
+  if (hasClubAdmin(userId, team.club_id)) return true;
+  if (hasTeamAdmin(userId, tid)) return true;
+  return !!db.prepare(
+    "SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ? AND membership_type = 'coach'"
+  ).get(userId, tid);
+}
+
+/** Alleen teamcoach (lidmaatschap) mag seizoens-carpool genereren en coach-planner-API gebruiken. */
+function canPlanTeamCarpoolSeason(userId, teamId) {
+  const tid = parseInt(teamId, 10);
+  if (!tid) return false;
+  return !!db.prepare(
+    "SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ? AND membership_type = 'coach'"
+  ).get(userId, tid);
+}
+
 // Middleware factories
 function requireSuperAdmin(req, res, next) {
   if (!req.user) return res.status(401).json({ ok: false, error: 'Niet ingelogd' });
@@ -93,6 +119,8 @@ module.exports = {
   hasSuperAdmin,
   hasClubAdmin,
   hasTeamAdmin,
+  canManageTeamCarpool,
+  canPlanTeamCarpoolSeason,
   requireSuperAdmin,
   requireClubAdmin,
   requireTeamAdmin,

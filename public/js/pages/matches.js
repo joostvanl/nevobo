@@ -202,9 +202,9 @@ async function loadMatchSection(listEl, club, team, tab, canInteract) {
       return;
     }
 
-    // Fetch carpool seat availability for scheduled matches
+    // Carpool-samenvatting alleen als je bij die wedstrijden kunt meedoen (eigen team)
     let carpoolMap = new Map();
-    if (tab === 'schedule') {
+    if (tab === 'schedule' && canInteract) {
       const ids = matches.map(m => encodeMatchId(m));
       carpoolMap = await fetchCarpoolSummaries(ids);
     }
@@ -341,19 +341,19 @@ async function loadClubSection(listEl, club, myTeams, tab) {
       return;
     }
 
-    // Fetch carpool availability for scheduled matches
-    let carpoolMap = new Map();
-    if (tab === 'schedule') {
-      carpoolMap = await fetchCarpoolSummaries(sorted.map(m => encodeMatchId(m)));
-    }
-
-    // Determine canInteract per match (only for the user's own teams)
     const myNames = (Array.isArray(myTeams) ? myTeams : myTeams ? [myTeams] : [])
       .map(t => t.display_name?.toLowerCase()).filter(Boolean);
     const canInteractFor = (m) => myNames.length > 0 && myNames.some(n =>
       (m.home_team || '').toLowerCase().includes(n) ||
       (m.away_team || '').toLowerCase().includes(n)
     );
+
+    // Carpool alleen voor wedstrijden van jouw team(s) — niet voor hele club
+    let carpoolMap = new Map();
+    if (tab === 'schedule') {
+      const myMatchIds = sorted.filter(canInteractFor).map(m => encodeMatchId(m));
+      carpoolMap = await fetchCarpoolSummaries(myMatchIds);
+    }
 
     listEl.innerHTML = sorted.map((m, i) =>
       renderMatchCard(m, i, tab, canInteractFor(m), club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, club.name || '')
@@ -424,11 +424,8 @@ async function loadFollowedTeamsSection(listEl, club, followedTeams, tab) {
       return;
     }
 
-    // Fetch carpool availability for scheduled matches
-    let carpoolMap = new Map();
-    if (tab === 'schedule') {
-      carpoolMap = await fetchCarpoolSummaries(sorted.map(m => encodeMatchId(m)));
-    }
+    // Geen carpool op gevolgde teams (geen teamlid) — geen fetch
+    const carpoolMap = new Map();
 
     listEl.innerHTML = sorted.map((m, i) =>
       renderMatchCard(m, i, tab, false, club.nevobo_code, carpoolMap.get(encodeMatchId(m)) ?? null, '')
@@ -1273,7 +1270,9 @@ async function loadCarpoolDetail(matchId, canInteract = false) {
   const body = document.getElementById('carpool-detail-body');
   if (!body) return;
   try {
-    const data = await fetch(`/api/carpool/${matchId}/summary`).then(r => r.json());
+    const headers = {};
+    if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    const data = await fetch(`/api/carpool/${matchId}/summary`, { headers }).then(r => r.json());
     if (!data.ok) { body.innerHTML = `<div class="card-body text-muted text-small">Niet beschikbaar</div>`; return; }
 
     const { drivers, free_seats } = data;
@@ -1335,9 +1334,11 @@ async function loadCarpoolDetail(matchId, canInteract = false) {
 async function fetchCarpoolSummaries(matchIds) {
   const map = new Map();
   if (!matchIds.length) return map;
+  const headers = {};
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
   await Promise.all(matchIds.map(async id => {
     try {
-      const data = await fetch(`/api/carpool/${id}/summary`).then(r => r.json());
+      const data = await fetch(`/api/carpool/${id}/summary`, { headers }).then(r => r.json());
       if (data.ok) map.set(id, data.free_seats);
     } catch (_) {}
   }));

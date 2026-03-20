@@ -44,6 +44,20 @@ Als alleen `sw.js` bump zonder `app.js?v=`, kunnen sommige clients toch oude ent
 
 **Conventie:** bij **elke** relevante JS/CSS-wijziging `CACHE_NAME` in `public/sw.js` én `app.js?v=` in `public/index.html` verhogen (zie [10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md)).
 
+## 9. Servercode gewijzigd maar gedrag niet — oude Node-proces
+
+**Symptoom:** API geeft oude responses, nieuwe routes `404`, middleware lijkt niet te werken, “de aanpassing komt niet door”.
+
+**Oorzaak:** Wijzigingen in **`server/`** worden pas geladen na **herstart van het Node-proces**. Express laadt modules bij start; een lopende `node server/index.js` blijft de vorige versie in geheugen gebruiken.
+
+**Oplossing:** Server stoppen en opnieuw `npm start` of `npm run dev` (nodemon). In productie/container: deploy die het proces vervangt of expliciete restart.
+
+**Agent-verplichting:** Wanneer een AI-agent bestanden in `server/` wijzigt, **moet** die agent het draaiende Node-proces zelf stoppen en herstarten vóórdat de taak als afgerond wordt beschouwd. Niet de gebruiker vragen dit te doen — de agent heeft shell-toegang en is verantwoordelijk voor het herstarten. Dit geldt voor elke wijziging aan routes, middleware, db, of andere server-side modules.
+
+**Niet hetzelfde als:** frontend-only wijzigingen — daar spelen vooral browser-cache en service worker een rol ([§8](#8-service-worker--html-cache)).
+
+**Uitgebreider:** [01-architecture-overview.md](./01-architecture-overview.md) § “Node-proces”.
+
 ---
 
 *Voeg nieuwe valkuilen hier toe na incidenten of refactors.*

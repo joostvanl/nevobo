@@ -70,11 +70,24 @@
 
 ---
 
+## `/api/carpool/coach` — `routes/carpool-coach.js`
+
+*Mount in `app.js` **vóór** `/api/carpool` (zie doc 20).*
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/teams` | V |
+| GET | `/team/:teamId/stats` | V |
+| POST | `/plan-season` | V |
+| PATCH | `/offer/:offerId` | V |
+
+---
+
 ## `/api/carpool` — `routes/carpool.js`
 
 | Methode | Pad | Middleware |
 |---------|-----|------------|
-| GET | `/:matchId/summary` | — |
+| GET | `/:matchId/summary` | O |
 | GET | `/:matchId` | V |
 | POST | `/:matchId/offer` | V |
 | DELETE | `/offer/:offerId` | V |

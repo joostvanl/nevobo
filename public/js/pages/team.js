@@ -5,6 +5,9 @@ import { escHtml } from '../escape-html.js';
 import { FilePicker } from '../file-picker.js';
 import { isDetached } from '../dom-guards.js';
 import { renderCompactMatch as renderCompactMatchRow } from '../team-schedule-helpers.js';
+import { encodeMatchId, awayMatchesForTeam, countPlayersAndCoachesTravelers } from './carpool.js';
+
+let _ccCtx = null;
 
 /**
  * Params:
@@ -212,8 +215,9 @@ function renderPage(container, opts) {
 
       <!-- Upcoming matches — skeleton while loading -->
       <div class="card mb-3">
-        <div class="card-header">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.35rem">
           <h3>📅 Aankomende wedstrijden</h3>
+          ${isOwnTeam ? `<button type="button" class="btn btn-ghost btn-sm team-schedule-carpool-link" style="font-size:0.75rem;padding:0.25rem 0.55rem;white-space:nowrap">🚗 Bekijk liften →</button>` : ''}
         </div>
         <div class="card-body" style="padding:0" id="schedule-list">
           ${loading ? nevoboSkeleton
@@ -297,12 +301,142 @@ function renderPage(container, opts) {
         return sections.join('');
       })()}
 
+      ${isOwnTeam && currentUserMembership === 'coach' ? (() => {
+        const tCount = countPlayersAndCoachesTravelers(members);
+        const poolHtml = members.map(m => `
+          <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;margin-bottom:0.35rem;cursor:pointer">
+            <input type="checkbox" class="cc-pool-cb" value="${m.id}" checked />
+            <span>${escHtml(m.name)} <span class="text-muted">(${escHtml(m.membership_type || 'speler')})</span></span>
+          </label>`).join('');
+        return `
+      <div class="card mb-3" id="coach-carpool-card">
+        <div class="card-header" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" id="cc-collapse-header">
+          <h3>🚗 Teamcarpool plannen</h3>
+          <span class="stand-chevron" style="font-size:0.75rem;opacity:0.6">▼</span>
+        </div>
+        <div id="cc-collapse-body" style="display:none">
+          <div class="card-body" style="padding:1rem">
+            <p class="text-muted text-small" style="margin-bottom:0.75rem;line-height:1.45">
+              Kies de chauffeurspool en uitwedstrijden. Chauffeurs roteren eerlijk (minst gereden eerst).
+              Bestaande teamcarpool-aanboden worden vervangen.
+            </p>
+            <div class="form-group">
+              <label class="form-label">Totaal spelers en coaches</label>
+              <input type="number" id="cc-travelers" class="form-input" min="1" max="200" value="${Math.max(1, tCount)}" />
+              <p class="text-muted text-small mb-0 mt-1">Automatisch geteld. Pas aan als niet iedereen meereist.</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Personen per auto (max.)</label>
+              <input type="number" id="cc-seats-car" class="form-input" min="2" max="8" value="4" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Chauffeurspool</label>
+              <div id="cc-pool" class="cc-check-grid" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.5rem">${poolHtml}</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Uitwedstrijden</label>
+              <div class="flex gap-2 mb-1" style="flex-wrap:wrap">
+                <button type="button" class="btn btn-ghost btn-sm" id="cc-all-matches">Alles aan</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="cc-no-matches">Alles uit</button>
+              </div>
+              <div id="cc-matches" class="cc-check-grid" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.5rem">
+                ${loading ? '<div class="spinner" style="margin:0.5rem auto"></div>' : '<p class="text-muted text-small">Geen uitwedstrijden gevonden.</p>'}
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary btn-block" id="cc-submit">Genereer carpool</button>
+            <p class="text-muted text-small mt-2 mb-0" id="cc-hint"></p>
+          </div>
+        </div>
+      </div>`;
+      })() : ''}
+
     </div>`;
 
   // ── Verzameltijden asynchroon laden ──────────────────────────────────────
   if (isOwnTeam && schedule.length > 0) {
     const scheduleList = container.querySelector('#schedule-list');
     if (scheduleList) loadMeetupTimes(scheduleList, schedule, displayName, homeAddress);
+  }
+
+  container.querySelector('.team-schedule-carpool-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    navigate('carpool');
+  });
+
+  // ── Coach carpool planner ───────────────────────────────────────────────
+  _ccCtx = null;
+  container.querySelector('#cc-collapse-header')?.addEventListener('click', () => {
+    const body = document.getElementById('cc-collapse-body');
+    const chevron = container.querySelector('#cc-collapse-header .stand-chevron');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    if (chevron) chevron.textContent = open ? '▼' : '▲';
+  });
+
+  if (isOwnTeam && opts.teamId && container.querySelector('#coach-carpool-card')) {
+    _ccCtx = { teamId: opts.teamId, clubName: opts.clubName || '', displayName, awayMatches: [] };
+
+    const updateHint = () => {
+      const poolEl = document.getElementById('cc-pool');
+      const hintEl = document.getElementById('cc-hint');
+      if (!poolEl || !hintEl) return;
+      const tr = parseInt(document.getElementById('cc-travelers')?.value, 10) || 1;
+      const sc = Math.max(2, parseInt(document.getElementById('cc-seats-car')?.value, 10) || 4);
+      const cars = Math.ceil(tr / sc);
+      const poolN = poolEl.querySelectorAll('.cc-pool-cb:checked').length;
+      const hasMatches = _ccCtx.awayMatches.length > 0;
+      hintEl.textContent =
+        hasMatches && poolN >= cars
+          ? `\u2248 ${cars} auto(s) per wedstrijd; pool heeft ${poolN} chauffeur(s).`
+          : poolN < cars
+            ? `Let op: je pool heeft minstens ${cars} personen nodig.`
+            : '';
+    };
+
+    document.getElementById('cc-travelers')?.addEventListener('input', updateHint);
+    document.getElementById('cc-seats-car')?.addEventListener('input', updateHint);
+    document.getElementById('cc-pool')?.addEventListener('change', updateHint);
+    document.getElementById('cc-all-matches')?.addEventListener('click', () => {
+      document.querySelectorAll('.cc-match-cb').forEach(cb => { cb.checked = true; });
+    });
+    document.getElementById('cc-no-matches')?.addEventListener('click', () => {
+      document.querySelectorAll('.cc-match-cb').forEach(cb => { cb.checked = false; });
+    });
+
+    document.getElementById('cc-submit')?.addEventListener('click', async () => {
+      const totalTravelers = parseInt(document.getElementById('cc-travelers').value, 10);
+      const seatsPerCar = parseInt(document.getElementById('cc-seats-car').value, 10);
+      const pool = [...document.querySelectorAll('.cc-pool-cb:checked')].map(cb => parseInt(cb.value, 10));
+      const matchIds = [...document.querySelectorAll('.cc-match-cb:checked')].map(cb => {
+        const idx = parseInt(cb.dataset.ccMidx, 10);
+        return encodeMatchId(_ccCtx.awayMatches[idx]);
+      });
+      if (!matchIds.length) { showToast('Kies minimaal \u00e9\u00e9n wedstrijd', 'error'); return; }
+      if (!pool.length) { showToast('Kies minimaal \u00e9\u00e9n persoon in de pool', 'error'); return; }
+
+      const btn = document.getElementById('cc-submit');
+      btn.disabled = true;
+      btn.textContent = 'Bezig\u2026';
+      try {
+        const res = await api('/api/carpool/coach/plan-season', {
+          method: 'POST',
+          body: { team_id: _ccCtx.teamId, match_ids: matchIds, total_travelers: totalTravelers, seats_per_car: seatsPerCar, pool_user_ids: pool },
+        });
+        const n = res.total_cars_added || 0;
+        const w = res.planned_matches || 0;
+        showToast(n === 0
+          ? `${w} wedstrijd(en) bekeken \u2014 bestaande liften dekken de vraag al`
+          : `${n} auto('s) toegevoegd voor ${w} wedstrijd(en) \ud83d\ude97`, 'success');
+      } catch (err) {
+        showToast(err.message || 'Mislukt', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Genereer carpool';
+      }
+    });
+
+    updateHint();
   }
 
   // ── Match row click handlers ─────────────────────────────────────────────
@@ -536,7 +670,8 @@ function renderPage(container, opts) {
 
 // ─── Fill Nevobo placeholders after lazy load ─────────────────────────────────
 function fillNevoboData(container, teamData, displayName, nevoboCode) {
-  const schedule = (teamData?.schedule || []).slice(0, 5);
+  const fullSchedule = teamData?.schedule || [];
+  const schedule = fullSchedule.slice(0, 5);
   const results  = teamData?.results  || [];
   const wins     = teamData?.wins     || 0;
   const losses   = teamData?.losses   || 0;
@@ -599,6 +734,23 @@ function fillNevoboData(container, teamData, displayName, nevoboCode) {
     if (isOwnTeam && schedule.length > 0) {
       const homeAddress = deriveHomeAddress(displayName, schedule, results);
       loadMeetupTimes(scheduleList, schedule, displayName, homeAddress);
+    }
+  }
+
+  // ── Coach carpool planner: fill away matches ──────────────────────────────
+  if (_ccCtx) {
+    const matchEl = document.getElementById('cc-matches');
+    if (matchEl) {
+      const away = awayMatchesForTeam(fullSchedule, _ccCtx.clubName, _ccCtx.displayName);
+      _ccCtx.awayMatches = away;
+      matchEl.innerHTML = away.length === 0
+        ? '<p class="text-muted text-small">Geen uitwedstrijden voor dit team in het programma.</p>'
+        : away.map((m, idx) => `
+          <label style="display:flex;align-items:flex-start;gap:0.5rem;font-size:0.82rem;margin-bottom:0.45rem;cursor:pointer">
+            <input type="checkbox" class="cc-match-cb" data-cc-midx="${idx}" checked style="margin-top:0.2rem" />
+            <span>${escHtml(m.home_team || '\u2014')} \u2014 ${escHtml(m.away_team || '\u2014')}<br/>
+            <span class="text-muted">${m.datetime ? escHtml(formatDate(m.datetime)) : ''}</span></span>
+          </label>`).join('');
     }
   }
 

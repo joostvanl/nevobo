@@ -39,7 +39,7 @@
 - `GET /api/social/team-media/:teamId` (optioneel token voor `liked_by_me`)  
 - `GET /api/social/club/:clubId/feed`  
 - `POST /api/social/media/:id/view`, `POST .../social-links/:id/view`  
-- `GET /api/carpool/:matchId/summary`  
+- `GET /api/carpool/:matchId/summary` (zonder JWT: leeg overzicht; met JWT: alleen liften binnen eigen team / gedeeld team)  
 - `GET /api/gamification/badges`, `/goals`, `/leaderboard/:clubId`  
 - Statische files + SPA fallback
 

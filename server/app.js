@@ -24,6 +24,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/clubs',         require('./routes/clubs'));
 app.use('/api/nevobo',        require('./routes/nevobo'));
+// Coach-routes eerst op eigen mount — voorkomt dat /coach/* als :matchId wordt geïnterpreteerd
+app.use('/api/carpool/coach', require('./routes/carpool-coach'));
 app.use('/api/carpool',       require('./routes/carpool'));
 app.use('/api/social',        require('./routes/social'));
 app.use('/api/gamification',  require('./routes/gamification'));

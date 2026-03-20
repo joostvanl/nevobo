@@ -51,4 +51,10 @@ describe('HTTP API (integratie)', () => {
     const res = await request(app).get('/api/platform/settings');
     assert.equal(res.status, 401);
   });
+
+  it('GET /api/carpool/coach/teams zonder token → 401 (route bestaat)', async () => {
+    const res = await request(app).get('/api/carpool/coach/teams');
+    assert.equal(res.status, 401);
+    assert.equal(res.body.ok, false);
+  });
 });
