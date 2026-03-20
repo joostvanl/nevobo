@@ -1,0 +1,403 @@
+/* Help / documentation viewer — screen + print */
+
+.help-page {
+  padding-bottom: 5rem;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.help-toolbar {
+  padding: 0.75rem 1rem 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg, #f8f9fa);
+  border-bottom: 1px solid var(--border, #dee2e6);
+  margin: 0 -1rem 1rem;
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+.help-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.help-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.help-search {
+  flex: 1;
+  min-width: 160px;
+  max-width: 320px;
+}
+
+.help-col-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.help-col-tab {
+  border: 1px solid var(--border, #dee2e6);
+  background: var(--bg-card, #fff);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-muted, #6c757d);
+}
+
+.help-col-tab.active {
+  background: var(--primary, #ff5722);
+  border-color: var(--primary, #ff5722);
+  color: #fff;
+}
+
+.help-collection-head {
+  padding: 0.5rem 0 0.75rem;
+}
+
+.help-h1 {
+  font-size: 1.25rem;
+  margin: 0;
+  font-weight: 800;
+}
+
+.help-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted, #6c757d);
+}
+
+.help-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+  padding: 0 1rem;
+}
+
+.help-toc {
+  position: sticky;
+  top: 7.5rem;
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
+  font-size: 0.82rem;
+  padding-right: 0.25rem;
+}
+
+.help-toc-chapter {
+  margin-bottom: 0.75rem;
+}
+
+.help-toc-link {
+  display: block;
+  color: var(--text, #212529);
+  text-decoration: none;
+  padding: 0.2rem 0.35rem;
+  border-radius: 6px;
+  line-height: 1.35;
+}
+
+.help-toc-link:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.help-toc-link.active {
+  background: rgba(255, 87, 34, 0.12);
+  font-weight: 700;
+  color: var(--primary, #e64a19);
+}
+
+.help-toc-sec-link {
+  padding-left: 0.85rem;
+  font-size: 0.78rem;
+  color: var(--text-muted, #6c757d);
+}
+
+.help-main {
+  min-width: 0;
+}
+
+.help-chapter-summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 1.05rem;
+  padding: 0.35rem 0;
+  list-style: none;
+}
+
+.help-chapter-summary::-webkit-details-marker {
+  display: none;
+}
+
+.help-chapter-summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.15s;
+  color: var(--text-muted, #6c757d);
+}
+
+.help-chapter[open] > .help-chapter-summary::before {
+  transform: rotate(90deg);
+}
+
+.help-chapter {
+  border: 1px solid var(--border, #dee2e6);
+  border-radius: var(--radius, 12px);
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--bg-card, #fff);
+}
+
+.help-intro {
+  font-size: 0.9rem;
+  color: var(--text-muted, #6c757d);
+  margin: 0 0 1rem;
+  line-height: 1.5;
+}
+
+.help-section {
+  margin-bottom: 1.5rem;
+  scroll-margin-top: 5.5rem;
+}
+
+.help-section-title {
+  font-size: 1rem;
+  font-weight: 800;
+  margin: 0 0 0.5rem;
+}
+
+.help-summary {
+  font-size: 0.88rem;
+  color: var(--text-muted, #6c757d);
+  margin: 0 0 0.75rem;
+}
+
+.help-block {
+  margin: 0 0 0.75rem;
+}
+
+.help-p {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 0.75rem;
+}
+
+.help-ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.help-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+
+.help-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.help-table th,
+.help-table td {
+  border: 1px solid var(--border, #dee2e6);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+}
+
+.help-table th {
+  background: rgba(0, 0, 0, 0.04);
+  font-weight: 700;
+}
+
+.help-callout {
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.help-callout--note {
+  background: rgba(33, 150, 243, 0.08);
+  border: 1px solid rgba(33, 150, 243, 0.25);
+}
+
+.help-callout--warning {
+  background: rgba(255, 152, 0, 0.1);
+  border: 1px solid rgba(255, 152, 0, 0.35);
+}
+
+.help-callout-title {
+  font-weight: 800;
+  margin-bottom: 0.35rem;
+}
+
+.help-code {
+  font-size: 0.78rem;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.help-guide {
+  margin-bottom: 2rem;
+  scroll-margin-top: 5.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border, #e9ecef);
+}
+
+.help-guide-title {
+  font-size: 1.15rem;
+  margin: 0 0 0.5rem;
+}
+
+.help-prereq {
+  font-size: 0.88rem;
+  margin: 0 0 0.75rem;
+}
+
+.help-step {
+  margin-bottom: 1.25rem;
+  scroll-margin-top: 5.5rem;
+}
+
+.help-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--primary, #ff5722);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.help-screen-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted, #6c757d);
+  margin: 0 0 0.65rem;
+}
+
+@media (max-width: 768px) {
+  .help-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .help-toc {
+    position: relative;
+    top: auto;
+    max-height: none;
+    border: 1px solid var(--border, #dee2e6);
+    border-radius: var(--radius, 12px);
+    padding: 0.65rem 0.75rem;
+    background: var(--bg-card, #fff);
+  }
+
+  .help-toolbar {
+    position: relative;
+    top: auto;
+  }
+}
+
+/* ─── Print ─────────────────────────────────────────────────── */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .help-page,
+  .help-page * {
+    visibility: visible;
+  }
+
+  .help-page {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    padding: 0 0.5cm;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  #app .app-header,
+  #app .bottom-nav {
+    display: none !important;
+  }
+
+  .help-main,
+  .help-toc {
+    display: block !important;
+  }
+
+  .help-layout {
+    display: block !important;
+  }
+
+  .help-toc {
+    page-break-after: always;
+    max-height: none;
+    position: static;
+    border: none;
+    padding: 0 0 1rem;
+  }
+
+  .help-chapter,
+  .help-guide {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .help-section,
+  .help-step,
+  .help-callout {
+    break-inside: avoid;
+  }
+
+  .help-page {
+    color: #000;
+    background: #fff;
+  }
+
+  .help-chapter {
+    border-color: #ccc;
+  }
+
+  /* Expand all chapter accordions when printing */
+  .help-print-expand .help-chapter {
+    border: none;
+    padding: 0;
+  }
+
+  .help-print-expand .help-chapter > .help-chapter-summary {
+    display: none;
+  }
+
+  .help-print-expand .help-chapter > .help-chapter-body {
+    display: block !important;
+  }
+}

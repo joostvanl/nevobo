@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "title": "Handleiding beheer — VolleyApp",
+    "updated": "2026-03-19",
+    "locale": "nl"
+  },
+  "guides": [
+    {
+      "id": "team-leden",
+      "title": "Teamleden beheren (team_admin)",
+      "audience": ["team_admin"],
+      "relatedRoute": "admin",
+      "prerequisites": "Je bent team_admin voor het team.",
+      "steps": [
+        {
+          "n": 1,
+          "title": "Open beheer",
+          "screenHint": "Profiel → Beheer of direct route admin",
+          "body": [
+            { "type": "p", "text": "Ga naar de beheerpagina. Kies het tabblad Team (standaard voor team_admin)." }
+          ]
+        },
+        {
+          "n": 2,
+          "title": "Zoek en voeg leden toe",
+          "screenHint": "Tab: Team → zoekveld",
+          "body": [
+            { "type": "p", "text": "Zoek op naam of e-mail binnen je vereniging. Voeg gebruikers toe met het juiste lidtype (speler, coach, trainer, ouder)." },
+            { "type": "callout", "variant": "note", "text": "Leden moeten bij dezelfde vereniging horen als het team." }
+          ]
+        },
+        {
+          "n": 3,
+          "title": "Types en verwijderen",
+          "screenHint": "Lijst teamleden",
+          "body": [
+            { "type": "p", "text": "Wijzig lidtype of verwijder iemand uit het team. Verwijderen uit het team is geen accountverwijdering." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "club-teambeheerders",
+      "title": "Teambeheerders aanstellen (club_admin)",
+      "audience": ["club_admin"],
+      "relatedRoute": "admin",
+      "prerequisites": "Je bent club_admin van de vereniging.",
+      "steps": [
+        {
+          "n": 1,
+          "title": "Tab Club",
+          "screenHint": "Beheer → Club",
+          "body": [
+            { "type": "p", "text": "Open het tabblad Club om alle teams van je vereniging te zien." }
+          ]
+        },
+        {
+          "n": 2,
+          "title": "Kies team en wijs team_admin toe",
+          "screenHint": "Teamkaart → team_admin",
+          "body": [
+            { "type": "p", "text": "Selecteer een team en wijs gebruikers aan als team_admin. Alleen leden van jouw club kunnen team_admin worden voor teams van die club." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "super-platform",
+      "title": "Platform en clubs (super_admin)",
+      "audience": ["super_admin"],
+      "relatedRoute": "admin",
+      "prerequisites": "Je hebt de rol super_admin.",
+      "steps": [
+        {
+          "n": 1,
+          "title": "Tab Super",
+          "screenHint": "Beheer → Super",
+          "body": [
+            { "type": "p", "text": "Hier beheer je platformbrede instellingen, rollen (super_admin, club_admin) en nieuwe verenigingen." }
+          ]
+        },
+        {
+          "n": 2,
+          "title": "Vereniging toevoegen",
+          "screenHint": "Super → clubs",
+          "body": [
+            { "type": "p", "text": "Voeg een vereniging toe zodat gebruikers die bij registratie kunnen kiezen. Alleen super_admin kan POST /api/clubs gebruiken." },
+            { "type": "callout", "variant": "warning", "text": "Club_admin kan geen nieuwe clubs aanmaken via de API." }
+          ]
+        },
+        {
+          "n": 3,
+          "title": "club_admin toewijzen",
+          "screenHint": "Super → gebruikers / rollen",
+          "body": [
+            { "type": "p", "text": "Wijs club_admin toe per vereniging zodat zij teams en teambeheerders kunnen beheren." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "instellingen-app",
+      "title": "App-instellingen (ingelogd)",
+      "audience": ["team_admin", "club_admin", "super_admin"],
+      "relatedRoute": "settings",
+      "steps": [
+        {
+          "n": 1,
+          "title": "Open Instellingen",
+          "screenHint": "Profiel of menu → Instellingen",
+          "body": [
+            { "type": "p", "text": "Vanaf het profiel of de app-navigatie ga je naar Instellingen voor voorkeuren die niet per se op het profiel staan." }
+          ]
+        },
+        {
+          "n": 2,
+          "title": "Controleer voorkeuren",
+          "screenHint": "settings.js scherm",
+          "body": [
+            { "type": "p", "text": "Pas notificaties, weergave of andere beschikbare opties aan en sla op indien van toepassing." }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,9 @@ data/
 # Uploaded media
 public/uploads/
 
+# Optional local asset (reel noise experiment; not required)
+public/noise.mp4
+
 # Content backups (database + uploads snapshots)
 backups/
 

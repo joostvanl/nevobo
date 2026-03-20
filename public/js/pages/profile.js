@@ -174,6 +174,7 @@ export async function render(container) {
         <div class="section">
           <div class="section-header">
             <span class="section-title">❓ Veelgestelde vragen</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="help-full-link">Volledige naslag →</button>
           </div>
           <div class="profile-faq" id="profile-faq" aria-label="Veelgestelde vragen">
             ${renderProfileFaqHtml()}
@@ -209,6 +210,7 @@ export async function render(container) {
 
     document.getElementById('settings-btn')?.addEventListener('click', () => navigate('settings'));
     document.getElementById('admin-btn')?.addEventListener('click', () => navigate('admin'));
+    document.getElementById('help-full-link')?.addEventListener('click', () => navigate('help'));
 
     // Privacy
     document.getElementById('privacy-link-btn')?.addEventListener('click', () => navigate('privacy'));

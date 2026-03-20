@@ -1,4 +1,4 @@
-import { api, state, showToast } from '../app.js';
+import { api, state, showToast, navigate } from '../app.js';
 import { escHtml } from '../escape-html.js';
 
 /** Same as escHtml — data-* and quoted attribute values */
@@ -53,6 +53,10 @@ export async function render(container) {
       </div>`;
 
     const panel = container.querySelector('#admin-panel');
+
+    document.getElementById('admin-help-manual')?.addEventListener('click', () =>
+      navigate('help', { hash: 'admin-manual-team-leden' })
+    );
 
     // Tab switching
     container.querySelectorAll('.filter-pill[data-tab]').forEach(btn => {

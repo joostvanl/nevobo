@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "locale": "nl",
+  "updated": "2026-03-19",
+  "collections": [
+    {
+      "id": "functional",
+      "type": "functional",
+      "title": "Functionele naslag",
+      "description": "Hoe features werken en welke regels gelden — naslagwerk.",
+      "path": "/help/functional.nl.json",
+      "requiresRole": "authenticated"
+    },
+    {
+      "id": "admin-manual",
+      "type": "admin-manual",
+      "title": "Handleiding beheer",
+      "description": "Stap-voor-stap: gebruikersbeheer en platforminstellingen.",
+      "path": "/help/admin-manual.nl.json",
+      "requiresRole": "admin"
+    }
+  ]
+}

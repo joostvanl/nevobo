@@ -397,6 +397,9 @@ const PAGE_TITLES = {
   profile:       'Mijn Profiel',
   team:          'Team',
   admin:         'Beheer',
+  settings:      'Platform',
+  help:          'Naslag',
+  privacy:       'Privacy',
   'scout-setup': '🏐 Scout setup',
   'scout-match': '🏐 Scouting',
 };
@@ -539,6 +542,7 @@ async function boot() {
     import('./pages/team.js'),
     import('./pages/admin.js'),
     import('./pages/settings.js'),
+    import('./pages/help.js'),
     import('./pages/privacy.js'),
     import('./pages/scout-setup.js'),
     import('./pages/scout-match.js'),
@@ -565,7 +569,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, privacyPage, scoutSetupPage, scoutMatchPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage] = await pagesPromise;
 
   registerRoute('home',         homePage.render);
   registerRoute('matches',      matchesPage.render);
@@ -576,6 +580,7 @@ async function boot() {
   registerRoute('team',         teamPage.render);
   registerRoute('admin',        adminPage.render);
   registerRoute('settings',     settingsPage.render);
+  registerRoute('help',         helpPage.render);
   registerRoute('privacy',      privacyPage.render);
   registerRoute('scout-setup',  scoutSetupPage.render);
   registerRoute('scout-match',  scoutMatchPage.render);

@@ -2,6 +2,11 @@
 
 **Pad (repo-root):** `FUNCTIONELE_DOCUMENTATIE.md`
 
+## Ingebouwde naslag (JSON-viewer)
+
+- **Canoniek voor eindgebruikers in de app:** gestructureerde inhoud onder `public/help/` (`manifest.json`, `functional.nl.json`, `admin-manual.nl.json`) en de SPA-route **`help`** (`public/js/pages/help.js`). Daar staat de actuele functionele naslag en (voor beheerders) de stap-handleiding.
+- **`FUNCTIONELE_DOCUMENTATIE.md`:** blijft bruikbaar als menselijk leesbaar overzicht en archief/export; bij verschil met de app geldt de **code** als technische waarheid (zie hieronder). Werk de JSON-viewer bij als de productregels in de app veranderen.
+
 ## Rol
 
 - **Primair:** Menselijke stakeholders — functionele uitleg, UX, businessregels op **productniveau** (badges, carpool, Pi-backup, JWT-duur, enz.).

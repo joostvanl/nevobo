@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "version": "1.0.0",
+    "title": "Functionele naslag — VolleyApp",
+    "updated": "2026-03-19",
+    "locale": "nl"
+  },
+  "chapters": [
+    {
+      "id": "algemeen",
+      "title": "1. Algemene werking",
+      "intro": "De app is een Progressive Web App (PWA) voor volleybalteams. Routing is client-side; de URL volgt de gekozen pagina.",
+      "sections": [
+        {
+          "id": "navigatie",
+          "title": "Navigatie",
+          "blocks": [
+            { "type": "ul", "items": ["Onderaan: Home, Wedstrijden, Team, Sociaal.", "Profiel via het pictogram rechtsboven.", "Team-tab opent je team of een teamkiezer bij meerdere teamlidmaatschappen binnen dezelfde vereniging."] }
+          ]
+        },
+        {
+          "id": "sessie",
+          "title": "Inloggen en sessie",
+          "blocks": [
+            { "type": "p", "text": "Sessie via JWT in localStorage. Token verloopt na 7 dagen. Bij start valideert de app het token via GET /api/auth/me." },
+            { "type": "callout", "variant": "note", "title": "Niet ingelogd", "text": "Wedstrijden en teampagina’s zijn grotendeels te bekijken; uploaden, reageren, carpool en persoonlijke feed vereisen inlog." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "title": "2. Authenticatie en account",
+      "sections": [
+        {
+          "id": "registratie",
+          "title": "Registratie",
+          "blocks": [
+            { "type": "p", "text": "Vereist: naam, e-mail, wachtwoord (minimaal 6 tekens). Optioneel: vereniging uit de lijst. E-mail moet uniek zijn." },
+            { "type": "p", "text": "Na registratie ben je direct ingelogd. Ontbreekt je vereniging in de lijst, dan moet een platformbeheerder deze eerst toevoegen." }
+          ]
+        },
+        {
+          "id": "profiel-bewerken",
+          "title": "Profiel bewerken",
+          "blocks": [
+            { "type": "ul", "items": ["Naam en vereniging (Mijn vereniging) via het potlood op het profiel.", "Anonieme modus en referentiefoto’s voor gezichtsblur.", "Profielfoto uploaden (afbeelding, beperkte grootte).", "Wachtwoord wijzigen: niet via standaard UI; via beheerder of database."] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "teams-rollen",
+      "title": "3. Vereniging, teams en rollen",
+      "sections": [
+        {
+          "id": "een-vereniging",
+          "title": "Eén vereniging",
+          "blocks": [
+            { "type": "p", "text": "Een gebruiker hoort bij maximaal één vereniging tegelijk. De gekozen vereniging staat op je profiel. Team-lidmaatschappen horen bij die vereniging; bij wisselen van vereniging vervallen lidmaatschappen van andere clubs." },
+            { "type": "callout", "variant": "warning", "title": "Let op", "text": "Voeg geen teamleden toe aan teams van een andere club dan jouw vereniging — de API weigert dat." }
+          ]
+        },
+        {
+          "id": "team-lidmaatschap",
+          "title": "Teamlidmaatschap",
+          "blocks": [
+            { "type": "p", "text": "Per team heb je een lidtype: speler, coach, trainer of ouder. Je kunt bij meerdere teams van dezelfde club horen. Het eerste team dat je koppelt wordt primair team tenzij je dat wijzigt." },
+            { "type": "p", "text": "Spelers en coaches mogen wedstrijdmedia uploaden en social links op teamniveau toevoegen; andere lidtypes niet." }
+          ]
+        },
+        {
+          "id": "beheersrollen",
+          "title": "Beheersrollen (user_roles)",
+          "blocks": [
+            {
+              "type": "table",
+              "headers": ["Rol", "Reikwijdte"],
+              "rows": [
+                ["super_admin", "Platform: rollen, alle clubs/teams, instellingen."],
+                ["club_admin", "Eigen club: teambeheerders aanstellen, leden inzien."],
+                ["team_admin", "Één team: leden toevoegen/verwijderen, types wijzigen, PII bewerken."]
+              ]
+            },
+            { "type": "p", "text": "Alleen super_admin wijst super_admin en club_admin toe of in. club_admin of super_admin stelt team_admin aan. Team_admin wijst geen rollen toe." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wedstrijden",
+      "title": "4. Wedstrijden en Nevobo",
+      "sections": [
+        {
+          "id": "databron-cache",
+          "title": "Databron en cache",
+          "blocks": [
+            { "type": "p", "text": "Programma en uitslagen komen uit Nevobo (export/API). De server cachet feeds in SQLite; TTL’s zijn dynamisch (schema vs uitslagen vs standen)." },
+            { "type": "p", "text": "Wedstrijdlijsten: aankomend op datum oplopend, uitslagen meest recent eerst." }
+          ]
+        },
+        {
+          "id": "detail",
+          "title": "Wedstrijddetail",
+          "blocks": [
+            { "type": "ul", "items": ["Teams, datum/tijd, locatie; uitslag en sets na afloop.", "Uitwedstrijd + teamlid: verzameltijd (45 min + reistijd, afgerond op 5 min) en routekaart waar beschikbaar.", "Media, carpool (alleen uit, alleen teamleden), poule-stand indien beschikbaar."] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "title": "5. Media en reel",
+      "sections": [
+        {
+          "id": "upload",
+          "title": "Upload",
+          "blocks": [
+            { "type": "p", "text": "Vanaf wedstrijddetail: foto/video, meerdere bestanden, camera op mobiel. Maximaal 50 MB per bestand; typische image- en videoformaten." },
+            { "type": "p", "text": "Alleen spelers en coaches van het betreffende team. Kwaliteitswaarschuwing mogelijk bij donkere of wazige foto’s." }
+          ]
+        },
+        {
+          "id": "reel",
+          "title": "Reel-viewer",
+          "blocks": [
+            { "type": "ul", "items": ["Swipe of pijltjes om te bladeren.", "Video’s spelen automatisch; geluid schakelbaar.", "Likes, reacties, views; verwijderen voor uploader/beheer.", "Blur-editor op foto’s waar van toepassing (zie Gezichtsblur)."] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "blur",
+      "title": "6. Gezichtsblurring",
+      "sections": [
+        {
+          "id": "anoniem",
+          "title": "Anonieme modus",
+          "blocks": [
+            { "type": "p", "text": "Opt-in via profiel. Tot 5 referentiefoto’s; strenge kwaliteitseisen op referentie-upload." },
+            { "type": "p", "text": "Bij team-upload: als het team anonieme leden heeft, kan automatische blur op matchende gezichten worden toegepast. Server bewaart .orig en blur_regions." }
+          ]
+        },
+        {
+          "id": "toggle",
+          "title": "Handmatig blur/unblur",
+          "blocks": [
+            { "type": "p", "text": "Uploader (en beheer) kan in de reel-editor gezichten toggelen, op punt tikken, of origineel herstellen — afhankelijk van rechten en teamcontext." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "carpool",
+      "title": "7. Carpool",
+      "sections": [
+        {
+          "id": "regels",
+          "title": "Zichtbaarheid en regels",
+          "blocks": [
+            { "type": "p", "text": "Alleen bij uitwedstrijden en alleen voor teamleden van het spelende team." },
+            { "type": "ul", "items": ["Eén actief aanbod per gebruiker per wedstrijd.", "Boeken bij anderen; niet je eigen aanbod; annuleren mogelijk."] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "social",
+      "title": "8. Sociale feed",
+      "sections": [
+        {
+          "id": "feed",
+          "title": "Feed en volgen",
+          "blocks": [
+            { "type": "p", "text": "Persoonlijke feed: eigen berichten, eigen club, gevolgde clubs en teams. Paginering in blokken van 20." },
+            { "type": "p", "text": "Berichten: tekst of media-posts. Volgen/ontvolgen van teams en clubs vanaf teampagina en ontdekken." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gamification",
+      "title": "9. XP, badges en doelen",
+      "sections": [
+        {
+          "id": "xp-badges",
+          "title": "XP en badges",
+          "blocks": [
+            { "type": "p", "text": "XP stijgt door activiteiten; levels volgens serverconfiguratie. Badges bij mijlpalen (o.a. eerste foto, carpool, volgen)." },
+            {
+              "type": "table",
+              "headers": ["Slug", "Trigger (indicatief)"],
+              "rows": [
+                ["team_player", "Registratie met team"],
+                ["photo_uploader", "Eerste foto-upload"],
+                ["five_photos", "5 foto’s"],
+                ["social_butterfly", "Veel volgen"],
+                ["carpool_hero", "Eerste lift aangeboden"]
+              ]
+            },
+            { "type": "p", "text": "Clubranglijst (top XP) op het profiel wanneer een vereniging gekoppeld is." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "overig",
+      "title": "10. Privacy, PWA en beperkingen",
+      "sections": [
+        {
+          "id": "privacy-pwa",
+          "title": "Privacy en PWA",
+          "blocks": [
+            { "type": "p", "text": "Privacytekst: Profiel → Privacy & AVG. PWA: installeerbaar; service worker cachet statische assets; API gaat altijd naar de server. Cache-bump bij deploy via sw.js en app.js-versie." }
+          ]
+        },
+        {
+          "id": "bekend",
+          "title": "Bekende beperkingen",
+          "blocks": [
+            { "type": "ul", "items": ["Geen self-service wachtwoord-reset in de app.", "Nevobo-integratie kan zonder aankondiging wijzigen.", "Gezichtsblur is heuristisch — niet 100% foutloos.", "JWT 7 dagen, geen refresh-token in UI."] }
+          ]
+        }
+      ]
+    }
+  ]
+}

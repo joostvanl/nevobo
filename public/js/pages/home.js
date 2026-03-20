@@ -293,16 +293,15 @@ async function resolveMediaTeamNames(recentMedia, memberTeams, followedTeams) {
 
   // Collect unique club nevobo codes to fetch schedules for
   const uniqueCodes = [...new Set(allTeams.map(t => t.nevobo_code).filter(Boolean))];
-  const scheduleMatches = [];
-  for (const code of uniqueCodes) {
-    try {
-      const [s, r] = await Promise.all([
+  const batches = await Promise.all(
+    uniqueCodes.map(code =>
+      Promise.all([
         api(`/api/nevobo/club/${code}/schedule`).catch(() => ({ matches: [] })),
         api(`/api/nevobo/club/${code}/results`).catch(() => ({ matches: [] })),
-      ]);
-      scheduleMatches.push(...(s.matches || []), ...(r.matches || []));
-    } catch (_) { /* ignore */ }
-  }
+      ]).then(([s, r]) => [...(s.matches || []), ...(r.matches || [])])
+    )
+  );
+  const scheduleMatches = batches.flat();
   if (!scheduleMatches.length) return;
 
   for (const m of itemsWithMatch) {
@@ -327,11 +326,6 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
   if (!el) return;
   if (!recentMedia.length) { el.innerHTML = ''; return; }
 
-  // Resolve correct team names from match context before first render
-  await resolveMediaTeamNames(recentMedia, memberTeams, followedTeams);
-
-  if (!el.isConnected) return;
-
   const fallbackNevobo = (memberTeams[0]?.nevobo_code || followedTeams[0]?.nevobo_code) || null;
   const clubLogoUrl = (m) => {
     if (m.club_logo_url) return m.club_logo_url;
@@ -340,7 +334,8 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
     return null;
   };
 
-  el.innerHTML = `
+  function mountHomeReel() {
+    el.innerHTML = `
     <div class="hm-reel-wrap">
       <div class="hm-reel-header">
         <span class="hm-reel-title">📸 Laatste beelden</span>
@@ -358,28 +353,39 @@ async function loadMedia(recentMedia, memberTeams, followedTeams) {
       </div>
     </div>`;
 
-  // Scope to #hm-media subtree — after await, el may be detached; document.getElementById would miss it
-  const reelTrack = el.querySelector('#hm-reel-track');
-  if (!reelTrack) return;
+    const reelTrack = el.querySelector('#hm-reel-track');
+    if (!reelTrack) return;
 
-  // tap → open fullscreen viewer
-  reelTrack.querySelectorAll('.hm-reel-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const clickedIdx = parseInt(card.dataset.index);
-      // Pass the already-playing video element so the viewer can reuse it
-      const existingVideo = card.querySelector('video.hm-reel-media');
-      openReelViewer(recentMedia, clickedIdx, {
-        sourceVideo: existingVideo,
-        fallbackNevoboCode: fallbackNevobo,
-        fetchMore: async (offset) => {
-          const data = await api(`/api/social/media-feed?offset=${offset}&limit=20`);
-          return data.media || [];
-        },
+    reelTrack.querySelectorAll('.hm-reel-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const clickedIdx = parseInt(card.dataset.index);
+        const existingVideo = card.querySelector('video.hm-reel-media');
+        openReelViewer(recentMedia, clickedIdx, {
+          sourceVideo: existingVideo,
+          fallbackNevoboCode: fallbackNevobo,
+          fetchMore: async (offset) => {
+            const data = await api(`/api/social/media-feed?offset=${offset}&limit=20`);
+            return data.media || [];
+          },
+        });
       });
     });
-  });
 
-  setupReelStripVideoAutoplay(reelTrack);
+    setupReelStripVideoAutoplay(reelTrack);
+  }
+
+  // Tegels + noise meteen; teamlabels verfijnen we na Nevobo (parallel per club)
+  mountHomeReel();
+
+  await resolveMediaTeamNames(recentMedia, memberTeams, followedTeams);
+  if (!el.isConnected) return;
+  recentMedia.forEach((m, i) => {
+    const card = el.querySelector(`.hm-reel-card[data-index="${i}"]`);
+    const teamEl = card?.querySelector('.hm-reel-team');
+    if (!teamEl) return;
+    const label = m.team_name || m.club_name_media;
+    if (label) teamEl.textContent = label;
+  });
 }
 
 /* ─── results ─────────────────────────────────────────────────────────────── */

@@ -683,11 +683,17 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
     // For TikTok: move action buttons to bottom-left so TikTok's own right-side controls stay accessible
     overlay.querySelector('#rv-actions').classList.toggle('rv-actions--left', m.file_type === 'tiktok');
 
-    // Nav arrows: always visible on embed slides (shield blocks swipe), hidden on normal slides
+    // Nav arrows: altijd bij embeds (swipe vaak geblokkeerd); bij eigen foto/video op desktop/muis
+    // zodat vorige/volgende werkt zonder touch-swipe en klikken niet “door” het filmpje gaan.
     const prevBtn = overlay.querySelector('#rv-prev');
     const nextBtn = overlay.querySelector('#rv-next');
-    if (prevBtn) prevBtn.style.display = isEmbed ? 'flex' : 'none';
-    if (nextBtn) nextBtn.style.display = isEmbed ? 'flex' : 'none';
+    const multi = list.length > 1;
+    const desktopLike =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(pointer: fine)').matches || window.matchMedia('(min-width: 720px)').matches);
+    const showNavArrows = multi && (isEmbed || desktopLike);
+    if (prevBtn) prevBtn.style.display = showNavArrows ? 'flex' : 'none';
+    if (nextBtn) nextBtn.style.display = showNavArrows ? 'flex' : 'none';
 
     // Show/hide delete button
     const showDel = !!(onDelete && canDelete && canDelete(m));
@@ -868,7 +874,7 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
         reelCard.insertBefore(sourceVideo, reelCard.firstChild);
       }
     }
-    window.removeEventListener('resize', syncTrackSize);
+    window.removeEventListener('resize', onReelResize);
     document.removeEventListener('keydown', onKey);
     document.body.style.overflow = '';
     overlay.remove();
@@ -878,7 +884,11 @@ export function openReelViewer(items, startIdx = 0, options = {}) {
   // Build & position
   buildSlides();
   syncTrackSize();
-  window.addEventListener('resize', syncTrackSize);
+  function onReelResize() {
+    syncTrackSize();
+    updateMeta();
+  }
+  window.addEventListener('resize', onReelResize);
 
   const frameW = overlay.querySelector('.rv-frame')?.offsetWidth || window.innerWidth;
   track.style.transition = 'none';
