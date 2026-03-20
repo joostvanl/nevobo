@@ -295,4 +295,6 @@ try {
   }
 } catch (e) { console.error('[db] training_venues migration failed:', e.message); }
 
+require('./training-seed')(db);
+
 module.exports = db;
