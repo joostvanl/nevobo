@@ -130,28 +130,41 @@ router.post('/plan-season', verifyToken, (req, res) => {
 
   const maxPassengerSeats = seatsPerCar - 1;
 
-  const existingOffersStmt = db.prepare(`
+  const allOffersStmt = db.prepare(`
     SELECT user_id, seats_available
-    FROM carpool_offers
-    WHERE match_id = ? AND team_id = ? AND coach_planned = 0
+    FROM carpool_offers WHERE match_id = ?
   `);
   const insertOffer = db.prepare(`
     INSERT INTO carpool_offers (match_id, user_id, seats_available, departure_point, departure_time, note, team_id, coach_planned)
     VALUES (?, ?, ?, NULL, NULL, ?, ?, 1)
   `);
-  const delPlanned = db.prepare(
-    'DELETE FROM carpool_offers WHERE match_id = ? AND team_id = ? AND coach_planned = 1'
+
+  const dedupedMatchIds = [];
+  const seenMid = new Set();
+  for (const mid of matchIds) {
+    if (typeof mid !== 'string' || !mid.trim()) continue;
+    const m = mid.trim();
+    if (seenMid.has(m)) continue;
+    seenMid.add(m);
+    dedupedMatchIds.push(m);
+  }
+
+  const allCovered = dedupedMatchIds.every(
+    mid => allOffersStmt.all(mid).reduce((s, r) => s + 1 + r.seats_available, 0) >= totalTravelers
   );
+  if (allCovered) {
+    return res.status(409).json({
+      ok: false,
+      error: 'Alle geselecteerde wedstrijden hebben al voldoende capaciteit. Verwijder eerst handmatig één of meer liften als je opnieuw wilt verdelen.',
+    });
+  }
 
   const results = [];
-  const seenMid = new Set();
 
   const runMatch = db.transaction((matchId) => {
-    const existingOffers = existingOffersStmt.all(matchId, teamId);
-    const existingDriverIds = new Set(existingOffers.map(r => r.user_id));
-    const capExisting = existingOffers.reduce((sum, r) => sum + 1 + r.seats_available, 0);
-
-    delPlanned.run(matchId, teamId);
+    const existing = allOffersStmt.all(matchId);
+    const existingDriverIds = new Set(existing.map(r => r.user_id));
+    const capExisting = existing.reduce((sum, r) => sum + 1 + r.seats_available, 0);
 
     if (capExisting >= totalTravelers) {
       results.push({ match_id: matchId, drivers: [], cars_added: 0, capacity_existing: capExisting });
@@ -181,13 +194,7 @@ router.post('/plan-season', verifyToken, (req, res) => {
   });
 
   try {
-    for (const mid of matchIds) {
-      if (typeof mid !== 'string' || !mid.trim()) continue;
-      const m = mid.trim();
-      if (seenMid.has(m)) continue;
-      seenMid.add(m);
-      runMatch(m);
-    }
+    for (const m of dedupedMatchIds) runMatch(m);
   } catch (err) {
     if (err.message === 'NEED_DRIVERS') {
       return res.status(400).json({
@@ -220,16 +227,10 @@ router.patch('/offer/:offerId', verifyToken, (req, res) => {
   }
 
   const { seats_available, departure_point, departure_time, note } = req.body || {};
-  const booked = db
-    .prepare('SELECT COUNT(*) AS n FROM carpool_bookings WHERE offer_id = ?')
-    .get(offer.id).n;
   const nextSeats =
     seats_available !== undefined ? parseInt(seats_available, 10) : offer.seats_available;
-  if (Number.isNaN(nextSeats) || nextSeats < booked) {
-    return res.status(400).json({
-      ok: false,
-      error: `Minimaal ${booked} plaatsen (al geboekt)`,
-    });
+  if (Number.isNaN(nextSeats) || nextSeats < 1) {
+    return res.status(400).json({ ok: false, error: 'Minimaal 1 plek' });
   }
 
   db.prepare(

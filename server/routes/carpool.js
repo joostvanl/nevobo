@@ -120,6 +120,39 @@ router.post('/:matchId/offer', verifyToken, (req, res) => {
   }
 });
 
+// PATCH /api/carpool/offer/:offerId — eigen aanbod bewerken
+router.patch('/offer/:offerId', verifyToken, (req, res) => {
+  const offer = db.prepare('SELECT * FROM carpool_offers WHERE id = ?').get(req.params.offerId);
+  if (!offer) return res.status(404).json({ ok: false, error: 'Aanbod niet gevonden' });
+  if (offer.user_id !== req.user.id) {
+    return res.status(403).json({ ok: false, error: 'Geen toestemming' });
+  }
+
+  const { seats_available, departure_point, departure_time, note } = req.body || {};
+  const nextSeats =
+    seats_available !== undefined ? parseInt(seats_available, 10) : offer.seats_available;
+  if (Number.isNaN(nextSeats) || nextSeats < 1) {
+    return res.status(400).json({ ok: false, error: 'Minimaal 1 plek' });
+  }
+
+  db.prepare(
+    `UPDATE carpool_offers SET
+      seats_available  = COALESCE(?, seats_available),
+      departure_point  = COALESCE(?, departure_point),
+      departure_time   = COALESCE(?, departure_time),
+      note             = COALESCE(?, note)
+    WHERE id = ?`
+  ).run(
+    seats_available !== undefined ? nextSeats : null,
+    departure_point !== undefined ? departure_point : null,
+    departure_time  !== undefined ? departure_time  : null,
+    note            !== undefined ? note            : null,
+    offer.id
+  );
+  const updated = db.prepare('SELECT * FROM carpool_offers WHERE id = ?').get(offer.id);
+  res.json({ ok: true, offer: updated });
+});
+
 // DELETE /api/carpool/offer/:offerId — eigen aanbod, of coach/teambeheer voor team-carpool
 router.delete('/offer/:offerId', verifyToken, (req, res) => {
   const offer = db.prepare('SELECT * FROM carpool_offers WHERE id = ?').get(req.params.offerId);
@@ -131,52 +164,6 @@ router.delete('/offer/:offerId', verifyToken, (req, res) => {
   }
 
   db.prepare('DELETE FROM carpool_offers WHERE id = ?').run(req.params.offerId);
-  res.json({ ok: true });
-});
-
-// POST /api/carpool/offer/:offerId/book — book a seat
-router.post('/offer/:offerId/book', verifyToken, (req, res) => {
-  const offer = db.prepare(`
-    SELECT co.*,
-      (SELECT COUNT(*) FROM carpool_bookings cb WHERE cb.offer_id = co.id) AS booked_seats
-    FROM carpool_offers co WHERE co.id = ?
-  `).get(req.params.offerId);
-
-  if (!offer) return res.status(404).json({ ok: false, error: 'Aanbod niet gevonden' });
-  if (!viewerMaySeeCarpoolOffer(req.user.id, offer)) {
-    return res.status(403).json({ ok: false, error: 'Geen toegang tot dit aanbod' });
-  }
-  if (offer.user_id === req.user.id) return res.status(400).json({ ok: false, error: 'Je kunt niet in je eigen auto zitten' });
-  if (offer.booked_seats >= offer.seats_available) {
-    return res.status(409).json({ ok: false, error: 'Geen plaatsen meer beschikbaar' });
-  }
-
-  try {
-    const result = db.prepare(
-      'INSERT INTO carpool_bookings (offer_id, user_id) VALUES (?, ?)'
-    ).run(req.params.offerId, req.user.id);
-    const booking = db.prepare('SELECT * FROM carpool_bookings WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json({ ok: true, booking });
-  } catch (err) {
-    if (err.message.includes('UNIQUE')) {
-      return res.status(409).json({ ok: false, error: 'Je hebt al een plek geboekt bij dit aanbod' });
-    }
-    throw err;
-  }
-});
-
-// DELETE /api/carpool/booking/:bookingId — eigen boeking of coach van team-carpool
-router.delete('/booking/:bookingId', verifyToken, (req, res) => {
-  const booking = db.prepare('SELECT * FROM carpool_bookings WHERE id = ?').get(req.params.bookingId);
-  if (!booking) return res.status(404).json({ ok: false, error: 'Boeking niet gevonden' });
-  const offer = db.prepare('SELECT * FROM carpool_offers WHERE id = ?').get(booking.offer_id);
-  const coachOk =
-    offer?.team_id && canManageTeamCarpool(req.user.id, offer.team_id);
-  if (booking.user_id !== req.user.id && !coachOk) {
-    return res.status(403).json({ ok: false, error: 'Geen toestemming' });
-  }
-
-  db.prepare('DELETE FROM carpool_bookings WHERE id = ?').run(req.params.bookingId);
   res.json({ ok: true });
 });
 

@@ -152,6 +152,7 @@ export async function render(container, params = {}) {
     `;
 
     if (matches.length) {
+      const uid = user.id;
       Promise.all(
         matches.map((m, i) =>
           api(`/api/carpool/${encodeMatchId(m)}/summary`)
@@ -163,14 +164,18 @@ export async function render(container, params = {}) {
           const el = container.querySelector(`[data-carpool-stats="${i}"]`);
           if (!el) continue;
           if (!data?.ok) {
-            el.textContent = '—';
+            el.textContent = '\u2014';
             continue;
           }
-          const nDrivers = Number(data.offer_count) || 0;
+          const drivers = data.drivers || [];
           const free = Number(data.free_seats) || 0;
-          const ch = nDrivers === 1 ? 'chauffeur' : 'chauffeurs';
+          const cars = drivers.map(() => '\uD83D\uDE97').join('');
           const pl = free === 1 ? 'plek vrij' : 'plekken vrij';
-          el.textContent = `${nDrivers} ${ch} · ${free} ${pl}`;
+          el.innerHTML = `${cars ? `${cars} \u00B7 ` : ''}${free} ${pl}`;
+
+          if (drivers.some(d => d.user_id === uid)) {
+            el.closest('.match-card')?.classList.add('carpool-driving');
+          }
         }
       });
     }
@@ -198,7 +203,7 @@ async function renderCarpoolForMatch(container, matchId, matchInfo = null) {
     ]);
     const manageable = new Set(coachCtx.moderation_team_ids || []);
 
-    const totalAvailable = offers.reduce((sum, o) => sum + (o.seats_available - o.booked_seats), 0);
+    const totalAvailable = offers.reduce((sum, o) => sum + o.seats_available, 0);
 
     container.innerHTML = `
       <div class="page-hero">
@@ -252,21 +257,6 @@ async function renderCarpoolForMatch(container, matchId, matchInfo = null) {
       showOfferModal(matchId, container, matchInfo);
     });
 
-    container.querySelectorAll('.book-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const offerId = btn.dataset.offer;
-        btn.disabled = true;
-        try {
-          await api(`/api/carpool/offer/${offerId}/book`, { method: 'POST' });
-          showToast('Plek geboekt! 🚗', 'success');
-          renderCarpoolForMatch(container, matchId, matchInfo);
-        } catch (err) {
-          showToast(err.message, 'error');
-          btn.disabled = false;
-        }
-      });
-    });
-
     container.querySelectorAll('.cancel-offer-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const offerId = btn.dataset.offer;
@@ -281,17 +271,10 @@ async function renderCarpoolForMatch(container, matchId, matchInfo = null) {
       });
     });
 
-    container.querySelectorAll('.cancel-booking-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const bookingId = btn.dataset.booking;
-        if (!confirm('Boeking annuleren?')) return;
-        try {
-          await api(`/api/carpool/booking/${bookingId}`, { method: 'DELETE' });
-          showToast('Boeking geannuleerd', 'info');
-          renderCarpoolForMatch(container, matchId, matchInfo);
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
+    container.querySelectorAll('.edit-own-offer-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const offer = offers.find(o => String(o.id) === String(btn.dataset.offer));
+        if (offer) showEditOwnOfferModal(offer, matchId, container, matchInfo);
       });
     });
 
@@ -302,19 +285,6 @@ async function renderCarpoolForMatch(container, matchId, matchInfo = null) {
       });
     });
 
-    container.querySelectorAll('.coach-del-booking-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const bookingId = btn.dataset.booking;
-        if (!confirm('Deze passagier uit de auto halen?')) return;
-        try {
-          await api(`/api/carpool/booking/${bookingId}`, { method: 'DELETE' });
-          showToast('Boeking verwijderd', 'info');
-          renderCarpoolForMatch(container, matchId, matchInfo);
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      });
-    });
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
   }
@@ -323,39 +293,13 @@ async function renderCarpoolForMatch(container, matchId, matchInfo = null) {
 function renderOfferCard(offer, manageableTeamIds) {
   const userId = window.appState?.user?.id;
   const isOwn = offer.user_id === userId;
-  const free = offer.seats_available - offer.booked_seats;
-  const isFull = free <= 0;
-  const myBooking = offer.bookings.find(b => b.user_id === userId);
+  const seats = offer.seats_available;
   const coachManage = offer.team_id && manageableTeamIds.has(offer.team_id);
 
-  const passengerRow = offer.bookings
-    .map(
-      b => `
-    <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.25rem">
-      ${renderAvatar(b.passenger_name, b.passenger_avatar, 'sm')}
-      <span style="font-size:0.82rem">${escHtml(b.passenger_name)}</span>
-      ${
-        coachManage
-          ? `<button type="button" class="btn btn-ghost btn-sm coach-del-booking-btn" data-booking="${b.id}" style="padding:0.1rem 0.35rem;font-size:0.7rem">✕</button>`
-          : ''
-      }
-    </div>`
-    )
-    .join('');
-
-  let paxAction = '';
-  if (myBooking) {
-    paxAction = `<div class="flex gap-2" style="flex-wrap:wrap;margin-top:0.5rem">
-      <button class="btn btn-secondary btn-sm cancel-booking-btn" data-booking="${myBooking.id}">Boeking annuleren</button>
-    </div>`;
-  } else if (!isFull && !isOwn) {
-    paxAction = `<div class="flex gap-2" style="flex-wrap:wrap;margin-top:0.5rem">
-      <button class="btn btn-accent btn-sm book-btn" data-offer="${offer.id}">Plek reserveren 🙋</button>
-    </div>`;
-  } else if (isFull && !isOwn) {
-    paxAction = `<div class="mt-2"><span class="chip chip-neutral">Vol</span></div>`;
-  } else if (isOwn && !coachManage) {
-    paxAction = `<div class="flex gap-2" style="flex-wrap:wrap;margin-top:0.5rem">
+  let actions = '';
+  if (isOwn && !coachManage) {
+    actions = `<div class="flex gap-2" style="flex-wrap:wrap;margin-top:0.5rem">
+      <button class="btn btn-secondary btn-sm edit-own-offer-btn" data-offer="${offer.id}">✏️ Bewerken</button>
       <button class="btn btn-secondary btn-sm cancel-offer-btn" data-offer="${offer.id}">Annuleren</button>
     </div>`;
   }
@@ -376,18 +320,73 @@ function renderOfferCard(offer, manageableTeamIds) {
           ${offer.departure_point ? `<div class="text-muted text-small">📍 ${escHtml(offer.departure_point)}</div>` : ''}
           ${offer.departure_time ? `<div class="text-muted text-small">🕐 ${escHtml(offer.departure_time)}</div>` : ''}
         </div>
-        <span class="carpool-seats ${isFull ? 'full' : ''}">
-          ${isFull ? 'Vol' : `${free} plekk${free === 1 ? '' : 'en'} vrij`}
-        </span>
+        <span class="carpool-seats">${seats} plekk${seats === 1 ? '' : 'en'} vrij</span>
       </div>
 
       ${offer.note ? `<p class="text-muted" style="font-size:0.85rem;margin-bottom:0.75rem">${escHtml(offer.note)}</p>` : ''}
 
-      ${offer.bookings.length > 0 ? `<div class="carpool-passengers mb-2">${passengerRow}</div>` : ''}
-
-      ${paxAction}
+      ${actions}
       ${coachRow}
     </div>`;
+}
+
+function showEditOwnOfferModal(offer, matchId, container, matchInfo) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:360px">
+      <h3 style="margin-bottom:1rem">✏️ Lift bewerken</h3>
+      <form id="eoo-form">
+        <div class="form-group">
+          <label class="form-label">Aantal vrije plekken</label>
+          <input type="number" id="eoo-seats" class="form-input" min="1" max="8" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vertrekpunt</label>
+          <input type="text" id="eoo-point" class="form-input" placeholder="Bijv. Parkeerplaats Jumbo" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vertrektijd</label>
+          <input type="text" id="eoo-time" class="form-input" placeholder="Bijv. 13:30" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Opmerking</label>
+          <input type="text" id="eoo-note" class="form-input" placeholder="Bijv. Bel me even van tevoren" />
+        </div>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-secondary" style="flex:1" id="eoo-cancel">Sluiten</button>
+          <button type="submit" class="btn btn-primary" style="flex:1" id="eoo-save">Opslaan</button>
+        </div>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('eoo-seats').value = String(offer.seats_available);
+  document.getElementById('eoo-point').value = offer.departure_point || '';
+  document.getElementById('eoo-time').value = offer.departure_time || '';
+  document.getElementById('eoo-note').value = offer.note || '';
+  overlay.querySelector('#eoo-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#eoo-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = overlay.querySelector('#eoo-save');
+    btn.disabled = true;
+    try {
+      await api(`/api/carpool/offer/${offer.id}`, {
+        method: 'PATCH',
+        body: {
+          seats_available: parseInt(document.getElementById('eoo-seats').value, 10),
+          departure_point: document.getElementById('eoo-point').value || null,
+          departure_time: document.getElementById('eoo-time').value || null,
+          note: document.getElementById('eoo-note').value || null,
+        },
+      });
+      overlay.remove();
+      showToast('Opgeslagen', 'success');
+      renderCarpoolForMatch(container, matchId, matchInfo);
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
 }
 
 function showCoachEditOfferModal(offer, matchId, container, matchInfo) {
@@ -399,7 +398,7 @@ function showCoachEditOfferModal(offer, matchId, container, matchInfo) {
       <form id="cco-form">
         <div class="form-group">
           <label class="form-label">Vrije plekken (passagiers)</label>
-          <input type="number" id="cco-seats" class="form-input" min="${offer.booked_seats}" max="12" required />
+          <input type="number" id="cco-seats" class="form-input" min="1" max="12" required />
         </div>
         <div class="form-group">
           <label class="form-label">Vertrekpunt</label>
