@@ -27,7 +27,7 @@ const NEVOBO_BASE = 'https://api.nevobo.nl/export';
 
 function parseMatchItem(item) {
   const title = item.title || '';
-  const desc = item.description || '';
+  const desc = item.description || item.contentSnippet || item.content || '';
   const status = item.nevoboStatus || 'onbekend';
   const datetime = item.isoDate || (item.pubDate ? new Date(item.pubDate).toISOString() : null);
   const matchId = item.guid ? item.guid.replace(/.*\//, '') : null;

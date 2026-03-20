@@ -41,6 +41,7 @@ export async function render(container) {
         <div class="container">
           <h1>⚙️ Beheer</h1>
           <p>Rollen &amp; ledenbeheer</p>
+          ${isSuperAdmin || clubAdminRoles.length ? `<button class="btn btn-sm btn-secondary" id="admin-training-planner" style="margin-top:0.5rem">📋 Trainingsplanner</button>` : ''}
         </div>
       </div>
       <div class="container">
@@ -56,6 +57,9 @@ export async function render(container) {
 
     document.getElementById('admin-help-manual')?.addEventListener('click', () =>
       navigate('help', { hash: 'admin-manual-team-leden' })
+    );
+    document.getElementById('admin-training-planner')?.addEventListener('click', () =>
+      navigate('training-planner')
     );
 
     // Tab switching

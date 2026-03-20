@@ -137,6 +137,51 @@ const migrations = [
   )`,
   `ALTER TABLE carpool_offers ADD COLUMN team_id INTEGER REFERENCES teams(id)`,
   `ALTER TABLE carpool_offers ADD COLUMN coach_planned INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS training_locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    nevobo_venue_name TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_venues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES training_locations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'hall',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_defaults (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    venue_id INTEGER NOT NULL REFERENCES training_venues(id) ON DELETE CASCADE,
+    day_of_week INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_exception_weeks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    iso_week TEXT NOT NULL,
+    label TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(club_id, iso_week)
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_exceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    venue_id INTEGER NOT NULL REFERENCES training_venues(id) ON DELETE CASCADE,
+    iso_week TEXT NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `ALTER TABLE training_venues ADD COLUMN nevobo_field_slug TEXT`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
@@ -230,5 +275,24 @@ db.exec(`
       SELECT 1 FROM face_references fr WHERE fr.user_id = users.id AND fr.file_path = users.face_reference_path
     )
 `);
+
+// Migrate training_venues: add location_id column (schema v2 — no data yet)
+try {
+  const tvInfo = db.prepare("PRAGMA table_info(training_venues)").all();
+  const hasLocationId = tvInfo.some(c => c.name === 'location_id');
+  if (!hasLocationId && tvInfo.length > 0) {
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      DROP TABLE IF EXISTS training_exceptions;
+      DROP TABLE IF EXISTS training_defaults;
+      DROP TABLE IF EXISTS training_venues;
+    `);
+    db.pragma('foreign_keys = ON');
+    for (const m of migrations.slice(-4)) {
+      try { db.exec(m); } catch (_) {}
+    }
+    console.log('[db] Migrated training_venues to v2 (location_id)');
+  }
+} catch (e) { console.error('[db] training_venues migration failed:', e.message); }
 
 module.exports = db;

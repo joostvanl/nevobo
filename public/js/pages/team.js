@@ -248,6 +248,9 @@ function renderPage(container, opts) {
         </div>
       </div>
 
+      <!-- Trainingen deze week -->
+      <div id="team-training-schedule"></div>
+
       <!-- Poule standings — loaded async, shown between results and members -->
       <div id="poule-stands">
         <div class="card mb-3">
@@ -457,6 +460,32 @@ function renderPage(container, opts) {
     // No DB team id — hide the media placeholder
     const mediaEl = document.getElementById('team-media');
     if (mediaEl) mediaEl.remove();
+  }
+
+  // ── Load training schedule async ───────────────────────────────────────────
+  const trainingEl = document.getElementById('team-training-schedule');
+  if (trainingEl && teamId) {
+    (async () => {
+      try {
+        const data = await api(`/api/training/team/${teamId}/schedule`);
+        const ts = data.trainings || [];
+        const dayNames = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
+        if (ts.length === 0) {
+          trainingEl.innerHTML = '';
+          return;
+        }
+        const rows = ts.map(t => {
+          const loc = t.location_name ? `${escHtml(t.location_name)} · ` : '';
+          return `<div style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);font-size:0.88rem"><strong>${dayNames[t.day_of_week]}</strong> ${t.start_time} – ${t.end_time} · ${loc}${escHtml(t.venue_name)}</div>`;
+        }).join('');
+        const exLabel = data.is_exception ? ` <span class="chip chip-sm" style="font-size:0.65rem;background:rgba(255,193,7,0.15);color:#d4a017">afwijkend schema</span>` : '';
+        trainingEl.innerHTML = `
+          <div class="card mb-3">
+            <div class="card-header"><h3>🏋️ Trainingen deze week${exLabel}</h3></div>
+            <div class="card-body" style="padding:0">${rows}</div>
+          </div>`;
+      } catch (_) { trainingEl.innerHTML = ''; }
+    })();
   }
 
   // ── Load poule standings async ─────────────────────────────────────────────

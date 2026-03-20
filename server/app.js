@@ -54,6 +54,7 @@ app.patch('/api/platform/settings', verifyToken, requireSuperAdmin, (req, res) =
   });
 });
 app.use('/api/scout',         require('./routes/scout'));
+app.use('/api/training',      require('./routes/training'));
 
 // ─── Static files (frontend) ─────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../public')));
