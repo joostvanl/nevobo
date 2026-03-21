@@ -21,6 +21,12 @@ const TEAM_COLORS = [
 ];
 
 let _ctx = null;
+let _activeSnapshotName = null;
+const _dayZoom = {};
+const _dayScroll = {};
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 5;
+const ZOOM_STEP = 0.2;
 
 function pxToMinutes(px, trackWidth) {
   return Math.round((px / trackWidth) * TOTAL_MINUTES / SNAP) * SNAP;
@@ -119,12 +125,14 @@ export async function render(container) {
 async function loadAndRender() {
   const c = _ctx;
 
-  const [locData, venueData] = await Promise.all([
+  const [locData, venueData, snapActive] = await Promise.all([
     api('/api/training/locations'),
     api('/api/training/venues'),
+    api('/api/training/snapshots/active'),
   ]);
   c.locations = locData.locations || [];
   c.venues = venueData.venues || [];
+  _activeSnapshotName = snapActive.active?.name || null;
 
   let trainings, isException = false, exceptionLabel = null;
   if (c.mode === 'blueprint') {
@@ -201,12 +209,26 @@ function mapMatchesToVenues(matches, ctx) {
 
 function renderPlanner() {
   const c = _ctx;
+  // Preserve scroll positions before DOM rebuild
+  if (c.container) {
+    c.container.querySelectorAll('.tp-day').forEach(dayEl => {
+      const dow = dayEl.dataset.dow;
+      const scrollEl = dayEl.querySelector('.tp-day-scroll');
+      if (scrollEl && scrollEl.scrollLeft > 0) _dayScroll[dow] = scrollEl.scrollLeft;
+    });
+  }
   const { trainings, isException } = c.weekData;
   const editable = c.mode === 'blueprint' || isException;
 
+  const isBlueprint = c.mode === 'blueprint';
   let modeButtons = '';
-  if (c.mode === 'blueprint') {
-    modeButtons = `<span class="tp-badge tp-badge-blueprint">Blauwdruk</span>
+  if (isBlueprint) {
+    const snapLabel = _activeSnapshotName
+      ? `<span class="tp-badge" style="background:var(--primary-color);color:#fff;font-weight:500">${escHtml(_activeSnapshotName)}</span>`
+      : '';
+    modeButtons = `<span class="tp-badge tp-badge-blueprint">Blauwdruk</span>${snapLabel}
+      <button class="btn btn-sm btn-primary" id="tp-save-snapshot" style="font-size:0.78rem">💾 Opslaan als</button>
+      <button class="btn btn-sm btn-secondary" id="tp-load-snapshot" style="font-size:0.78rem">📂 Laden</button>
       <button class="btn btn-sm btn-secondary" id="tp-to-week">Weekweergave</button>`;
   } else {
     modeButtons = `<button class="btn btn-sm btn-secondary" id="tp-to-blueprint">Blauwdruk</button>`;
@@ -226,25 +248,27 @@ function renderPlanner() {
       <button id="tp-next-week">▶</button>
     </div>` : '';
 
-  // Location + venue management bar
+  // Location + venue management panel
   let mgmtBarHtml = '';
   for (const loc of c.locations) {
     const locVenues = c.venues.filter(v => v.location_id === loc.id);
     const nevoboTag = loc.nevobo_venue_name
-      ? `<span style="font-size:0.65rem;color:var(--text-muted)"> (${escHtml(loc.nevobo_venue_name)})</span>` : '';
+      ? ` <span class="tp-loc-nevobo">(${escHtml(loc.nevobo_venue_name)})</span>` : '';
     const venueChips = locVenues.map(v =>
-      `<span class="chip chip-neutral" style="font-size:0.75rem">${escHtml(v.name)}${editable ? ` <button class="tp-del-venue" data-id="${v.id}" style="border:none;background:none;cursor:pointer;font-size:0.65rem;padding:0 1px">✕</button>` : ''}</span>`
+      `<span class="tp-venue-chip">${escHtml(v.name)}${editable ? `<button class="tp-del-venue" data-id="${v.id}" title="Verwijder veld">✕</button>` : ''}</span>`
     ).join('');
     mgmtBarHtml += `
-      <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.4rem">
-        <strong style="font-size:0.85rem">${escHtml(loc.name)}${nevoboTag}</strong>
-        ${venueChips}
-        ${editable ? `<button class="btn btn-sm btn-secondary tp-add-court" data-loc-id="${loc.id}" style="font-size:0.72rem;padding:0.15rem 0.45rem">+ Veld</button>` : ''}
-        ${editable ? `<button class="tp-del-loc" data-id="${loc.id}" style="border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--danger);padding:0 2px" title="Locatie verwijderen">✕</button>` : ''}
+      <div class="tp-loc-row">
+        <span class="tp-loc-name">${escHtml(loc.name)}${nevoboTag}</span>
+        <div class="tp-venue-chips">${venueChips}</div>
+        ${editable ? `<div class="tp-loc-actions">
+          <button class="btn btn-sm btn-secondary tp-add-court" data-loc-id="${loc.id}" style="font-size:0.7rem;padding:0.12rem 0.4rem">+ Veld</button>
+          <button class="tp-del-loc" data-id="${loc.id}" style="border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--danger);padding:0 2px" title="Locatie verwijderen">✕</button>
+        </div>` : ''}
       </div>`;
   }
   if (editable) {
-    mgmtBarHtml += `<button class="btn btn-sm btn-secondary" id="tp-add-location">+ Locatie</button>`;
+    mgmtBarHtml += `<div class="tp-bar-footer"><button class="btn btn-sm btn-secondary" id="tp-add-location" style="font-size:0.75rem">+ Locatie</button></div>`;
   }
 
   // Day sections
@@ -309,16 +333,21 @@ function renderPlanner() {
       }
     }
 
+    const dz = _dayZoom[dow] || 1;
     daysHtml += `
-      <div class="tp-day">
-        <div class="tp-day-header">${dayLabel}</div>
-        <div class="tp-time-header">${buildTimeHeader()}</div>
-        ${venueRows}
+      <div class="tp-day" data-dow="${dow}">
+        <div class="tp-day-header">${dayLabel}${dz > 1 ? `<button class="tp-zoom-reset" data-dow="${dow}" style="margin-left:auto;border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--text-muted)">🔍 Reset zoom</button>` : ''}</div>
+        <div class="tp-day-scroll">
+          <div class="tp-day-content" style="min-width:${dz * 100}%">
+            <div class="tp-time-header">${buildTimeHeader()}</div>
+            ${venueRows}
+          </div>
+        </div>
       </div>`;
   }
 
   c.container.innerHTML = `
-    <div class="tp-wrapper">
+    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
         ${weekNav}
@@ -329,6 +358,16 @@ function renderPlanner() {
     </div>`;
 
   wireEvents();
+
+  // Restore scroll positions after DOM rebuild
+  c.container.querySelectorAll('.tp-day').forEach(dayEl => {
+    const dow = dayEl.dataset.dow;
+    const saved = _dayScroll[dow];
+    if (saved) {
+      const scrollEl = dayEl.querySelector('.tp-day-scroll');
+      if (scrollEl) requestAnimationFrame(() => { scrollEl.scrollLeft = saved; });
+    }
+  });
 }
 
 function buildTimeHeader() {
@@ -359,6 +398,9 @@ function wireEvents() {
 
   el.querySelector('#tp-to-week')?.addEventListener('click', () => { c.mode = 'week'; loadAndRender(); });
   el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => { c.mode = 'blueprint'; loadAndRender(); });
+
+  el.querySelector('#tp-save-snapshot')?.addEventListener('click', () => showSaveSnapshotModal());
+  el.querySelector('#tp-load-snapshot')?.addEventListener('click', () => showLoadSnapshotModal());
   el.querySelector('#tp-prev-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, -1); loadAndRender(); });
   el.querySelector('#tp-next-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, 1); loadAndRender(); });
 
@@ -441,52 +483,125 @@ function wireEvents() {
       setupMatchResize(block);
     });
   }
+
+  // Zoom on Ctrl+wheel, per day
+  el.querySelectorAll('.tp-day').forEach(dayEl => {
+    const scrollEl = dayEl.querySelector('.tp-day-scroll');
+    const contentEl = dayEl.querySelector('.tp-day-content');
+    if (!scrollEl || !contentEl) return;
+    const dow = parseInt(dayEl.dataset.dow, 10);
+
+    dayEl.addEventListener('wheel', (e) => {
+      if (!e.ctrlKey) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+
+      const oldZoom = _dayZoom[dow] || 1;
+      const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+      const newZoom = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom + delta)) * 100) / 100;
+      if (newZoom === oldZoom) return;
+      _dayZoom[dow] = newZoom;
+
+      const scrollRect = scrollEl.getBoundingClientRect();
+      const labelWidth = 120;
+      const mouseX = e.clientX - scrollRect.left;
+      const oldContentWidth = scrollEl.scrollWidth;
+      const posFrac = (scrollEl.scrollLeft + mouseX - labelWidth) / (oldContentWidth - labelWidth);
+
+      contentEl.style.minWidth = `${newZoom * 100}%`;
+
+      const resetBtn = dayEl.querySelector('.tp-zoom-reset');
+      if (newZoom > 1 && !resetBtn) {
+        const btn = document.createElement('button');
+        btn.className = 'tp-zoom-reset';
+        btn.dataset.dow = dow;
+        btn.style.cssText = 'margin-left:auto;border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--text-muted)';
+        btn.textContent = '🔍 Reset zoom';
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          delete _dayZoom[dow];
+          contentEl.style.minWidth = '100%';
+          scrollEl.scrollLeft = 0;
+          btn.remove();
+        });
+        dayEl.querySelector('.tp-day-header').appendChild(btn);
+      } else if (newZoom <= 1 && resetBtn) {
+        resetBtn.remove();
+        delete _dayZoom[dow];
+      }
+
+      requestAnimationFrame(() => {
+        const newContentWidth = scrollEl.scrollWidth;
+        const newScrollLeft = posFrac * (newContentWidth - labelWidth) - (mouseX - labelWidth);
+        scrollEl.scrollLeft = Math.max(0, newScrollLeft);
+      });
+    }, { passive: false });
+  });
+
+  el.querySelectorAll('.tp-zoom-reset').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const dow = parseInt(btn.dataset.dow, 10);
+      delete _dayZoom[dow];
+      const dayEl = btn.closest('.tp-day');
+      const contentEl = dayEl.querySelector('.tp-day-content');
+      const scrollEl = dayEl.querySelector('.tp-day-scroll');
+      contentEl.style.minWidth = '100%';
+      scrollEl.scrollLeft = 0;
+      btn.remove();
+    });
+  });
 }
 
 // ─── Drag ───────────────────────────────────────────────────────────────────
 
 function setupDrag(block) {
-  let startX, origLeft, moved;
-
   block.addEventListener('pointerdown', (e) => {
     if (e.target.classList.contains('tp-resize-left') || e.target.classList.contains('tp-resize-right')) return;
     e.preventDefault();
-    block.setPointerCapture(e.pointerId);
     block.classList.add('dragging');
-    const track = block.closest('.tp-venue-track');
-    startX = e.clientX;
-    origLeft = block.offsetLeft;
-    moved = false;
+    _ctx.container.querySelectorAll('.tp-day').forEach(d => d.classList.add('tp-dragging-active'));
+
+    const initTrack = block.closest('.tp-venue-track');
+    const initTrackRect = initTrack.getBoundingClientRect();
+    const grabOffsetX = e.clientX - initTrackRect.left - block.offsetLeft;
+    let moved = false;
+
+    const allRows = [..._ctx.container.querySelectorAll('.tp-venue-row')];
 
     const onMove = (ev) => {
       moved = true;
-      const dx = ev.clientX - startX;
-      const newLeft = origLeft + dx;
-      const trackW = track.offsetWidth;
-      const leftMin = pxToMinutes(Math.max(0, newLeft), trackW);
-      const leftPct = (leftMin / TOTAL_MINUTES) * 100;
-      block.style.left = `${leftPct}%`;
 
-      const dayEl = block.closest('.tp-day');
-      const rows = [...dayEl.querySelectorAll('.tp-venue-row')];
+      // Move to whichever row the mouse is over
       const mouseY = ev.clientY;
-      for (const row of rows) {
+      for (const row of allRows) {
         const r = row.getBoundingClientRect();
-        if (mouseY >= r.top && mouseY <= r.bottom && row !== block.parentElement.closest('.tp-venue-row')) {
-          row.querySelector('.tp-venue-track').appendChild(block);
+        if (mouseY >= r.top && mouseY <= r.bottom) {
+          const targetTrack = row.querySelector('.tp-venue-track');
+          if (targetTrack !== block.parentElement) targetTrack.appendChild(block);
           break;
         }
       }
+
+      // Position relative to the current track
+      const currentTrack = block.closest('.tp-venue-track');
+      const trackRect = currentTrack.getBoundingClientRect();
+      const trackW = currentTrack.offsetWidth;
+      const localX = ev.clientX - trackRect.left - grabOffsetX;
+      const leftMin = pxToMinutes(Math.max(0, Math.min(localX, trackW)), trackW);
+      block.style.left = `${(leftMin / TOTAL_MINUTES) * 100}%`;
     };
 
     const onUp = async () => {
       block.classList.remove('dragging');
-      block.removeEventListener('pointermove', onMove);
-      block.removeEventListener('pointerup', onUp);
+      _ctx.container.querySelectorAll('.tp-day').forEach(d => d.classList.remove('tp-dragging-active'));
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
       if (!moved) return;
 
       const newRow = block.closest('.tp-venue-row');
       const newVenueId = parseInt(newRow.dataset.venueId, 10);
+      const newDow = parseInt(newRow.dataset.dow, 10);
       const trackW = newRow.querySelector('.tp-venue-track').offsetWidth;
       const leftMin = pxToMinutes(block.offsetLeft, trackW);
       const startMin = HOUR_START * 60 + leftMin;
@@ -498,13 +613,18 @@ function setupDrag(block) {
       const source = block.dataset.source;
       const endpoint = source === 'default' ? `/api/training/defaults/${id}` : `/api/training/exceptions/${id}`;
       try {
-        await api(endpoint, { method: 'PATCH', body: { venue_id: newVenueId, start_time: minutesToTime(startMin), end_time: minutesToTime(Math.min(endMin, HOUR_END * 60)) } });
+        await api(endpoint, { method: 'PATCH', body: {
+          venue_id: newVenueId,
+          day_of_week: newDow,
+          start_time: minutesToTime(startMin),
+          end_time: minutesToTime(Math.min(endMin, HOUR_END * 60)),
+        } });
       } catch (err) { showToast(err.message, 'error'); }
       loadAndRender();
     };
 
-    block.addEventListener('pointermove', onMove);
-    block.addEventListener('pointerup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
   });
 }
 
@@ -651,6 +771,128 @@ function closePopover() {
   document.removeEventListener('click', closePopoverOutside);
 }
 function closePopoverOutside(e) { if (!e.target.closest('.tp-popover')) closePopover(); }
+
+// ─── Snapshot modals ────────────────────────────────────────────────────────
+
+function showSaveSnapshotModal() {
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+  overlay.innerHTML = `<div class="tp-modal">
+    <h3 style="margin:0 0 12px">Blauwdruk opslaan als</h3>
+    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">Sla de huidige blauwdruk op onder een naam zodat je deze later weer kunt terugzetten.</p>
+    <input id="tp-snap-name" class="form-control" placeholder="Naam, bijv. Seizoen 2025-2026" style="margin-bottom:12px" />
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm btn-secondary tp-snap-cancel">Annuleren</button>
+      <button class="btn btn-sm btn-primary tp-snap-save">Opslaan</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  const nameInput = overlay.querySelector('#tp-snap-name');
+  nameInput.focus();
+  overlay.querySelector('.tp-snap-cancel').onclick = () => { overlay.style.display = 'none'; };
+  overlay.querySelector('.tp-snap-save').onclick = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    try {
+      await api('/api/training/snapshots', { method: 'POST', body: { name } });
+      _activeSnapshotName = name;
+      overlay.style.display = 'none';
+      showToast && showToast(`Blauwdruk "${name}" opgeslagen ✓`);
+      loadAndRender();
+    } catch (err) { showToast && showToast('Opslaan mislukt: ' + err.message, 'error'); }
+  };
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') overlay.querySelector('.tp-snap-save').click(); });
+}
+
+async function showLoadSnapshotModal() {
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+  overlay.innerHTML = `<div class="tp-modal"><p>Laden...</p></div>`;
+  overlay.style.display = 'flex';
+
+  let snapshots;
+  try {
+    const data = await api('/api/training/snapshots');
+    snapshots = data.snapshots || [];
+  } catch (err) {
+    overlay.innerHTML = `<div class="tp-modal"><p>Fout bij laden: ${err.message}</p>
+      <button class="btn btn-sm btn-secondary tp-snap-close">Sluiten</button></div>`;
+    overlay.querySelector('.tp-snap-close').onclick = () => { overlay.style.display = 'none'; };
+    return;
+  }
+
+  if (!snapshots.length) {
+    overlay.innerHTML = `<div class="tp-modal">
+      <h3 style="margin:0 0 12px">Blauwdruk laden</h3>
+      <p style="color:var(--text-muted);font-size:.85rem">Nog geen opgeslagen blauwdrukken. Sla eerst een blauwdruk op.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-sm btn-secondary tp-snap-close">Sluiten</button>
+      </div>
+    </div>`;
+    overlay.querySelector('.tp-snap-close').onclick = () => { overlay.style.display = 'none'; };
+    return;
+  }
+
+  const rows = snapshots.map(s => {
+    const d = new Date(s.created_at + 'Z');
+    const ts = d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const isActive = !!s.is_active;
+    const activeTag = isActive ? '<span style="font-size:.7rem;background:var(--primary-color);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px">actief</span>' : '';
+    const activateBtn = isActive
+      ? ''
+      : `<button class="btn btn-sm btn-primary tp-snap-activate" data-id="${s.id}" data-name="${escHtml(s.name)}" style="font-size:.75rem">Activeren</button>`;
+    return `<div class="tp-snap-row" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-color)">
+      <span style="flex:1;font-weight:500">${escHtml(s.name)}${activeTag}</span>
+      <span style="font-size:.75rem;color:var(--text-muted);white-space:nowrap">${ts}</span>
+      ${activateBtn}
+      <button class="btn btn-sm btn-danger tp-snap-del" data-id="${s.id}" data-name="${escHtml(s.name)}" style="font-size:.75rem;padding:2px 6px">✕</button>
+    </div>`;
+  }).join('');
+
+  overlay.innerHTML = `<div class="tp-modal" style="max-width:500px">
+    <h3 style="margin:0 0 12px">Blauwdrukken beheren</h3>
+    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">De actieve blauwdruk bepaalt welke trainingsdata zichtbaar is op de teampagina's.</p>
+    <div style="max-height:300px;overflow-y:auto">${rows}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-sm btn-secondary tp-snap-close">Sluiten</button>
+    </div>
+  </div>`;
+
+  overlay.querySelector('.tp-snap-close').onclick = () => { overlay.style.display = 'none'; };
+
+  overlay.querySelectorAll('.tp-snap-activate').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.name;
+      if (!confirm(`"${name}" activeren? De huidige blauwdruk wordt hiermee overschreven.`)) return;
+      try {
+        await api(`/api/training/snapshots/${btn.dataset.id}/activate`, { method: 'POST' });
+        _activeSnapshotName = name;
+        overlay.style.display = 'none';
+        showToast && showToast(`Blauwdruk "${name}" geactiveerd ✓`);
+        loadAndRender();
+      } catch (err) { showToast && showToast('Activeren mislukt: ' + err.message, 'error'); }
+    });
+  });
+
+  overlay.querySelectorAll('.tp-snap-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.name;
+      if (!confirm(`Weet je zeker dat je "${name}" wilt verwijderen?`)) return;
+      try {
+        await api(`/api/training/snapshots/${btn.dataset.id}`, { method: 'DELETE' });
+        btn.closest('.tp-snap-row').remove();
+        showToast && showToast(`"${name}" verwijderd`);
+        if (!overlay.querySelectorAll('.tp-snap-row').length) {
+          overlay.querySelector('.tp-modal').innerHTML = `<h3 style="margin:0 0 12px">Blauwdrukken beheren</h3>
+            <p style="color:var(--text-muted);font-size:.85rem">Geen opgeslagen blauwdrukken meer.</p>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+              <button class="btn btn-sm btn-secondary tp-snap-close">Sluiten</button></div>`;
+          overlay.querySelector('.tp-snap-close').onclick = () => { overlay.style.display = 'none'; };
+        }
+      } catch (err) { showToast && showToast('Verwijderen mislukt: ' + err.message, 'error'); }
+    });
+  });
+}
 
 // ─── Modals ─────────────────────────────────────────────────────────────────
 

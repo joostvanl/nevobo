@@ -101,6 +101,24 @@
   flex-shrink: 0;
 }
 
+/* ── Blueprint mode tint ────────────────────────────────────────────────── */
+
+.tp-wrapper.tp-mode-blueprint {
+  background: rgba(33, 150, 243, 0.04);
+  border-radius: var(--radius);
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+}
+
+.tp-wrapper.tp-mode-blueprint .tp-day {
+  border-color: rgba(33, 150, 243, 0.25);
+}
+
+.tp-wrapper.tp-mode-blueprint .tp-day-header {
+  background: rgba(33, 150, 243, 0.07);
+  border-bottom-color: rgba(33, 150, 243, 0.18);
+}
+
 /* ── Day section ────────────────────────────────────────────────────────── */
 
 .tp-day {
@@ -112,6 +130,8 @@
   box-shadow: var(--shadow-sm);
 }
 
+.tp-day.tp-dragging-active { overflow: visible; }
+
 .tp-day-header {
   padding: 0.5rem 0.75rem;
   font-weight: 800;
@@ -119,15 +139,28 @@
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   text-transform: capitalize;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Scrollable zoom container ──────────────────────────────────────────── */
+
+.tp-day-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: thin;
+}
+
+.tp-day-scroll::-webkit-scrollbar { height: 6px; }
+.tp-day-scroll::-webkit-scrollbar-track { background: var(--bg); }
+.tp-day-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tp-day-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+.tp-day-content {
+  min-width: 100%;
 }
 
 /* ── Time grid inside a day ─────────────────────────────────────────────── */
-
-.tp-grid {
-  position: relative;
-  display: grid;
-  min-height: 0;
-}
 
 .tp-time-header {
   position: sticky;
@@ -168,7 +201,9 @@
   display: flex;
   align-items: center;
   background: var(--bg);
-  z-index: 1;
+  position: sticky;
+  left: 0;
+  z-index: 4;
 }
 
 .tp-venue-track {
@@ -222,7 +257,7 @@
 .tp-block.dragging {
   opacity: 0.85;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-  z-index: 10;
+  z-index: 999;
   cursor: grabbing;
 }
 
@@ -307,14 +342,85 @@
 .tp-team-10 { background: #6c5ce7; }
 .tp-team-11 { background: #fd79a8; }
 
-/* ── Venue management row ───────────────────────────────────────────────── */
+/* ── Venue management panel ────────────────────────────────────────────── */
 
 .tp-venue-bar {
   display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0;
   margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-card);
+  font-size: 0.82rem;
+}
+
+.tp-loc-row {
+  display: flex;
   align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.tp-loc-row:last-child { border-bottom: none; }
+
+.tp-loc-name {
+  font-weight: 800;
+  font-size: 0.82rem;
+  min-width: 100px;
+}
+
+.tp-loc-nevobo {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.tp-venue-chips {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.tp-venue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.tp-venue-chip button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  padding: 0 1px;
+  line-height: 1;
+}
+
+.tp-venue-chip button:hover { color: var(--danger); }
+
+.tp-loc-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.tp-bar-footer {
+  padding: 0.35rem 0.75rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
 }
 
 /* ── Add-training modal ─────────────────────────────────────────────────── */

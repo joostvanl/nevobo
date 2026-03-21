@@ -486,6 +486,90 @@ router.get('/teams', verifyToken, (req, res) => {
   res.json({ ok: true, teams });
 });
 
+// ─── Blueprint snapshots ────────────────────────────────────────────────
+
+router.get('/snapshots', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
+  const rows = db.prepare(
+    'SELECT id, name, is_active, created_at FROM training_snapshots WHERE club_id = ? ORDER BY created_at DESC'
+  ).all(clubId);
+  res.json({ ok: true, snapshots: rows });
+});
+
+router.get('/snapshots/active', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
+  const row = db.prepare(
+    'SELECT id, name FROM training_snapshots WHERE club_id = ? AND is_active = 1'
+  ).get(clubId);
+  res.json({ ok: true, active: row || null });
+});
+
+router.post('/snapshots', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const { name } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Naam is verplicht' });
+
+  const defaults = db.prepare(
+    'SELECT team_id, venue_id, day_of_week, start_time, end_time FROM training_defaults WHERE club_id = ? ORDER BY day_of_week, start_time'
+  ).all(clubId);
+
+  const data = JSON.stringify(defaults);
+  const save = db.transaction(() => {
+    db.prepare('UPDATE training_snapshots SET is_active = 0 WHERE club_id = ?').run(clubId);
+    return db.prepare(
+      'INSERT INTO training_snapshots (club_id, name, data, is_active) VALUES (?, ?, ?, 1)'
+    ).run(clubId, name.trim(), data);
+  });
+  const result = save();
+
+  res.status(201).json({ ok: true, snapshot: { id: result.lastInsertRowid, name: name.trim(), count: defaults.length } });
+});
+
+router.post('/snapshots/:id/activate', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const snap = db.prepare(
+    'SELECT * FROM training_snapshots WHERE id = ? AND club_id = ?'
+  ).get(req.params.id, clubId);
+  if (!snap) return res.status(404).json({ ok: false, error: 'Snapshot niet gevonden' });
+
+  let entries;
+  try { entries = JSON.parse(snap.data); } catch (_) {
+    return res.status(500).json({ ok: false, error: 'Ongeldige snapshot data' });
+  }
+
+  const activate = db.transaction(() => {
+    db.prepare('UPDATE training_snapshots SET is_active = 0 WHERE club_id = ?').run(clubId);
+    db.prepare('UPDATE training_snapshots SET is_active = 1 WHERE id = ?').run(snap.id);
+    db.prepare('DELETE FROM training_defaults WHERE club_id = ?').run(clubId);
+    const ins = db.prepare(
+      'INSERT INTO training_defaults (club_id, team_id, venue_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    for (const e of entries) {
+      ins.run(clubId, e.team_id, e.venue_id, e.day_of_week, e.start_time, e.end_time);
+    }
+  });
+  activate();
+
+  res.json({ ok: true, activated: snap.name, loaded: entries.length });
+});
+
+router.delete('/snapshots/:id', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  db.prepare('DELETE FROM training_snapshots WHERE id = ? AND club_id = ?').run(req.params.id, clubId);
+  res.json({ ok: true });
+});
+
 // ─── Nevobo venue discovery ─────────────────────────────────────────────
 
 router.get('/nevobo-venues', verifyToken, async (req, res) => {

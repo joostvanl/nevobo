@@ -182,6 +182,15 @@ const migrations = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `ALTER TABLE training_venues ADD COLUMN nevobo_field_slug TEXT`,
+  `CREATE TABLE IF NOT EXISTS training_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `ALTER TABLE training_snapshots ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
