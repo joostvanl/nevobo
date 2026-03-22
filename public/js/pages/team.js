@@ -474,9 +474,21 @@ function renderPage(container, opts) {
           trainingEl.innerHTML = '';
           return;
         }
+
+        function isoWeekToDate(isoWeek, dow) {
+          const [y, w] = isoWeek.split('-W').map(Number);
+          const jan4 = new Date(y, 0, 4);
+          const monday = new Date(jan4);
+          monday.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (w - 1) * 7);
+          const d = new Date(monday);
+          d.setDate(monday.getDate() + dow);
+          return d.toISOString().slice(0, 10);
+        }
+
         const rows = ts.map(t => {
           const loc = t.location_name ? `${escHtml(t.location_name)} · ` : '';
-          return `<div style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);font-size:0.88rem"><strong>${dayNames[t.day_of_week]}</strong> ${t.start_time} – ${t.end_time} · ${loc}${escHtml(t.venue_name)}</div>`;
+          const dateStr = isoWeekToDate(data.iso_week, t.day_of_week);
+          return `<div class="team-training-row" data-team-id="${teamId}" data-date="${dateStr}" data-start="${t.start_time}" data-end="${t.end_time}" data-venue="${escHtml(t.venue_name || '')}" data-location="${escHtml(t.location_name || '')}" style="padding:0.5rem 1rem;border-bottom:1px solid var(--border);font-size:0.88rem;cursor:pointer;transition:background 0.12s"><strong>${dayNames[t.day_of_week]}</strong> ${t.start_time} – ${t.end_time} · ${loc}${escHtml(t.venue_name)}</div>`;
         }).join('');
         const exLabel = data.is_exception ? ` <span class="chip chip-sm" style="font-size:0.65rem;background:rgba(255,193,7,0.15);color:#d4a017">afwijkend schema</span>` : '';
         trainingEl.innerHTML = `
@@ -484,6 +496,20 @@ function renderPage(container, opts) {
             <div class="card-header"><h3>🏋️ Trainingen deze week${exLabel}</h3></div>
             <div class="card-body" style="padding:0">${rows}</div>
           </div>`;
+        trainingEl.querySelectorAll('.team-training-row').forEach(row => {
+          row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-secondary)'; });
+          row.addEventListener('mouseleave', () => { row.style.background = ''; });
+          row.addEventListener('click', () => {
+            navigate('training-session', {
+              teamId: parseInt(row.dataset.teamId, 10),
+              date: row.dataset.date,
+              startTime: row.dataset.start,
+              endTime: row.dataset.end,
+              venue: row.dataset.venue,
+              location: row.dataset.location,
+            });
+          });
+        });
       } catch (_) { trainingEl.innerHTML = ''; }
     })();
   }

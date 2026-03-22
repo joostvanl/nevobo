@@ -3687,3 +3687,50 @@ img.hl-avatar {
   transform: scale(0.96);
 }
 .hm-quicknav button span { font-size: 1.4rem; }
+
+/* ─── Training Session Page ─────────────────────────────────────────────────── */
+.ts-page { max-width: 640px; margin: 0 auto; padding: 1rem; }
+.ts-header { display: flex; align-items: flex-start; gap: 0.75rem; margin-bottom: 1rem; }
+.ts-back { flex-shrink: 0; margin-top: 0.15rem; }
+.ts-title { font-size: 1.15rem; font-weight: 700; margin: 0; }
+.ts-meta { font-size: 0.82rem; color: var(--text-secondary); margin-top: 0.15rem; }
+.ts-loc { font-size: 0.78rem; }
+
+.ts-role-label {
+  padding: 0.35rem 1rem; font-size: 0.7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-secondary); background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.ts-att-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.5rem 1rem; border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.ts-att-row:last-child { border-bottom: none; }
+.ts-att-row.ts-present { background: rgba(76,175,80,0.06); }
+.ts-att-row.ts-absent { background: rgba(244,67,54,0.06); }
+.ts-att-person { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.ts-att-name { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.ts-att-btns { display: flex; gap: 0.35rem; flex-shrink: 0; }
+.ts-att-btn {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 2px solid var(--border); background: transparent;
+  font-size: 1rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.ts-att-btn:hover { transform: scale(1.1); }
+.ts-att-present.active { background: var(--success, #4caf50); border-color: var(--success, #4caf50); color: #fff; }
+.ts-att-absent.active { background: var(--danger, #f44336); border-color: var(--danger, #f44336); color: #fff; }
+
+.ts-att-label { font-size: 0.82rem; color: var(--text-secondary); flex-shrink: 0; }
+.ts-att-label.ts-present { color: var(--success, #4caf50); font-weight: 600; }
+.ts-att-label.ts-absent { color: var(--danger, #f44336); font-weight: 600; }
+
+.ts-notes-input {
+  width: 100%; resize: vertical; font-size: 0.88rem; line-height: 1.5;
+  min-height: 100px; font-family: inherit;
+}
+.ts-notes-status { margin-top: 0.35rem; font-size: 0.75rem; min-height: 1em; }
+.ts-empty { padding: 1.5rem; text-align: center; color: var(--text-secondary); font-size: 0.88rem; }

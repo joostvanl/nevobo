@@ -681,6 +681,7 @@ async function boot() {
     import('./pages/scout-setup.js'),
     import('./pages/scout-match.js'),
     import('./pages/training-planner.js'),
+    import('./pages/training-session.js'),
   ]);
 
   if (token && user) {
@@ -704,7 +705,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage, trainingSessionPage] = await pagesPromise;
 
   registerRoute('home',         homePage.render);
   registerRoute('matches',      matchesPage.render);
@@ -720,6 +721,7 @@ async function boot() {
   registerRoute('scout-setup',  scoutSetupPage.render);
   registerRoute('scout-match',  scoutMatchPage.render);
   registerRoute('training-planner', trainingPlannerPage.render);
+  registerRoute('training-session', trainingSessionPage.render);
 
   // Bottom nav clicks
   document.querySelectorAll('.nav-item[data-route]').forEach(btn => {

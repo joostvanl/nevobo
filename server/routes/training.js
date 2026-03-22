@@ -480,6 +480,102 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
   });
 });
 
+// ─── Training sessions (attendance + notes) ─────────────────────────────────
+
+function getTeamMembership(userId, teamId) {
+  return db.prepare(
+    'SELECT membership_type FROM team_memberships WHERE user_id = ? AND team_id = ?'
+  ).get(userId, teamId);
+}
+
+router.get('/session/:teamId/:date/:startTime', verifyToken, (req, res) => {
+  const teamId = parseInt(req.params.teamId, 10);
+  const { date, startTime } = req.params;
+  if (!teamId || !date || !startTime) return res.status(400).json({ ok: false, error: 'Ongeldige parameters' });
+
+  const membership = getTeamMembership(req.user.id, teamId);
+  if (!membership) return res.status(403).json({ ok: false, error: 'Geen lid van dit team' });
+  const isCoach = membership.membership_type === 'coach';
+
+  const team = db.prepare('SELECT id, club_id, display_name FROM teams WHERE id = ?').get(teamId);
+  if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+
+  let session = db.prepare(
+    'SELECT * FROM training_sessions WHERE team_id = ? AND date = ? AND start_time = ?'
+  ).get(teamId, date, startTime);
+
+  if (!session) {
+    const info = db.prepare(`
+      INSERT INTO training_sessions (club_id, team_id, date, start_time, end_time, venue_name, location_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(team.club_id, teamId, date, startTime, req.query.end_time || '', req.query.venue || '', req.query.location || '');
+    session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(info.lastInsertRowid);
+
+    const members = db.prepare(
+      `SELECT user_id FROM team_memberships WHERE team_id = ? AND membership_type IN ('player', 'coach')`
+    ).all(teamId);
+    const insertAtt = db.prepare('INSERT OR IGNORE INTO training_attendance (session_id, user_id, status) VALUES (?, ?, ?)');
+    for (const m of members) insertAtt.run(session.id, m.user_id, 'unknown');
+  }
+
+  const attendance = db.prepare(`
+    SELECT a.user_id, a.status, u.name, u.avatar_url, tm.membership_type
+    FROM training_attendance a
+    JOIN users u ON u.id = a.user_id
+    JOIN team_memberships tm ON tm.user_id = a.user_id AND tm.team_id = ?
+    WHERE a.session_id = ?
+    ORDER BY tm.membership_type, u.name
+  `).all(teamId, session.id);
+
+  res.json({
+    ok: true,
+    session: {
+      id: session.id,
+      team_id: session.team_id,
+      team_name: team.display_name,
+      date: session.date,
+      start_time: session.start_time,
+      end_time: session.end_time,
+      venue_name: session.venue_name,
+      location_name: session.location_name,
+      notes: isCoach ? (session.notes || '') : undefined,
+    },
+    attendance,
+    is_coach: isCoach,
+  });
+});
+
+router.patch('/session/:id', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches kunnen notities bewerken' });
+  }
+  const notes = req.body.notes ?? '';
+  db.prepare('UPDATE training_sessions SET notes = ? WHERE id = ?').run(notes, session.id);
+  res.json({ ok: true });
+});
+
+router.patch('/session/:id/attendance', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches kunnen aanwezigheid bijwerken' });
+  }
+  const { user_id, status } = req.body;
+  if (!user_id || !['present', 'absent', 'unknown'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'Ongeldige parameters' });
+  }
+  db.prepare(`
+    INSERT INTO training_attendance (session_id, user_id, status, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(session_id, user_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
+  `).run(session.id, user_id, status);
+  res.json({ ok: true });
+});
+
 // ─── Club teams list (for planner dropdowns) ────────────────────────────────
 
 router.get('/teams', verifyToken, (req, res) => {

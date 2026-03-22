@@ -194,6 +194,27 @@ const migrations = [
   `ALTER TABLE teams ADD COLUMN trainings_per_week INTEGER NOT NULL DEFAULT 2`,
   `ALTER TABLE teams ADD COLUMN min_training_minutes INTEGER NOT NULL DEFAULT 90`,
   `ALTER TABLE teams ADD COLUMN max_training_minutes INTEGER NOT NULL DEFAULT 90`,
+  `CREATE TABLE IF NOT EXISTS training_sessions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id       INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    team_id       INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    date          TEXT NOT NULL,
+    start_time    TEXT NOT NULL,
+    end_time      TEXT NOT NULL,
+    venue_name    TEXT,
+    location_name TEXT,
+    notes         TEXT DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(team_id, date, start_time)
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_attendance (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL REFERENCES training_sessions(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL DEFAULT 'unknown',
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(session_id, user_id)
+  )`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
