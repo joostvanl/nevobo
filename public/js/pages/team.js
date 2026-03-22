@@ -180,6 +180,9 @@ function renderPage(container, opts) {
     <!-- Team media reel — loads async, shown before other content -->
     <div id="team-media"></div>
 
+    <!-- Trainingen deze week -->
+    <div id="team-training-schedule" class="container"></div>
+
     <div class="container">
 
       <!-- Season record — skeleton while loading -->
@@ -247,9 +250,6 @@ function renderPage(container, opts) {
             </button>` : ''}
         </div>
       </div>
-
-      <!-- Trainingen deze week -->
-      <div id="team-training-schedule"></div>
 
       <!-- Poule standings — loaded async, shown between results and members -->
       <div id="poule-stands">

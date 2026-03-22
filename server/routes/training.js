@@ -679,7 +679,7 @@ router.patch('/teams/:id', verifyToken, (req, res) => {
   const { trainings_per_week, min_training_minutes, max_training_minutes } = req.body;
   const updates = [];
   const params = [];
-  if (trainings_per_week != null && [0, 1, 2].includes(trainings_per_week)) {
+  if (trainings_per_week != null && [0, 1, 2, 3, 4, 5].includes(trainings_per_week)) {
     updates.push('trainings_per_week = ?'); params.push(trainings_per_week);
   }
   if (min_training_minutes != null && min_training_minutes >= 60 && min_training_minutes <= 180) {

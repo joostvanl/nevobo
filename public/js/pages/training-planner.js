@@ -867,6 +867,9 @@ function showTeamSettingsModal(teamId) {
         <option value="0"${team.trainings_per_week === 0 ? ' selected' : ''}>Niet inplannen</option>
         <option value="1"${team.trainings_per_week === 1 ? ' selected' : ''}>1× per week</option>
         <option value="2"${team.trainings_per_week === 2 ? ' selected' : ''}>2× per week</option>
+        <option value="3"${team.trainings_per_week === 3 ? ' selected' : ''}>3× per week</option>
+        <option value="4"${team.trainings_per_week === 4 ? ' selected' : ''}>4× per week</option>
+        <option value="5"${team.trainings_per_week === 5 ? ' selected' : ''}>5× per week</option>
       </select>
       <label for="tp-ts-min">Minimale duur</label>
       <select id="tp-ts-min" class="form-control">${durOpts}</select>
