@@ -445,6 +445,53 @@
   gap: 0.4rem;
 }
 
+/* ── Quick-add team picker ────────────────────────────────────────────── */
+
+.tp-quick-add {
+  padding: 4px;
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tp-qa-list {
+  display: flex;
+  flex-direction: column;
+}
+.tp-qa-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 4px;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.tp-qa-item:hover {
+  background: var(--bg, #f5f5f5);
+}
+.tp-qa-empty {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.tp-qa-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
 /* ── Team overview panel ──────────────────────────────────────────────── */
 
 .tp-team-overview {

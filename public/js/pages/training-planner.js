@@ -409,7 +409,7 @@ function renderPlanner() {
       </div>
       ${contextBar}
       <div class="tp-panels">
-        <details class="tp-panel" open>
+        <details class="tp-panel">
           <summary>Locaties & velden</summary>
           <div class="tp-venue-bar">${mgmtBarHtml}</div>
         </details>
@@ -535,8 +535,7 @@ function wireEvents() {
         const xPct = (e.clientX - rect.left) / rect.width;
         const rawMin = Math.round(xPct * TOTAL_MINUTES / SNAP) * SNAP;
         const startMin = HOUR_START * 60 + rawMin;
-        const endMin = startMin + DEFAULT_DURATION;
-        showAddTrainingModal(venueId, dow, minutesToTime(startMin), minutesToTime(Math.min(endMin, HOUR_END * 60)));
+        showQuickAddPicker(e, venueId, dow, startMin);
       });
     });
 
@@ -1322,6 +1321,83 @@ function venueOptionsHtml(selectedId) {
     }
   }
   return html;
+}
+
+function showQuickAddPicker(e, venueId, dow, startMin) {
+  closePopover();
+  const c = _ctx;
+  const trainings = c.weekData.trainings || [];
+
+  const countByTeam = {};
+  for (const t of trainings) countByTeam[t.team_id] = (countByTeam[t.team_id] || 0) + 1;
+
+  const available = c.teams.filter(t => {
+    const need = t.trainings_per_week || 0;
+    if (need === 0) return false;
+    return (countByTeam[t.id] || 0) < need;
+  });
+  const allPlannable = c.teams.filter(t => (t.trainings_per_week || 0) > 0);
+
+  const pop = document.createElement('div');
+  pop.className = 'tp-popover tp-quick-add';
+
+  function renderList(teams) {
+    if (teams.length === 0) return '<div class="tp-qa-empty">Geen teams beschikbaar</div>';
+    return teams.map(t => {
+      const colorCls = teamColorClass(t.id);
+      return `<button class="tp-qa-item" data-team-id="${t.id}"><span class="tp-tov-dot ${colorCls}"></span>${escHtml(t.display_name)}</button>`;
+    }).join('');
+  }
+
+  const listEl = document.createElement('div');
+  listEl.className = 'tp-qa-list';
+  listEl.innerHTML = renderList(available);
+
+  const footer = document.createElement('label');
+  footer.className = 'tp-qa-toggle';
+  footer.innerHTML = `<input type="checkbox"> Toon alle teams`;
+
+  pop.appendChild(listEl);
+  pop.appendChild(footer);
+
+  document.body.appendChild(pop);
+  pop.style.left = `${Math.min(e.clientX, window.innerWidth - 200)}px`;
+  pop.style.top = `${e.clientY + 4}px`;
+
+  footer.querySelector('input').addEventListener('change', (ev) => {
+    listEl.innerHTML = renderList(ev.target.checked ? allPlannable : available);
+    wireItems();
+  });
+
+  function wireItems() {
+    pop.querySelectorAll('.tp-qa-item').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const teamId = parseInt(btn.dataset.teamId, 10);
+        const team = c.teams.find(t => t.id === teamId);
+        const dur = team?.max_training_minutes || DEFAULT_DURATION;
+        const endMin = Math.min(startMin + dur, HOUR_END * 60);
+        const body = {
+          team_id: teamId,
+          venue_id: venueId,
+          day_of_week: dow,
+          start_time: minutesToTime(startMin),
+          end_time: minutesToTime(endMin),
+        };
+        try {
+          if (c.mode === 'blueprint') {
+            await api('/api/training/defaults', { method: 'POST', body });
+          } else {
+            await api('/api/training/exceptions', { method: 'POST', body: { ...body, iso_week: c.isoWeek } });
+          }
+          closePopover();
+          loadAndRender();
+        } catch (err) { showToast(err.message, 'error'); }
+      });
+    });
+  }
+  wireItems();
+
+  setTimeout(() => document.addEventListener('click', closePopoverOutside), 0);
 }
 
 function showAddTrainingModal(venueId, dow, startTime, endTime) {
