@@ -22,6 +22,7 @@ const TEAM_COLORS = [
 
 let _ctx = null;
 let _activeSnapshotName = null;
+let _teamOverviewOpen = false;
 const _dayZoom = {};
 const _dayScroll = {};
 const ZOOM_MIN = 1;
@@ -221,32 +222,51 @@ function renderPlanner() {
   const editable = c.mode === 'blueprint' || isException;
 
   const isBlueprint = c.mode === 'blueprint';
-  let modeButtons = '';
+
+  // Mode tabs
+  const modeTabs = `
+    <div class="tp-mode-tabs">
+      <button class="tp-mode-tab${isBlueprint ? ' active' : ''}" id="tp-to-blueprint">Blauwdruk</button>
+      <button class="tp-mode-tab${!isBlueprint ? ' active' : ''}" id="tp-to-week">Week</button>
+    </div>`;
+
+  // Context bar (second row)
+  let contextBar = '';
   if (isBlueprint) {
     const snapLabel = _activeSnapshotName
-      ? `<span class="tp-badge" style="background:var(--primary-color);color:#fff;font-weight:500">${escHtml(_activeSnapshotName)}</span>`
-      : '';
-    modeButtons = `<span class="tp-badge tp-badge-blueprint">Blauwdruk</span>${snapLabel}
-      <button class="btn btn-sm btn-primary" id="tp-save-snapshot" style="font-size:0.78rem">💾 Opslaan als</button>
-      <button class="btn btn-sm btn-secondary" id="tp-load-snapshot" style="font-size:0.78rem">📂 Laden</button>
-      <button class="btn btn-sm btn-secondary" id="tp-to-week">Weekweergave</button>`;
+      ? `<span class="tp-snap-name" id="tp-rename-snapshot" title="Klik om naam te wijzigen">${escHtml(_activeSnapshotName)}</span>`
+      : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
+    contextBar = `<div class="tp-context-bar">
+      <div class="tp-context-left">${snapLabel}</div>
+      <div class="tp-context-actions">
+        <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
+        <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>
+        <span class="tp-ctx-sep"></span>
+        <button class="tp-ctx-btn tp-ctx-accent" id="tp-ai-optimize">🤖 AI assistent</button>
+        <span class="tp-ctx-sep"></span>
+        <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>
+      </div>
+    </div>`;
   } else {
-    modeButtons = `<button class="btn btn-sm btn-secondary" id="tp-to-blueprint">Blauwdruk</button>`;
+    let weekStatus = '';
     if (isException) {
-      modeButtons += `<span class="tp-badge tp-badge-exception">Afwijkende week${c.weekData.exceptionLabel ? ': ' + escHtml(c.weekData.exceptionLabel) : ''}</span>
-        <button class="btn btn-sm btn-secondary" id="tp-del-override">Verwijder afwijking</button>`;
+      weekStatus = `<span class="tp-badge tp-badge-exception">Afwijkend${c.weekData.exceptionLabel ? ': ' + escHtml(c.weekData.exceptionLabel) : ''}</span>
+        <button class="tp-ctx-btn tp-ctx-danger" id="tp-del-override">Afwijking verwijderen</button>`;
     } else {
-      modeButtons += `<span class="tp-badge tp-badge-readonly">Standaard schema</span>
-        <button class="btn btn-sm btn-primary" id="tp-make-override">Maak afwijkende week</button>`;
+      weekStatus = `<span class="tp-badge tp-badge-readonly">Standaard schema</span>
+        <button class="tp-ctx-btn" id="tp-make-override">Afwijkende week maken</button>`;
     }
+    contextBar = `<div class="tp-context-bar">
+      <div class="tp-context-left">
+        <div class="tp-week-nav">
+          <button id="tp-prev-week">◀</button>
+          <span>${formatWeekLabel(c.isoWeek)}</span>
+          <button id="tp-next-week">▶</button>
+        </div>
+      </div>
+      <div class="tp-context-actions">${weekStatus}</div>
+    </div>`;
   }
-
-  const weekNav = c.mode === 'week' ? `
-    <div class="tp-week-nav">
-      <button id="tp-prev-week">◀</button>
-      <span>${formatWeekLabel(c.isoWeek)}</span>
-      <button id="tp-next-week">▶</button>
-    </div>` : '';
 
   // Location + venue management panel
   let mgmtBarHtml = '';
@@ -310,7 +330,7 @@ function renderPlanner() {
           const widthPct = (dur / TOTAL_MINUTES) * 100;
           const colorCls = teamColorClass(t.team_id);
           const tName = t.team_name || `Team ${t.team_id}`;
-          blocksHtml += `<div class="tp-block ${colorCls}${editable ? '' : ' readonly'}" title="${escHtml(tName)}" data-training-id="${t.id}" data-source="${c.mode === 'blueprint' ? 'default' : 'exception'}" style="left:${leftPct}%;width:${widthPct}%">${editable ? '<span class="tp-resize-left"></span>' : ''}<span class="tp-block-label">${escHtml(tName)}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
+          blocksHtml += `<div class="tp-block ${colorCls}${editable ? '' : ' readonly'}" title="${escHtml(tName)}" data-training-id="${t.id}" data-team-id="${t.team_id}" data-source="${c.mode === 'blueprint' ? 'default' : 'exception'}" style="left:${leftPct}%;width:${widthPct}%">${editable ? '<span class="tp-resize-left"></span>' : ''}<span class="tp-block-label">${escHtml(tName)}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
         }
 
         for (const m of [...vMatches, ...unmatchedOnFirst]) {
@@ -346,14 +366,55 @@ function renderPlanner() {
       </div>`;
   }
 
+  // Team overview panel
+  const trainingsCount = {};
+  for (const t of trainings) {
+    trainingsCount[t.team_id] = (trainingsCount[t.team_id] || 0) + 1;
+  }
+  const totalRequired = c.teams.reduce((s, t) => s + (t.trainings_per_week || 0), 0);
+  const totalScheduled = trainings.length;
+  let teamRows = '';
+  for (const team of c.teams) {
+    const need = team.trainings_per_week || 0;
+    const have = trainingsCount[team.id] || 0;
+    const skip = need === 0;
+    const cls = skip ? 'tp-tov-skip' : have === need ? 'tp-tov-ok' : have < need ? 'tp-tov-short' : 'tp-tov-over';
+    const colorCls = teamColorClass(team.id);
+    const durLabel = skip ? '—' : team.min_training_minutes === team.max_training_minutes
+      ? `${team.max_training_minutes}m`
+      : `${team.min_training_minutes}–${team.max_training_minutes}m`;
+    const countLabel = skip ? '<span class="tp-tov-skip-label">niet inplannen</span>' : `${have} / ${need}`;
+    teamRows += `<tr class="${cls}">
+      <td><span class="tp-tov-dot ${colorCls}"></span>${escHtml(team.display_name)}</td>
+      <td class="tp-tov-num">${countLabel}</td>
+      <td class="tp-tov-dur">${durLabel}</td>
+      <td class="tp-tov-action">${editable ? `<button class="tp-tov-edit" data-team-id="${team.id}" title="Instellingen">⚙️</button>` : ''}</td>
+    </tr>`;
+  }
+  const summaryClass = totalScheduled >= totalRequired ? 'tp-tov-ok' : 'tp-tov-short';
+  const teamOverviewHtml = `
+    <details class="tp-team-overview"${_teamOverviewOpen ? ' open' : ''}>
+      <summary>Teams <span class="tp-tov-summary ${summaryClass}">${totalScheduled} / ${totalRequired} trainingen</span></summary>
+      <table class="tp-tov-table">
+        <thead><tr><th>Team</th><th>Gepland</th><th>Duur</th><th></th></tr></thead>
+        <tbody>${teamRows}</tbody>
+      </table>
+    </details>`;
+
   c.container.innerHTML = `
     <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
-        ${weekNav}
-        <div class="tp-actions">${modeButtons}</div>
+        ${modeTabs}
       </div>
-      <div class="tp-venue-bar">${mgmtBarHtml}</div>
+      ${contextBar}
+      <div class="tp-panels">
+        <details class="tp-panel" open>
+          <summary>Locaties & velden</summary>
+          <div class="tp-venue-bar">${mgmtBarHtml}</div>
+        </details>
+        ${teamOverviewHtml}
+      </div>
       ${daysHtml}
     </div>`;
 
@@ -396,11 +457,14 @@ function wireEvents() {
   const c = _ctx;
   const el = c.container;
 
-  el.querySelector('#tp-to-week')?.addEventListener('click', () => { c.mode = 'week'; loadAndRender(); });
-  el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => { c.mode = 'blueprint'; loadAndRender(); });
+  el.querySelector('#tp-to-week')?.addEventListener('click', () => { if (c.mode !== 'week') { c.mode = 'week'; loadAndRender(); } });
+  el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => { if (c.mode !== 'blueprint') { c.mode = 'blueprint'; loadAndRender(); } });
 
   el.querySelector('#tp-save-snapshot')?.addEventListener('click', () => showSaveSnapshotModal());
   el.querySelector('#tp-load-snapshot')?.addEventListener('click', () => showLoadSnapshotModal());
+  el.querySelector('#tp-ai-optimize')?.addEventListener('click', () => triggerAiOptimize());
+  el.querySelector('#tp-rename-snapshot')?.addEventListener('click', () => showRenameSnapshotModal());
+  el.querySelector('#tp-clear-defaults')?.addEventListener('click', () => clearAllDefaults());
   el.querySelector('#tp-prev-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, -1); loadAndRender(); });
   el.querySelector('#tp-next-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, 1); loadAndRender(); });
 
@@ -419,6 +483,12 @@ function wireEvents() {
       showToast('Afwijking verwijderd', 'info');
       loadAndRender();
     } catch (err) { showToast(err.message, 'error'); }
+  });
+
+  el.querySelector('.tp-team-overview')?.addEventListener('toggle', (e) => { _teamOverviewOpen = e.target.open; });
+
+  el.querySelectorAll('.tp-tov-edit').forEach(btn => {
+    btn.addEventListener('click', () => showTeamSettingsModal(parseInt(btn.dataset.teamId, 10)));
   });
 
   el.querySelector('#tp-add-location')?.addEventListener('click', () => showLocationModal());
@@ -746,6 +816,7 @@ function showBlockPopover(block, e) {
     <div class="tp-pop-meta">${t.start_time} – ${t.end_time} · ${locName}${escHtml(t.venue_name || '')}</div>
     <div class="tp-pop-actions">
       <button class="btn btn-sm btn-secondary" id="tp-pop-edit">✏️ Bewerken</button>
+      <button class="btn btn-sm btn-secondary" id="tp-pop-team">⚙️ Team</button>
       <button class="btn btn-sm btn-secondary" id="tp-pop-del" style="color:var(--danger)">Verwijderen</button>
     </div>`;
 
@@ -755,6 +826,7 @@ function showBlockPopover(block, e) {
   pop.style.top = `${bRect.bottom + 6}px`;
 
   pop.querySelector('#tp-pop-edit').addEventListener('click', () => { closePopover(); showEditTrainingModal(t, source); });
+  pop.querySelector('#tp-pop-team').addEventListener('click', () => { closePopover(); showTeamSettingsModal(t.team_id); });
   pop.querySelector('#tp-pop-del').addEventListener('click', async () => {
     closePopover();
     if (!confirm('Training verwijderen?')) return;
@@ -771,6 +843,66 @@ function closePopover() {
   document.removeEventListener('click', closePopoverOutside);
 }
 function closePopoverOutside(e) { if (!e.target.closest('.tp-popover')) closePopover(); }
+
+// ─── Team settings modal ─────────────────────────────────────────────────────
+
+function showTeamSettingsModal(teamId) {
+  const team = _ctx.teams.find(t => t.id === teamId);
+  if (!team) return;
+
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+
+  const durOpts = [60,75,90,105,120,135,150].map(m => {
+    const h = Math.floor(m / 60);
+    const r = m % 60;
+    return `<option value="${m}">${h}:${String(r).padStart(2,'0')} (${m} min)</option>`;
+  }).join('');
+
+  overlay.innerHTML = `<div class="tp-modal" style="max-width:420px">
+    <h3 style="margin:0 0 4px">${escHtml(team.display_name)}</h3>
+    <p style="margin:0 0 16px;font-size:.82rem;color:var(--text-muted)">Trainingsvoorkeuren voor dit team</p>
+    <div class="tp-team-settings-grid">
+      <label for="tp-ts-freq">Trainingen per week</label>
+      <select id="tp-ts-freq" class="form-control">
+        <option value="0"${team.trainings_per_week === 0 ? ' selected' : ''}>Niet inplannen</option>
+        <option value="1"${team.trainings_per_week === 1 ? ' selected' : ''}>1× per week</option>
+        <option value="2"${team.trainings_per_week === 2 ? ' selected' : ''}>2× per week</option>
+      </select>
+      <label for="tp-ts-min">Minimale duur</label>
+      <select id="tp-ts-min" class="form-control">${durOpts}</select>
+      <label for="tp-ts-max">Maximale duur</label>
+      <select id="tp-ts-max" class="form-control">${durOpts}</select>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-sm btn-secondary tp-ts-cancel">Annuleren</button>
+      <button class="btn btn-sm btn-primary tp-ts-save">Opslaan</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+
+  overlay.querySelector('#tp-ts-min').value = team.min_training_minutes || 90;
+  overlay.querySelector('#tp-ts-max').value = team.max_training_minutes || 90;
+
+  overlay.querySelector('.tp-ts-cancel').onclick = () => { overlay.style.display = 'none'; };
+  overlay.querySelector('.tp-ts-save').onclick = async () => {
+    const freq = parseInt(overlay.querySelector('#tp-ts-freq').value, 10);
+    const minM = parseInt(overlay.querySelector('#tp-ts-min').value, 10);
+    const maxM = parseInt(overlay.querySelector('#tp-ts-max').value, 10);
+    if (minM > maxM) { showToast && showToast('Minimum mag niet hoger zijn dan maximum', 'error'); return; }
+    try {
+      await api(`/api/training/teams/${teamId}`, {
+        method: 'PATCH',
+        body: { trainings_per_week: freq, min_training_minutes: minM, max_training_minutes: maxM },
+      });
+      team.trainings_per_week = freq;
+      team.min_training_minutes = minM;
+      team.max_training_minutes = maxM;
+      overlay.style.display = 'none';
+      showToast && showToast(`${team.display_name} bijgewerkt`);
+    } catch (err) { showToast && showToast(err.message, 'error'); }
+  };
+}
 
 // ─── Snapshot modals ────────────────────────────────────────────────────────
 
@@ -893,6 +1025,171 @@ async function showLoadSnapshotModal() {
     });
   });
 }
+
+// ─── Clear all defaults ─────────────────────────────────────────────────────
+
+async function clearAllDefaults() {
+  if (!confirm('Weet je zeker dat je de hele blauwdruk wilt leegmaken? Alle trainingen worden verwijderd. Sla eventueel eerst op.')) return;
+  try {
+    await api('/api/training/defaults/all', { method: 'DELETE' });
+    showToast && showToast('Blauwdruk leeggemaakt');
+    loadAndRender();
+  } catch (err) { showToast && showToast('Leegmaken mislukt: ' + err.message, 'error'); }
+}
+
+// ─── Rename active snapshot ─────────────────────────────────────────────────
+
+async function showRenameSnapshotModal() {
+  let activeSnap;
+  try { activeSnap = await api('/api/training/snapshots/active'); } catch (_) { return; }
+  if (!activeSnap?.id) { showToast && showToast('Geen actieve blauwdruk om te hernoemen', 'error'); return; }
+
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+  overlay.innerHTML = `<div class="tp-modal" style="max-width:400px">
+    <h3 style="margin:0 0 12px">Blauwdruk hernoemen</h3>
+    <input id="tp-rename-input" class="form-control" value="${escHtml(activeSnap.name || '')}" style="margin-bottom:12px" />
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-sm btn-secondary tp-rename-cancel">Annuleren</button>
+      <button class="btn btn-sm btn-primary tp-rename-save">Hernoemen</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  const input = overlay.querySelector('#tp-rename-input');
+  input.focus();
+  input.select();
+  overlay.querySelector('.tp-rename-cancel').onclick = () => { overlay.style.display = 'none'; };
+  const doRename = async () => {
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    try {
+      await api(`/api/training/snapshots/${activeSnap.id}`, { method: 'PATCH', body: { name } });
+      _activeSnapshotName = name;
+      overlay.style.display = 'none';
+      showToast && showToast(`Hernoemed naar "${name}"`);
+      loadAndRender();
+    } catch (err) { showToast && showToast('Hernoemen mislukt: ' + err.message, 'error'); }
+  };
+  overlay.querySelector('.tp-rename-save').onclick = doRename;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doRename(); });
+}
+
+// ─── AI optimize via webhook ────────────────────────────────────────────────
+
+async function triggerAiOptimize() {
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+
+  overlay.innerHTML = `<div class="tp-modal tp-ai-modal">
+    <div class="tp-ai-header">
+      <div class="tp-ai-icon">🤖</div>
+      <div>
+        <h3>AI Assistent</h3>
+        <p>Laat de AI je trainingsplanning maken, aanvullen of optimaliseren.</p>
+      </div>
+    </div>
+    <div class="tp-ai-body">
+      <label>Wat moet de AI doen?</label>
+      <div class="tp-ai-modes">
+        <label class="tp-ai-mode">
+          <input type="radio" name="tp-ai-mode" value="new">
+          <div class="tp-ai-mode-content">
+            <strong>Nieuwe planning</strong>
+            <span>Start vanaf nul. Alle teams worden ingepland.</span>
+          </div>
+        </label>
+        <label class="tp-ai-mode">
+          <input type="radio" name="tp-ai-mode" value="complete" checked>
+          <div class="tp-ai-mode-content">
+            <strong>Aanvullen</strong>
+            <span>Bestaande trainingen behouden, ontbrekende teams bijplannen.</span>
+          </div>
+        </label>
+        <label class="tp-ai-mode">
+          <input type="radio" name="tp-ai-mode" value="optimize">
+          <div class="tp-ai-mode-content">
+            <strong>Optimaliseren</strong>
+            <span>Bestaande planning verbeteren: overlappen, gaten en duur corrigeren.</span>
+          </div>
+        </label>
+      </div>
+      <label for="tp-ai-message">Extra opdracht <span class="tp-ai-optional">optioneel</span></label>
+      <textarea id="tp-ai-message" rows="2" placeholder="Bijv. 'Focus op coach-dubbelrollen' of 'Plan N5 op dinsdag en donderdag'"></textarea>
+      <div id="tp-ai-status" class="tp-ai-status">Verbinding controleren...</div>
+    </div>
+    <div class="tp-ai-footer">
+      <button class="btn btn-sm btn-secondary tp-ai-cancel">Annuleren</button>
+      <button class="btn btn-sm btn-primary tp-ai-start" disabled>Starten</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+
+  const statusEl = overlay.querySelector('#tp-ai-status');
+  const startBtn = overlay.querySelector('.tp-ai-start');
+  const msgInput = overlay.querySelector('#tp-ai-message');
+  overlay.querySelector('.tp-ai-cancel').onclick = () => { overlay.style.display = 'none'; };
+
+  try {
+    const check = await api('/api/training/ai-webhook-status');
+    if (!check.configured) {
+      statusEl.innerHTML = '<span class="tp-ai-status-err">⚠️ Webhook niet geconfigureerd — stel <code>N8N_TRAINING_WEBHOOK_URL</code> in via .env</span>';
+      return;
+    }
+    statusEl.innerHTML = '<span class="tp-ai-status-ok">✓ Verbonden</span>';
+    startBtn.disabled = false;
+  } catch (err) {
+    statusEl.innerHTML = `<span class="tp-ai-status-err">Verbinding mislukt: ${escHtml(err.message)}</span>`;
+    return;
+  }
+
+  startBtn.onclick = async () => {
+    startBtn.disabled = true;
+    msgInput.disabled = true;
+    overlay.querySelectorAll('input[name="tp-ai-mode"]').forEach(r => { r.disabled = true; });
+    const selectedMode = overlay.querySelector('input[name="tp-ai-mode"]:checked')?.value || 'complete';
+    const modeLabels = { new: 'maakt een nieuwe planning', complete: 'vult de planning aan', optimize: 'optimaliseert de planning' };
+    statusEl.innerHTML = `<span class="tp-ai-status-loading"><span class="tp-spinner"></span> AI agent ${modeLabels[selectedMode]}... dit kan 1–2 min duren</span>`;
+
+    try {
+      const result = await api('/api/training/ai-optimize', { method: 'POST', body: { mode: selectedMode, message: msgInput.value.trim() } });
+
+      if (result.snapshot) {
+        statusEl.innerHTML = '<span class="tp-ai-status-loading"><span class="tp-spinner"></span> Planning ontvangen, wordt geactiveerd...</span>';
+
+        try {
+          await api(`/api/training/snapshots/${result.snapshot.id}/activate`, { method: 'POST' });
+          _activeSnapshotName = result.snapshot.name;
+        } catch (_) {}
+
+        let html = `<div class="tp-ai-result-success">
+          <div class="tp-ai-result-header">✅ <strong>${escHtml(result.snapshot.name)}</strong> geactiveerd — ${result.snapshot.entries} trainingen</div>`;
+        if (result.errors?.length) {
+          html += `<div class="tp-ai-result-warn">⚠️ ${result.errors.length} entries overgeslagen (onbekend team/veld)</div>`;
+        }
+        if (result.advice) {
+          html += `<details open class="tp-ai-advice"><summary>AI advies</summary><pre>${escHtml(result.advice)}</pre></details>`;
+        }
+        html += '</div>';
+        statusEl.innerHTML = html;
+        overlay.querySelector('.tp-ai-cancel').textContent = 'Sluiten';
+        loadAndRender();
+      } else if (result.advice) {
+        statusEl.innerHTML = `<div class="tp-ai-result-warn" style="margin-bottom:8px">Geen planning gegenereerd</div>
+          <details open class="tp-ai-advice"><summary>AI advies</summary><pre>${escHtml(result.advice)}</pre></details>`;
+        overlay.querySelector('.tp-ai-cancel').textContent = 'Sluiten';
+      } else {
+        statusEl.innerHTML = '<span class="tp-ai-status-err">Geen bruikbare response ontvangen</span>';
+      }
+    } catch (err) {
+      statusEl.innerHTML = `<span class="tp-ai-status-err">❌ ${escHtml(err.message)}</span>`;
+      startBtn.disabled = false;
+      msgInput.disabled = false;
+      startBtn.textContent = 'Opnieuw proberen';
+    }
+  };
+}
+
+// ─── (import JSON removed — import happens via API or AI agent) ─────────────
 
 // ─── Modals ─────────────────────────────────────────────────────────────────
 

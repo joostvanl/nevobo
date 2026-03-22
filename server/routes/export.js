@@ -19,7 +19,7 @@ router.get('/teams', requireApiKey, (req, res) => {
   if (!club) return res.status(404).json({ ok: false, error: 'Club not found' });
 
   const teams = db.prepare(`
-    SELECT t.id, t.display_name, t.nevobo_team_type, t.nevobo_number
+    SELECT t.id, t.display_name, t.nevobo_team_type, t.nevobo_number, t.trainings_per_week, t.min_training_minutes, t.max_training_minutes
     FROM teams t
     WHERE t.club_id = ?
     ORDER BY t.display_name
@@ -31,7 +31,7 @@ router.get('/teams', requireApiKey, (req, res) => {
       tm.membership_type
     FROM team_memberships tm
     JOIN users u ON u.id = tm.user_id
-    WHERE tm.team_id = ?
+    WHERE tm.team_id = ? AND tm.membership_type IN ('player', 'coach')
     ORDER BY tm.membership_type, u.name
   `);
 
@@ -40,6 +40,9 @@ router.get('/teams', requireApiKey, (req, res) => {
     name: t.display_name,
     type: t.nevobo_team_type,
     number: t.nevobo_number,
+    trainings_per_week: t.trainings_per_week,
+    min_training_minutes: t.min_training_minutes,
+    max_training_minutes: t.max_training_minutes,
     members: memberStmt.all(t.id).map(m => ({
       id: m.id,
       name: m.name,
@@ -82,7 +85,7 @@ router.get('/training', requireApiKey, (req, res) => {
   `).all(club.id);
 
   const teams = db.prepare(`
-    SELECT id, display_name FROM teams WHERE club_id = ? ORDER BY display_name
+    SELECT id, display_name, trainings_per_week, min_training_minutes, max_training_minutes FROM teams WHERE club_id = ? ORDER BY display_name
   `).all(club.id);
 
   const defaults = db.prepare(`
@@ -109,7 +112,7 @@ router.get('/training', requireApiKey, (req, res) => {
       location: v.location_name,
       type: v.type,
     })),
-    teams: teams.map(t => t.display_name),
+    teams: teams.map(t => ({ name: t.display_name, trainings_per_week: t.trainings_per_week, min_training_minutes: t.min_training_minutes, max_training_minutes: t.max_training_minutes })),
     schedule: defaults.map(d => ({
       day: dayNames[d.day_of_week],
       day_of_week: d.day_of_week,

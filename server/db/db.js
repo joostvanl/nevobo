@@ -191,10 +191,25 @@ const migrations = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `ALTER TABLE training_snapshots ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE teams ADD COLUMN trainings_per_week INTEGER NOT NULL DEFAULT 2`,
+  `ALTER TABLE teams ADD COLUMN min_training_minutes INTEGER NOT NULL DEFAULT 90`,
+  `ALTER TABLE teams ADD COLUMN max_training_minutes INTEGER NOT NULL DEFAULT 90`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
 }
+
+// Recreanten default to 1 training per week
+try {
+  db.exec(`UPDATE teams SET trainings_per_week = 1 WHERE trainings_per_week = 2 AND (nevobo_team_type LIKE '%recreant%' OR display_name LIKE '%HR %' OR display_name LIKE '%DR %' OR display_name LIKE '%XR %')`);
+} catch (_) {}
+
+// Set sensible duration defaults based on team type
+try {
+  db.exec(`UPDATE teams SET min_training_minutes = 75, max_training_minutes = 75 WHERE min_training_minutes = 90 AND (display_name LIKE '% N5 %' OR display_name LIKE '% N5')`);
+  db.exec(`UPDATE teams SET min_training_minutes = 75, max_training_minutes = 90 WHERE min_training_minutes = 90 AND (display_name LIKE '%MC %' OR display_name LIKE '%JC %')`);
+  db.exec(`UPDATE teams SET min_training_minutes = 120, max_training_minutes = 120 WHERE max_training_minutes = 90 AND (display_name LIKE '% DS 1' OR display_name LIKE '% HS 1')`);
+} catch (_) {}
 
 // Allow match_media.user_id to be NULL so media survives user deletion.
 // Only run if user_id is still NOT NULL (check pragma).

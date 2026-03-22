@@ -216,6 +216,15 @@ router.patch('/defaults/:id', verifyToken, (req, res) => {
   res.json({ ok: true, training: updated });
 });
 
+router.delete('/defaults/all', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const info = db.prepare('DELETE FROM training_defaults WHERE club_id = ?').run(clubId);
+  res.json({ ok: true, deleted: info.changes });
+});
+
 router.delete('/defaults/:id', verifyToken, (req, res) => {
   const row = db.prepare('SELECT * FROM training_defaults WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
@@ -414,25 +423,19 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
   const team = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(teamId);
   if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
 
-  const dateStr = req.query.date;
-  let isoWeek;
-  if (dateStr) {
-    const d = new Date(dateStr);
+  function dateToIsoWeek(d) {
+    // Treat Sunday as the start of the next week (Sun-Sat view)
+    if (d.getDay() === 0) d.setDate(d.getDate() + 1);
     const dayNum = d.getDay() || 7;
     const thursday = new Date(d);
     thursday.setDate(d.getDate() + 4 - dayNum);
     const yearStart = new Date(thursday.getFullYear(), 0, 1);
     const weekNo = Math.ceil(((thursday - yearStart) / 86400000 + 1) / 7);
-    isoWeek = `${thursday.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
-  } else {
-    const now = new Date();
-    const dayNum = now.getDay() || 7;
-    const thursday = new Date(now);
-    thursday.setDate(now.getDate() + 4 - dayNum);
-    const yearStart = new Date(thursday.getFullYear(), 0, 1);
-    const weekNo = Math.ceil(((thursday - yearStart) / 86400000 + 1) / 7);
-    isoWeek = `${thursday.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+    return `${thursday.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
   }
+
+  const dateStr = req.query.date;
+  const isoWeek = dateStr ? dateToIsoWeek(new Date(dateStr)) : dateToIsoWeek(new Date());
 
   const clubId = team.club_id;
   const exWeek = db.prepare(
@@ -482,8 +485,34 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
 router.get('/teams', verifyToken, (req, res) => {
   const clubId = getClubId(req.user.id);
   if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
-  const teams = db.prepare('SELECT id, display_name FROM teams WHERE club_id = ? ORDER BY display_name').all(clubId);
+  const teams = db.prepare('SELECT id, display_name, trainings_per_week, min_training_minutes, max_training_minutes FROM teams WHERE club_id = ? ORDER BY display_name').all(clubId);
   res.json({ ok: true, teams });
+});
+
+router.patch('/teams/:id', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const team = db.prepare('SELECT id FROM teams WHERE id = ? AND club_id = ?').get(req.params.id, clubId);
+  if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+
+  const { trainings_per_week, min_training_minutes, max_training_minutes } = req.body;
+  const updates = [];
+  const params = [];
+  if (trainings_per_week != null && [0, 1, 2].includes(trainings_per_week)) {
+    updates.push('trainings_per_week = ?'); params.push(trainings_per_week);
+  }
+  if (min_training_minutes != null && min_training_minutes >= 60 && min_training_minutes <= 180) {
+    updates.push('min_training_minutes = ?'); params.push(min_training_minutes);
+  }
+  if (max_training_minutes != null && max_training_minutes >= 60 && max_training_minutes <= 180) {
+    updates.push('max_training_minutes = ?'); params.push(max_training_minutes);
+  }
+  if (!updates.length) return res.status(400).json({ ok: false, error: 'Geen geldige velden' });
+  params.push(req.params.id, clubId);
+  db.prepare(`UPDATE teams SET ${updates.join(', ')} WHERE id = ? AND club_id = ?`).run(...params);
+  res.json({ ok: true });
 });
 
 // ─── Blueprint snapshots ────────────────────────────────────────────────
@@ -545,6 +574,11 @@ router.post('/snapshots/:id/activate', verifyToken, (req, res) => {
     return res.status(500).json({ ok: false, error: 'Ongeldige snapshot data' });
   }
 
+  const teamExists = db.prepare('SELECT 1 FROM teams WHERE id = ?');
+  const venueExists = db.prepare('SELECT 1 FROM training_venues WHERE id = ?');
+  const valid = entries.filter(e => teamExists.get(e.team_id) && venueExists.get(e.venue_id));
+  const skipped = entries.length - valid.length;
+
   const activate = db.transaction(() => {
     db.prepare('UPDATE training_snapshots SET is_active = 0 WHERE club_id = ?').run(clubId);
     db.prepare('UPDATE training_snapshots SET is_active = 1 WHERE id = ?').run(snap.id);
@@ -552,13 +586,24 @@ router.post('/snapshots/:id/activate', verifyToken, (req, res) => {
     const ins = db.prepare(
       'INSERT INTO training_defaults (club_id, team_id, venue_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)'
     );
-    for (const e of entries) {
+    for (const e of valid) {
       ins.run(clubId, e.team_id, e.venue_id, e.day_of_week, e.start_time, e.end_time);
     }
   });
   activate();
 
-  res.json({ ok: true, activated: snap.name, loaded: entries.length });
+  res.json({ ok: true, activated: snap.name, loaded: valid.length, skipped });
+});
+
+router.patch('/snapshots/:id', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const name = req.body.name?.trim();
+  if (!name) return res.status(400).json({ ok: false, error: 'Naam is verplicht' });
+  db.prepare('UPDATE training_snapshots SET name = ? WHERE id = ? AND club_id = ?').run(name, req.params.id, clubId);
+  res.json({ ok: true, name });
 });
 
 router.delete('/snapshots/:id', verifyToken, (req, res) => {
@@ -568,6 +613,442 @@ router.delete('/snapshots/:id', verifyToken, (req, res) => {
   }
   db.prepare('DELETE FROM training_snapshots WHERE id = ? AND club_id = ?').run(req.params.id, clubId);
   res.json({ ok: true });
+});
+
+// ─── JSON import (authenticated, from planner UI) ──────────────────────
+
+router.post('/import', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const { name, schedule } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Naam is verplicht' });
+  if (!Array.isArray(schedule) || !schedule.length) {
+    return res.status(400).json({ ok: false, error: 'Schedule array is verplicht' });
+  }
+
+  const dayMap = { maandag: 0, dinsdag: 1, woensdag: 2, donderdag: 3, vrijdag: 4, zaterdag: 5, zondag: 6 };
+  const teamStmt = db.prepare('SELECT id FROM teams WHERE club_id = ? AND display_name = ?');
+  const venueStmt = db.prepare(`
+    SELECT v.id FROM training_venues v
+    JOIN training_locations l ON l.id = v.location_id
+    WHERE v.club_id = ? AND v.name = ? AND l.name = ?
+  `);
+
+  const errors = [];
+  const resolved = [];
+
+  for (let i = 0; i < schedule.length; i++) {
+    const entry = schedule[i];
+    const dow = typeof entry.day_of_week === 'number'
+      ? entry.day_of_week
+      : (typeof entry.day === 'string' ? dayMap[entry.day.toLowerCase()] : undefined);
+
+    if (dow === undefined || dow < 0 || dow > 6) { errors.push({ index: i, error: `Ongeldige dag: ${entry.day || entry.day_of_week}` }); continue; }
+    if (!entry.start_time || !entry.end_time) { errors.push({ index: i, error: 'start_time of end_time ontbreekt' }); continue; }
+
+    const team = teamStmt.get(clubId, entry.team);
+    if (!team) { errors.push({ index: i, error: `Team niet gevonden: "${entry.team}"` }); continue; }
+
+    const venue = venueStmt.get(clubId, entry.venue, entry.location);
+    if (!venue) { errors.push({ index: i, error: `Veld niet gevonden: "${entry.venue}" op "${entry.location}"` }); continue; }
+
+    resolved.push({ team_id: team.id, venue_id: venue.id, day_of_week: dow, start_time: entry.start_time, end_time: entry.end_time });
+  }
+
+  if (!resolved.length) {
+    return res.status(400).json({ ok: false, error: 'Geen geldige entries', errors });
+  }
+
+  const data = JSON.stringify(resolved);
+  const result = db.prepare(
+    'INSERT INTO training_snapshots (club_id, name, data, is_active) VALUES (?, ?, ?, 0)'
+  ).run(clubId, name.trim(), data);
+
+  res.status(201).json({
+    ok: true,
+    snapshot: { id: result.lastInsertRowid, name: name.trim(), entries: resolved.length },
+    errors: errors.length ? errors : undefined,
+  });
+});
+
+// ─── AI optimization prompt + webhook proxy ─────────────────────────────
+
+function buildAiSystemPrompt(mode) {
+  const modeInstructie = {
+    new: `MODUS: VOLLEDIG NIEUW
+Je maakt een COMPLETE planning vanaf nul. Negeer training.schedule[] — start met een leeg rooster.
+Plan ALLE teams in volgens hun trainings_per_week. Daarna wordt automatisch AANVULLEN en OPTIMALISEREN uitgevoerd.`,
+    complete: `MODUS: AANVULLEN
+De bestaande entries in training.schedule[] zijn VOORKEURSTRAININGEN — bewuste keuzes van de club.
+Neem ze ONGEWIJZIGD over. Jouw taak: plan de ontbrekende teams BIJ rondom deze blokken.
+Daarna wordt automatisch OPTIMALISEREN uitgevoerd.`,
+    optimize: `MODUS: OPTIMALISEREN
+De planning in training.schedule[] staat al vast. Neem ALLE entries over.
+Jouw taak: verschuif trainingen waar nodig zodat alle regels worden nageleefd.
+Voeg GEEN teams toe. Wijzig alleen tijden, velden of dagen als dat nodig is om
+overlappen op te lossen, gaten te dichten, of duur te corrigeren. Vermeld elke wijziging in advice.`,
+  }[mode] || '';
+
+  return `Je bent een trainingsplanning-engine voor een volleybalclub.
+Volg het protocol LETTERLIJK en IN VOLGORDE. Sla geen stap over.
+
+${modeInstructie}
+
+════════════════════════════════════════════════════════════════
+FASE 1 · DATA VERZAMELEN
+════════════════════════════════════════════════════════════════
+
+1a. Gebruik de beschikbare tool om alle teams met spelers en coaches op te halen.
+    Dit is VERPLICHT — sla dit NOOIT over.
+
+1b. Lees de input data:
+    · training.teams[]     → array van { name, trainings_per_week, min_training_minutes, max_training_minutes }
+    · training.venues[]    → array van { name, location, type }
+    · training.locations[] → array van { name, is_primary }
+    · training.schedule[]  → bestaande planning (kan leeg zijn)
+
+════════════════════════════════════════════════════════════════
+FASE 2 · ANALYSE — maak vier lijsten
+════════════════════════════════════════════════════════════════
+
+2a. CAPACITEITSKAART
+    Rooster: 4 dagen (ma, di, wo, do) × alle velden.
+    Per veld per dag: 6 uur beschikbaar (17:00–23:00).
+    Noteer per veld per dag BEZETTE slots (uit schedule) en VRIJE ruimte.
+    Reken uit hoeveel trainingen er nog bij kunnen per veld per dag.
+
+    BELANGRIJK: gebruik ALLE velden van ALLE locaties.
+    De primaire locatie (is_primary: true) vullen we EERST, maar als die vol zit
+    MOETEN we uitwijken naar secundaire locaties. Een team zonder plek op de
+    primaire locatie krijgt een plek op een secundaire locatie — het mag NIET
+    worden overgeslagen.
+
+2b. TEKORTLIJST
+    Per team: huidig_aantal = tel entries in schedule. tekort = trainings_per_week - huidig_aantal.
+    Teams met tekort > 0 komen op de lijst:
+      1. Coach-dubbelrol teams (hoogste prioriteit)
+      2. Gezins-koppel teams
+      3. Overige, gesorteerd op leeftijd (jongste eerst)
+
+2c. COACH-DUBBELROLLEN
+    Als persoon P "coach" is in team A en "player" in team B:
+      → Koppel (A, B). Plan op DEZELFDE dag, DEZELFDE locatie, DIRECT aansluitend.
+
+2d. GEZINSVERBANDEN
+    Leden met identieke achternaam in verschillende teams → plan op dezelfde dag/locatie.
+
+════════════════════════════════════════════════════════════════
+FASE 3 · PLANNEN
+════════════════════════════════════════════════════════════════
+
+3.0  STARTPUNT
+     In modus AANVULLEN/OPTIMALISEREN: kopieer alle entries uit training.schedule[] ongewijzigd.
+     In modus NIEUW: start met leeg rooster.
+
+3.1  COACH-KOPPELS
+     Per koppel (teamA, teamB):
+     · Als één al in schedule staat op dag D, locatie L:
+         → Zoek vrij slot op D, L, direct aansluitend. Plaats de ander daar.
+     · Als geen in schedule: kies dag+veld met ruimte, plan achter elkaar.
+     · 2e training van elk team: andere dag, rustdag ertussen.
+
+3.2  GEZINS-KOPPELS
+     Zelfde dag + locatie, liefst aansluitend.
+
+3.3  OVERIGE TEAMS (tekortlijst van boven naar beneden)
+     Per team met tekort:
+     · Duur: gebruik max_training_minutes uit training.teams[]. Als ruimte krap is, mag min_training_minutes.
+     · Leeftijdsvenster:
+         N5: 17:00–18:30 | MC: 17:00–19:00 | MB: 18:00–20:00
+         MA/JA/JB: 18:30–20:30 | DS/HS: 19:00–23:00 | HR/DR: 19:00–23:00
+     · Zoek een vrij slot:
+         1. Primaire locatie, aaneensluitend aan bestaande blokken
+         2. Primaire locatie, ander veld
+         3. Secundaire locatie — ALS primaire locatie vol zit
+         → Een team mag NOOIT worden overgeslagen. Gebruik secundaire locaties als het moet.
+     · Bij 2 trainingen: andere dag met rustdag (ma+wo, ma+do, di+do).
+     · Update capaciteitskaart na elke plaatsing.
+
+3.4  GATEN DICHTEN
+     Per veld per dag: als er >15 min gat zit tussen twee trainingen,
+     schuif het latere blok naar voren (tenzij het een vaste entry is uit originele schedule).
+
+════════════════════════════════════════════════════════════════
+HARDE REGELS — schending = planning ONGELDIG
+════════════════════════════════════════════════════════════════
+
+R1  GEEN OVERLAP
+    Zelfde veld + dag: start_A < end_B EN start_B < end_A = VERBODEN.
+
+R2  AANEENSLUITEND
+    Zelfde veld + dag: max 15 min gap tussen opeenvolgende trainingen.
+
+R3  FREQUENTIE
+    Per team: EXACT trainings_per_week entries (zie training.teams[]).
+    Nooit meer dan 2. Nooit minder dan trainings_per_week.
+    Teams met trainings_per_week = 0 worden NIET ingepland — sla ze volledig over.
+    Tel na afloop per team en controleer.
+
+R4  RUSTDAG
+    Team met 2 trainingen: minimaal 1 dag ertussen.
+    OK: ma+wo (0+2), ma+do (0+3), di+do (1+3).
+    FOUT: ma+di (0+1), di+wo (1+2), wo+do (2+3).
+
+R5  DAGEN
+    ALLEEN maandag (0), dinsdag (1), woensdag (2), donderdag (3).
+    Vrijdag/zaterdag/zondag = VERBODEN.
+
+R6  TIJDVENSTER
+    Start >= 17:00. Einde <= 23:00.
+
+R7  DUUR
+    Elk team heeft in training.teams[] de velden min_training_minutes en max_training_minutes.
+    · Gebruik bij voorkeur max_training_minutes als duur.
+    · Als er onvoldoende ruimte is, mag je terugvallen op min_training_minutes.
+    · De duur moet ALTIJD >= min_training_minutes EN <= max_training_minutes.
+    · Controleer: end_time - start_time (in minuten) valt binnen [min, max] van dat team.
+
+R8  PRIMAIRE LOCATIE EERST
+    Vul eerst alle velden van de primaire locatie. Als die vol zit: gebruik secundaire locaties.
+    Secundaire locaties MOETEN worden gebruikt als er anders teams niet geplaatst kunnen worden.
+
+════════════════════════════════════════════════════════════════
+FASE 4 · VERIFICATIE — TWEE VOLLEDIGE RONDES
+════════════════════════════════════════════════════════════════
+
+Voer alle checks uit. Bij ELKE fout: corrigeer en herstart ALLE checks.
+Na foutloze ronde: voer ALLES een TWEEDE keer uit.
+
+V1  OVERLAP         Per (dag,locatie,veld) gesorteerd op start_time:
+                    end[i] <= start[i+1]?  Nee → FIX
+V2  AANEENSLUITEND  Zelfde groepen: start[i+1] - end[i] <= 15 min?  Nee → FIX
+V3  FREQUENTIE      Per team: entries == trainings_per_week? Nooit > 2?
+                    Tel LETTERLIJK per teamnaam. ALS afwijking → FIX
+V4  RUSTDAG         Per team met 2 entries: |dag1-dag2| >= 2?  Nee → FIX
+V5  DAGEN           Elke entry: day_of_week in {0,1,2,3}?  Nee → FIX
+V6  TIJDVENSTER     Elke entry: start >= "17:00" en end <= "23:00"?  Nee → FIX
+V7  DUUR            Elke entry: end - start >= min_training_minutes EN
+                    <= max_training_minutes van dat team?  Nee → FIX
+V8  LOCATIE         Alle velden van primaire locatie in schedule?
+                    Secundaire locaties gebruikt als primaire vol?
+V9  BEHOUD          (modus AANVULLEN/OPTIMALISEREN) Elke originele entry ongewijzigd aanwezig?
+                    (modus OPTIMALISEREN) Geen teams toegevoegd die er niet al waren?
+
+════════════════════════════════════════════════════════════════
+FASE 5 · OUTPUT — UITSLUITEND JSON
+════════════════════════════════════════════════════════════════
+
+Je antwoord BEGINT met { en EINDIGT met }. NIETS anders.
+Geen tekst. Geen markdown. Geen code fences.
+
+{
+  "name": "AI-optimalisatie <datum>",
+  "advice": "Beschrijf: modus, wat je deed, welke teams bijgepland/gewijzigd, coach-koppels, capaciteitsanalyse, en resultaat van beide verificatierondes. Gebruik \\n voor newlines.",
+  "schedule": [
+    {
+      "day": "Maandag",
+      "day_of_week": 0,
+      "start_time": "17:00",
+      "end_time": "18:30",
+      "team": "exact teamnaam",
+      "venue": "exact veldnaam",
+      "location": "exact locatienaam"
+    }
+  ]
+}
+
+VELDREGELS:
+· day: "Maandag" | "Dinsdag" | "Woensdag" | "Donderdag"
+· day_of_week: 0 | 1 | 2 | 3
+· start_time / end_time: "HH:MM", binnen 17:00–23:00
+· team / venue / location: exact uit de input, hoofdlettergevoelig
+· schedule bevat ALLE trainingen (complete set)`;
+}
+
+function buildAiUserMessage(mode, extraMessage) {
+  const modeLabel = { new: 'VOLLEDIG NIEUW', complete: 'AANVULLEN', optimize: 'OPTIMALISEREN' }[mode] || 'AANVULLEN';
+  let msg = `MODUS: ${modeLabel}
+
+De trainingsplanning staat in het "training" veld van de webhook data.
+
+`;
+  if (extraMessage) {
+    msg += `══ EXTRA OPDRACHT ══\n${extraMessage}\n\n`;
+  }
+  msg += `══ STAPPEN ══
+1. Haal EERST alle teams, spelers en coaches op via de tool — VERPLICHT
+2. Voer fase 2 t/m 4 uit zoals beschreven in het system prompt
+3. Antwoord UITSLUITEND met een JSON object. Begin met { en eindig met }.`;
+  return msg;
+}
+
+router.get('/ai-webhook-status', verifyToken, (req, res) => {
+  res.json({ ok: true, configured: !!process.env.N8N_TRAINING_WEBHOOK_URL });
+});
+
+router.post('/ai-optimize', verifyToken, async (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const webhookUrl = process.env.N8N_TRAINING_WEBHOOK_URL;
+  if (!webhookUrl) {
+    return res.status(503).json({ ok: false, error: 'N8N webhook URL is niet geconfigureerd (N8N_TRAINING_WEBHOOK_URL)' });
+  }
+
+  const club = db.prepare('SELECT id, name, nevobo_code FROM clubs WHERE id = ?').get(clubId);
+  if (!club) return res.status(400).json({ ok: false, error: 'Club niet gevonden' });
+
+  // Assemble teams data
+  const teamRows = db.prepare('SELECT id, display_name, nevobo_team_type, nevobo_number, trainings_per_week, min_training_minutes, max_training_minutes FROM teams WHERE club_id = ? ORDER BY display_name').all(clubId);
+  const memberStmt = db.prepare(`
+    SELECT u.id, u.name, u.email, u.shirt_number, u.position, tm.membership_type
+    FROM team_memberships tm JOIN users u ON u.id = tm.user_id
+    WHERE tm.team_id = ? AND tm.membership_type IN ('player', 'coach')
+    ORDER BY tm.membership_type, u.name
+  `);
+  const teamsPayload = {
+    club: { name: club.name, nevobo_code: club.nevobo_code },
+    teams: teamRows.map(t => ({
+      id: t.id, name: t.display_name, type: t.nevobo_team_type, number: t.nevobo_number, trainings_per_week: t.trainings_per_week,
+      members: memberStmt.all(t.id).map(m => ({ id: m.id, name: m.name, email: m.email, shirt_number: m.shirt_number, position: m.position, role: m.membership_type })),
+    })),
+  };
+
+  // Assemble training data
+  const dayNames = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
+  const locations = db.prepare('SELECT id, name, nevobo_venue_name FROM training_locations WHERE club_id = ? ORDER BY name').all(clubId);
+  const venues = db.prepare(`
+    SELECT v.id, v.name, v.type, l.name AS location_name
+    FROM training_venues v JOIN training_locations l ON l.id = v.location_id
+    WHERE v.club_id = ? ORDER BY l.name, v.name
+  `).all(clubId);
+  const defaults = db.prepare(`
+    SELECT d.day_of_week, d.start_time, d.end_time, t.display_name AS team_name, v.name AS venue_name, l.name AS location_name
+    FROM training_defaults d
+    JOIN teams t ON t.id = d.team_id JOIN training_venues v ON v.id = d.venue_id JOIN training_locations l ON l.id = v.location_id
+    WHERE d.club_id = ? ORDER BY d.day_of_week, d.start_time
+  `).all(clubId);
+
+  const trainingPayload = {
+    club: { name: club.name, nevobo_code: club.nevobo_code },
+    locations: locations.map(l => ({ name: l.name, nevobo_venue_name: l.nevobo_venue_name, is_primary: !!l.nevobo_venue_name })),
+    venues: venues.map(v => ({ name: v.name, location: v.location_name, type: v.type })),
+    teams: teamRows.map(t => ({ name: t.display_name, trainings_per_week: t.trainings_per_week, min_training_minutes: t.min_training_minutes, max_training_minutes: t.max_training_minutes })),
+    schedule: defaults.map(d => ({ day: dayNames[d.day_of_week], day_of_week: d.day_of_week, start_time: d.start_time, end_time: d.end_time, team: d.team_name, venue: d.venue_name, location: d.location_name })),
+  };
+
+  const mode = ['new', 'complete', 'optimize'].includes(req.body.mode) ? req.body.mode : 'complete';
+  const systemPrompt = buildAiSystemPrompt(mode);
+  const userMessage = buildAiUserMessage(mode, req.body.message || '');
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt, userMessage, teams: teamsPayload, training: trainingPayload }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.error(`[ai-optimize] Webhook returned ${response.status}:`, text.slice(0, 500));
+      return res.status(502).json({ ok: false, error: `N8N webhook fout (HTTP ${response.status}): ${text.slice(0, 300)}` });
+    }
+
+    let result;
+    const rawText = await response.text();
+    console.log('[ai-optimize] Raw webhook response (first 1000 chars):', rawText.slice(0, 1000));
+    console.log('[ai-optimize] Raw webhook response length:', rawText.length);
+    try {
+      result = JSON.parse(rawText);
+    } catch (_) {
+      console.error('[ai-optimize] Webhook returned non-JSON:', rawText.slice(0, 500));
+      return res.status(502).json({ ok: false, error: 'N8N webhook gaf geen geldige JSON terug. Check de N8N workflow output.' });
+    }
+
+    console.log('[ai-optimize] Parsed result keys:', Object.keys(result));
+    console.log('[ai-optimize] result.schedule is array?', Array.isArray(result.schedule), 'length:', result.schedule?.length);
+
+    // N8N may wrap the response in an array or nested object — unwrap if needed
+    if (!result.schedule && Array.isArray(result) && result.length > 0) {
+      console.log('[ai-optimize] Result is array, unwrapping first element');
+      result = result[0];
+    }
+    if (!result.schedule && result.output) {
+      console.log('[ai-optimize] Result has .output, trying to parse');
+      try {
+        const inner = typeof result.output === 'string' ? JSON.parse(result.output.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()) : result.output;
+        if (inner.schedule) result = inner;
+      } catch (_) {}
+    }
+    if (!result.schedule && result.text) {
+      console.log('[ai-optimize] Result has .text, trying to parse');
+      try {
+        const inner = typeof result.text === 'string' ? JSON.parse(result.text.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()) : result.text;
+        if (inner.schedule) result = inner;
+      } catch (_) {}
+    }
+
+    if (result.schedule && Array.isArray(result.schedule)) {
+      const dayMap = { maandag: 0, dinsdag: 1, woensdag: 2, donderdag: 3, vrijdag: 4, zaterdag: 5, zondag: 6 };
+      const teamStmt = db.prepare('SELECT id FROM teams WHERE club_id = ? AND display_name = ?');
+      const venueStmt = db.prepare(`
+        SELECT v.id FROM training_venues v
+        JOIN training_locations l ON l.id = v.location_id
+        WHERE v.club_id = ? AND v.name = ? AND l.name = ?
+      `);
+
+      const errors = [];
+      const resolved = [];
+
+      for (let i = 0; i < result.schedule.length; i++) {
+        const entry = result.schedule[i];
+        const dow = typeof entry.day_of_week === 'number'
+          ? entry.day_of_week
+          : (typeof entry.day === 'string' ? dayMap[entry.day.toLowerCase()] : undefined);
+
+        if (dow === undefined || dow < 0 || dow > 6) { errors.push({ index: i, error: `Ongeldige dag: ${entry.day || entry.day_of_week}` }); continue; }
+        if (!entry.start_time || !entry.end_time) { errors.push({ index: i, error: 'start_time of end_time ontbreekt' }); continue; }
+
+        const team = teamStmt.get(clubId, entry.team);
+        if (!team) { errors.push({ index: i, error: `Team niet gevonden: "${entry.team}"` }); continue; }
+
+        const venue = venueStmt.get(clubId, entry.venue, entry.location);
+        if (!venue) { errors.push({ index: i, error: `Veld niet gevonden: "${entry.venue}" op "${entry.location}"` }); continue; }
+
+        resolved.push({ team_id: team.id, venue_id: venue.id, day_of_week: dow, start_time: entry.start_time, end_time: entry.end_time });
+      }
+
+      if (resolved.length) {
+        const snapName = result.name || `AI-optimalisatie ${new Date().toLocaleDateString('nl-NL')}`;
+        const data = JSON.stringify(resolved);
+        const snap = db.prepare(
+          'INSERT INTO training_snapshots (club_id, name, data, is_active) VALUES (?, ?, ?, 0)'
+        ).run(clubId, snapName, data);
+
+        return res.json({
+          ok: true,
+          advice: result.advice || null,
+          snapshot: { id: snap.lastInsertRowid, name: snapName, entries: resolved.length },
+          errors: errors.length ? errors : undefined,
+        });
+      }
+
+      return res.status(400).json({ ok: false, error: 'Geen geldige entries in AI response', errors });
+    }
+
+    return res.json({ ok: true, advice: result.advice || JSON.stringify(result), snapshot: null });
+  } catch (err) {
+    if (err.name === 'TimeoutError') {
+      return res.status(504).json({ ok: false, error: 'Webhook timeout (120s)' });
+    }
+    return res.status(502).json({ ok: false, error: `Webhook fout: ${err.message}` });
+  }
 });
 
 // ─── Nevobo venue discovery ─────────────────────────────────────────────

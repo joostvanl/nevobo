@@ -488,11 +488,14 @@ export function syncAppHeaderChrome() {
   }
   if (gearBtn) gearBtn.setAttribute('aria-expanded', 'false');
 
+  const plannerBtn = document.getElementById('header-planner-btn');
+
   const user = state.user;
   if (!user) {
     profileBtn.innerHTML = '👤';
     profileBtn.classList.remove('header-action--profile');
     gearWrap?.classList.add('hidden');
+    plannerBtn?.classList.add('hidden');
     if (menu) menu.innerHTML = '';
     return;
   }
@@ -503,6 +506,15 @@ export function syncAppHeaderChrome() {
   const isSuperAdmin = user.roles?.some(r => r.role === 'super_admin');
   const hasAdminRole = (user.roles?.length ?? 0) > 0;
   const showGear = isSuperAdmin || hasAdminRole;
+
+  if (plannerBtn) {
+    if (hasAdminRole) {
+      plannerBtn.classList.remove('hidden');
+      plannerBtn.onclick = () => navigate('training-planner');
+    } else {
+      plannerBtn.classList.add('hidden');
+    }
+  }
 
   if (!showGear || !gearWrap || !menu) {
     gearWrap?.classList.add('hidden');
