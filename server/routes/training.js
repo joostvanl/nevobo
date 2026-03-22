@@ -488,6 +488,88 @@ function getTeamMembership(userId, teamId) {
   ).get(userId, teamId);
 }
 
+router.get('/session/:id/attendance-list', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership) return res.status(403).json({ ok: false, error: 'Geen lid van dit team' });
+
+  const attendance = db.prepare(`
+    SELECT a.user_id, a.status, u.name, u.avatar_url,
+           COALESCE(tm.membership_type, 'guest') AS membership_type
+    FROM training_attendance a
+    JOIN users u ON u.id = a.user_id
+    LEFT JOIN team_memberships tm ON tm.user_id = a.user_id AND tm.team_id = ?
+    WHERE a.session_id = ?
+    ORDER BY CASE COALESCE(tm.membership_type, 'guest') WHEN 'coach' THEN 0 WHEN 'player' THEN 1 ELSE 2 END, u.name
+  `).all(session.team_id, session.id);
+
+  res.json({ ok: true, attendance });
+});
+
+router.get('/session/:id/search-club-members', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json({ ok: true, results: [] });
+
+  const results = db.prepare(`
+    SELECT u.id, u.name, u.avatar_url, t.display_name AS team_name
+    FROM users u
+    LEFT JOIN team_memberships tm2 ON tm2.user_id = u.id
+    LEFT JOIN teams t ON t.id = tm2.team_id
+    WHERE u.club_id = ? AND u.name LIKE ? AND u.id NOT IN (
+      SELECT user_id FROM training_attendance WHERE session_id = ?
+    )
+    ORDER BY u.name
+    LIMIT 15
+  `).all(session.club_id, `%${q}%`, session.id);
+
+  res.json({ ok: true, results });
+});
+
+router.post('/session/:id/add-guest', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const userId = req.body.user_id;
+  if (!userId) return res.status(400).json({ ok: false, error: 'user_id verplicht' });
+
+  const user = db.prepare('SELECT id, name, club_id FROM users WHERE id = ?').get(userId);
+  if (!user || user.club_id !== session.club_id) {
+    return res.status(400).json({ ok: false, error: 'Gebruiker niet gevonden in deze club' });
+  }
+  db.prepare(`
+    INSERT OR IGNORE INTO training_attendance (session_id, user_id, status) VALUES (?, ?, 'present')
+  `).run(session.id, userId);
+  res.json({ ok: true });
+});
+
+router.delete('/session/:id/guest/:userId', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const guestUserId = parseInt(req.params.userId, 10);
+  const isTeamMember = db.prepare(
+    'SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ?'
+  ).get(guestUserId, session.team_id);
+  if (isTeamMember) {
+    return res.status(400).json({ ok: false, error: 'Kan geen vast teamlid verwijderen' });
+  }
+  db.prepare('DELETE FROM training_attendance WHERE session_id = ? AND user_id = ?').run(session.id, guestUserId);
+  res.json({ ok: true });
+});
+
 router.get('/session/:teamId/:date/:startTime', verifyToken, (req, res) => {
   const teamId = parseInt(req.params.teamId, 10);
   const { date, startTime } = req.params;
@@ -519,12 +601,13 @@ router.get('/session/:teamId/:date/:startTime', verifyToken, (req, res) => {
   }
 
   const attendance = db.prepare(`
-    SELECT a.user_id, a.status, u.name, u.avatar_url, tm.membership_type
+    SELECT a.user_id, a.status, u.name, u.avatar_url,
+           COALESCE(tm.membership_type, 'guest') AS membership_type
     FROM training_attendance a
     JOIN users u ON u.id = a.user_id
-    JOIN team_memberships tm ON tm.user_id = a.user_id AND tm.team_id = ?
+    LEFT JOIN team_memberships tm ON tm.user_id = a.user_id AND tm.team_id = ?
     WHERE a.session_id = ?
-    ORDER BY tm.membership_type, u.name
+    ORDER BY CASE COALESCE(tm.membership_type, 'guest') WHEN 'coach' THEN 0 WHEN 'player' THEN 1 ELSE 2 END, u.name
   `).all(teamId, session.id);
 
   res.json({

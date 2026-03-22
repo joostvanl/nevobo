@@ -3734,3 +3734,14 @@ img.hl-avatar {
 }
 .ts-notes-status { margin-top: 0.35rem; font-size: 0.75rem; min-height: 1em; }
 .ts-empty { padding: 1.5rem; text-align: center; color: var(--text-secondary); font-size: 0.88rem; }
+
+.ts-guest-results { margin-top: 0.5rem; }
+.ts-guest-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.45rem 0; border-bottom: 1px solid var(--border);
+}
+.ts-guest-row:last-child { border-bottom: none; }
+.ts-guest-row .ts-att-person > div { display: flex; flex-direction: column; }
+.ts-guest-team { font-size: 0.72rem; color: var(--text-secondary); }
+.ts-guest-empty { padding: 0.75rem 0; color: var(--text-secondary); font-size: 0.85rem; }
+.ts-guest-add { white-space: nowrap; flex-shrink: 0; }
