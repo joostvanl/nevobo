@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
-    "test": "node --test test/html-escape.test.mjs test/api-app.test.cjs test/auth-api.test.cjs test/feature-settings-parse.test.cjs test/help-content.test.cjs"
+    "test": "node --test test/html-escape.test.mjs test/api-app.test.cjs test/auth-api.test.cjs test/feature-settings-parse.test.cjs test/help-content.test.cjs test/owasp-security.test.cjs",
+    "test:security": "node --test test/owasp-security.test.cjs"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -23,11 +23,49 @@ const TEAM_COLORS = [
 let _ctx = null;
 let _activeSnapshotName = null;
 let _teamOverviewOpen = false;
+let _editMode = false;
+const _undoStack = [];
+const _redoStack = [];
+const MAX_UNDO = 50;
 const _dayZoom = {};
 const _dayScroll = {};
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 5;
 const ZOOM_STEP = 0.2;
+
+function pushUndo(trainings) {
+  _undoStack.push(JSON.stringify(trainings));
+  if (_undoStack.length > MAX_UNDO) _undoStack.shift();
+  _redoStack.length = 0;
+}
+
+function snapshotBeforeMutation() {
+  if (_ctx?.weekData?.trainings && _ctx.mode === 'blueprint') {
+    pushUndo(_ctx.weekData.trainings);
+  }
+}
+
+async function performUndo() {
+  if (!_undoStack.length) return;
+  _redoStack.push(JSON.stringify(_ctx.weekData.trainings));
+  const prev = JSON.parse(_undoStack.pop());
+  try {
+    await api('/api/training/defaults/restore', { method: 'POST', body: { trainings: prev } });
+    showToast('Ongedaan gemaakt', 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  loadAndRender();
+}
+
+async function performRedo() {
+  if (!_redoStack.length) return;
+  _undoStack.push(JSON.stringify(_ctx.weekData.trainings));
+  const next = JSON.parse(_redoStack.pop());
+  try {
+    await api('/api/training/defaults/restore', { method: 'POST', body: { trainings: next } });
+    showToast('Opnieuw toegepast', 'success');
+  } catch (err) { showToast(err.message, 'error'); }
+  loadAndRender();
+}
 
 function pxToMinutes(px, trackWidth) {
   return Math.round((px / trackWidth) * TOTAL_MINUTES / SNAP) * SNAP;
@@ -85,6 +123,8 @@ function teamColorClass(teamId) {
 
 // ─── Render ─────────────────────────────────────────────────────────────────
 
+let _keyHandler = null;
+
 export async function render(container) {
   document.getElementById('app')?.classList.add('tp-fullwidth');
   container.innerHTML = '<div class="spinner"></div>';
@@ -94,6 +134,14 @@ export async function render(container) {
     return;
   }
 
+  if (_keyHandler) document.removeEventListener('keydown', _keyHandler);
+  _keyHandler = (e) => {
+    if (!_editMode || _ctx?.mode !== 'blueprint') return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); performRedo(); }
+  };
+  document.addEventListener('keydown', _keyHandler);
+
   try {
     const [locData, venueData, teamData, clubData] = await Promise.all([
       api('/api/training/locations'),
@@ -102,6 +150,9 @@ export async function render(container) {
       api(`/api/clubs/${user.club_id}`),
     ]);
 
+    _editMode = false;
+    _undoStack.length = 0;
+    _redoStack.length = 0;
     _ctx = {
       clubId: user.club_id,
       clubName: clubData.club?.name || '',
@@ -219,7 +270,7 @@ function renderPlanner() {
     });
   }
   const { trainings, isException } = c.weekData;
-  const editable = c.mode === 'blueprint' || isException;
+  const editable = (c.mode === 'blueprint' && _editMode) || isException;
 
   const isBlueprint = c.mode === 'blueprint';
 
@@ -236,15 +287,26 @@ function renderPlanner() {
     const snapLabel = _activeSnapshotName
       ? `<span class="tp-snap-name" id="tp-rename-snapshot" title="Klik om naam te wijzigen">${escHtml(_activeSnapshotName)}</span>`
       : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
-    contextBar = `<div class="tp-context-bar">
-      <div class="tp-context-left">${snapLabel}</div>
-      <div class="tp-context-actions">
+    const lockBtn = _editMode
+      ? '<button class="tp-ctx-btn tp-ctx-edit-active" id="tp-toggle-edit" title="Bewerken uitschakelen">✏️ Bewerken</button>'
+      : '<button class="tp-ctx-btn" id="tp-toggle-edit" title="Bewerken inschakelen">🔒 Vergrendeld</button>';
+    const undoDisabled = _undoStack.length === 0 ? ' disabled' : '';
+    const redoDisabled = _redoStack.length === 0 ? ' disabled' : '';
+    const editActions = _editMode ? `
+        <button class="tp-ctx-btn" id="tp-undo" title="Ongedaan maken"${undoDisabled}>↩ Undo</button>
+        <button class="tp-ctx-btn" id="tp-redo" title="Opnieuw"${redoDisabled}>↪ Redo</button>
+        <span class="tp-ctx-sep"></span>
         <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
         <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>
         <span class="tp-ctx-sep"></span>
         <button class="tp-ctx-btn tp-ctx-accent" id="tp-ai-optimize">🤖 AI assistent</button>
         <span class="tp-ctx-sep"></span>
-        <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>
+        <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>` : `
+        <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
+        <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>`;
+    contextBar = `<div class="tp-context-bar">
+      <div class="tp-context-left">${lockBtn}<span class="tp-ctx-sep"></span>${snapLabel}</div>
+      <div class="tp-context-actions">${editActions}
       </div>
     </div>`;
   } else {
@@ -402,7 +464,7 @@ function renderPlanner() {
     </details>`;
 
   c.container.innerHTML = `
-    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}">
+    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${isBlueprint && !_editMode ? ' tp-locked' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
         ${modeTabs}
@@ -457,9 +519,12 @@ function wireEvents() {
   const c = _ctx;
   const el = c.container;
 
-  el.querySelector('#tp-to-week')?.addEventListener('click', () => { if (c.mode !== 'week') { c.mode = 'week'; loadAndRender(); } });
+  el.querySelector('#tp-to-week')?.addEventListener('click', () => { if (c.mode !== 'week') { c.mode = 'week'; _editMode = false; _undoStack.length = 0; _redoStack.length = 0; loadAndRender(); } });
   el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => { if (c.mode !== 'blueprint') { c.mode = 'blueprint'; loadAndRender(); } });
 
+  el.querySelector('#tp-toggle-edit')?.addEventListener('click', () => { _editMode = !_editMode; renderPlanner(); });
+  el.querySelector('#tp-undo')?.addEventListener('click', () => performUndo());
+  el.querySelector('#tp-redo')?.addEventListener('click', () => performRedo());
   el.querySelector('#tp-save-snapshot')?.addEventListener('click', () => showSaveSnapshotModal());
   el.querySelector('#tp-load-snapshot')?.addEventListener('click', () => showLoadSnapshotModal());
   el.querySelector('#tp-ai-optimize')?.addEventListener('click', () => triggerAiOptimize());
@@ -522,7 +587,7 @@ function wireEvents() {
     });
   });
 
-  const editable = c.mode === 'blueprint' || c.weekData?.isException;
+  const editable = (c.mode === 'blueprint' && _editMode) || c.weekData?.isException;
 
   if (editable) {
     el.querySelectorAll('.tp-venue-track').forEach(track => {
@@ -681,6 +746,7 @@ function setupDrag(block) {
       const id = block.dataset.trainingId;
       const source = block.dataset.source;
       const endpoint = source === 'default' ? `/api/training/defaults/${id}` : `/api/training/exceptions/${id}`;
+      snapshotBeforeMutation();
       try {
         await api(endpoint, { method: 'PATCH', body: {
           venue_id: newVenueId,
@@ -745,6 +811,7 @@ function setupResize(block) {
         const id = block.dataset.trainingId;
         const source = block.dataset.source;
         const endpoint = source === 'default' ? `/api/training/defaults/${id}` : `/api/training/exceptions/${id}`;
+        snapshotBeforeMutation();
         try {
           await api(endpoint, { method: 'PATCH', body: { start_time: minutesToTime(startMin), end_time: minutesToTime(endMin) } });
         } catch (err) { showToast(err.message, 'error'); }
@@ -829,6 +896,7 @@ function showBlockPopover(block, e) {
   pop.querySelector('#tp-pop-del').addEventListener('click', async () => {
     closePopover();
     if (!confirm('Training verwijderen?')) return;
+    snapshotBeforeMutation();
     const endpoint = source === 'default' ? `/api/training/defaults/${id}` : `/api/training/exceptions/${id}`;
     try { await api(endpoint, { method: 'DELETE' }); loadAndRender(); }
     catch (err) { showToast(err.message, 'error'); }
@@ -998,6 +1066,7 @@ async function showLoadSnapshotModal() {
     btn.addEventListener('click', async () => {
       const name = btn.dataset.name;
       if (!confirm(`"${name}" activeren? De huidige blauwdruk wordt hiermee overschreven.`)) return;
+      snapshotBeforeMutation();
       try {
         await api(`/api/training/snapshots/${btn.dataset.id}/activate`, { method: 'POST' });
         _activeSnapshotName = name;
@@ -1032,6 +1101,7 @@ async function showLoadSnapshotModal() {
 
 async function clearAllDefaults() {
   if (!confirm('Weet je zeker dat je de hele blauwdruk wilt leegmaken? Alle trainingen worden verwijderd. Sla eventueel eerst op.')) return;
+  snapshotBeforeMutation();
   try {
     await api('/api/training/defaults/all', { method: 'DELETE' });
     showToast && showToast('Blauwdruk leeggemaakt');
@@ -1152,6 +1222,7 @@ async function triggerAiOptimize() {
     const modeLabels = { new: 'maakt een nieuwe planning', complete: 'vult de planning aan', optimize: 'optimaliseert de planning' };
     statusEl.innerHTML = `<span class="tp-ai-status-loading"><span class="tp-spinner"></span> AI agent ${modeLabels[selectedMode]}... dit kan 1–2 min duren</span>`;
 
+    snapshotBeforeMutation();
     try {
       const result = await api('/api/training/ai-optimize', { method: 'POST', body: { mode: selectedMode, message: msgInput.value.trim() } });
 
@@ -1386,6 +1457,7 @@ function showQuickAddPicker(e, venueId, dow, startMin) {
           start_time: minutesToTime(startMin),
           end_time: minutesToTime(endMin),
         };
+        snapshotBeforeMutation();
         try {
           if (c.mode === 'blueprint') {
             await api('/api/training/defaults', { method: 'POST', body });
@@ -1438,6 +1510,7 @@ function showAddTrainingModal(venueId, dow, startTime, endTime) {
       start_time: document.getElementById('tp-a-start').value,
       end_time: document.getElementById('tp-a-end').value,
     };
+    snapshotBeforeMutation();
     try {
       if (c.mode === 'blueprint') {
         await api('/api/training/defaults', { method: 'POST', body });
@@ -1486,6 +1559,7 @@ function showEditTrainingModal(training, source) {
       end_time: document.getElementById('tp-e-end').value,
     };
     const endpoint = source === 'default' ? `/api/training/defaults/${training.id}` : `/api/training/exceptions/${training.id}`;
+    snapshotBeforeMutation();
     try {
       await api(endpoint, { method: 'PATCH', body });
       overlay.remove();

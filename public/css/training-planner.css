@@ -219,6 +219,31 @@
   flex-shrink: 0;
 }
 
+/* ── Edit mode toggle ──────────────────────────────────────────────────── */
+
+.tp-ctx-edit-active {
+  background: #e8f5e9 !important;
+  border-color: #43a047 !important;
+  color: #2e7d32 !important;
+  font-weight: 600;
+}
+.tp-ctx-edit-active:hover {
+  background: #c8e6c9 !important;
+}
+.tp-ctx-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.tp-wrapper.tp-mode-blueprint.tp-locked .tp-venue-track {
+  pointer-events: none;
+}
+.tp-wrapper.tp-mode-blueprint.tp-locked .tp-block {
+  cursor: default;
+  opacity: 0.85;
+}
+
 /* ── Blueprint mode tint ────────────────────────────────────────────────── */
 
 .tp-wrapper.tp-mode-blueprint {

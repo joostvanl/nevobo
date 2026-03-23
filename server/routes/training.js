@@ -225,6 +225,27 @@ router.delete('/defaults/all', verifyToken, (req, res) => {
   res.json({ ok: true, deleted: info.changes });
 });
 
+router.post('/defaults/restore', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const items = req.body.trainings;
+  if (!Array.isArray(items)) return res.status(400).json({ ok: false, error: 'trainings array verplicht' });
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM training_defaults WHERE club_id = ?').run(clubId);
+    const ins = db.prepare(
+      'INSERT INTO training_defaults (club_id, team_id, venue_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    for (const t of items) {
+      ins.run(clubId, t.team_id, t.venue_id, t.day_of_week, t.start_time, t.end_time);
+    }
+  });
+  tx();
+  res.json({ ok: true });
+});
+
 router.delete('/defaults/:id', verifyToken, (req, res) => {
   const row = db.prepare('SELECT * FROM training_defaults WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
