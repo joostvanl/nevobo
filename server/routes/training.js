@@ -501,6 +501,303 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
   });
 });
 
+// ─── Skill tags & exercises library ───────────────────────────────────────────
+
+function isClubCoach(userId, clubId) {
+  const row = db.prepare(`
+    SELECT 1 FROM team_memberships tm
+    JOIN teams t ON t.id = tm.team_id
+    WHERE tm.user_id = ? AND t.club_id = ? AND tm.membership_type = 'coach'
+    LIMIT 1
+  `).get(userId, clubId);
+  return !!row;
+}
+
+function exerciseRowToJson(row, tags) {
+  const out = {
+    id: row.id,
+    club_id: row.club_id,
+    created_by_user_id: row.created_by_user_id,
+    name: row.name,
+    description: row.description || '',
+    default_duration_minutes: row.default_duration_minutes,
+    difficulty: row.difficulty,
+    scope: row.scope,
+    share_status: row.share_status,
+    share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
+    created_at: row.created_at,
+    tags: tags || [],
+  };
+  if (row.author_name != null) out.author_name = row.author_name;
+  return out;
+}
+
+function loadExerciseTags(exerciseId) {
+  return db.prepare(`
+    SELECT t.id, t.name FROM training_skill_tags t
+    JOIN training_exercise_tags m ON m.tag_id = t.id
+    WHERE m.exercise_id = ?
+    ORDER BY t.name
+  `).all(exerciseId);
+}
+
+function setExerciseTags(exerciseId, tagIds) {
+  db.prepare('DELETE FROM training_exercise_tags WHERE exercise_id = ?').run(exerciseId);
+  if (!tagIds?.length) return;
+  const ins = db.prepare('INSERT INTO training_exercise_tags (exercise_id, tag_id) VALUES (?, ?)');
+  const clubRow = db.prepare('SELECT club_id FROM training_exercises WHERE id = ?').get(exerciseId);
+  for (const tid of tagIds) {
+    const tag = db.prepare('SELECT id FROM training_skill_tags WHERE id = ? AND club_id = ?').get(tid, clubRow.club_id);
+    if (tag) ins.run(exerciseId, tid);
+  }
+}
+
+router.get('/skill-tags', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
+  const tags = db.prepare(
+    'SELECT id, name FROM training_skill_tags WHERE club_id = ? ORDER BY name'
+  ).all(clubId);
+  res.json({ ok: true, tags });
+});
+
+router.post('/skill-tags', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const name = (req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ ok: false, error: 'Naam is verplicht' });
+  try {
+    const r = db.prepare(
+      'INSERT INTO training_skill_tags (club_id, name) VALUES (?, ?)'
+    ).run(clubId, name);
+    const tag = db.prepare('SELECT id, name FROM training_skill_tags WHERE id = ?').get(r.lastInsertRowid);
+    res.status(201).json({ ok: true, tag });
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(400).json({ ok: false, error: 'Deze tag bestaat al' });
+    }
+    throw e;
+  }
+});
+
+router.delete('/skill-tags/:id', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const tag = db.prepare('SELECT * FROM training_skill_tags WHERE id = ? AND club_id = ?').get(req.params.id, clubId);
+  if (!tag) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  db.prepare('DELETE FROM training_skill_tags WHERE id = ?').run(tag.id);
+  res.json({ ok: true });
+});
+
+router.get('/exercises/pending-share', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  const rows = db.prepare(`
+    SELECT e.*, u.name AS author_name
+    FROM training_exercises e
+    JOIN users u ON u.id = e.created_by_user_id
+    WHERE e.club_id = ? AND e.scope = 'private' AND e.share_status = 'pending'
+    ORDER BY e.created_at DESC
+  `).all(clubId);
+  const exercises = rows.map((r) => exerciseRowToJson(r, loadExerciseTags(r.id)));
+  res.json({ ok: true, exercises });
+});
+
+router.get('/exercises', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
+  const q = (req.query.q || '').trim();
+  const tagId = req.query.tag_id ? parseInt(req.query.tag_id, 10) : null;
+
+  let sql = `
+    SELECT e.* FROM training_exercises e
+    WHERE e.club_id = ? AND (
+      e.scope = 'club'
+      OR (e.scope = 'private' AND e.created_by_user_id = ?)
+    )`;
+  const params = [clubId, req.user.id];
+  if (q) {
+    sql += ' AND (e.name LIKE ? OR e.description LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  if (tagId) {
+    sql += ' AND EXISTS (SELECT 1 FROM training_exercise_tags m WHERE m.exercise_id = e.id AND m.tag_id = ?)';
+    params.push(tagId);
+  }
+  sql += ' ORDER BY e.name';
+  const rows = db.prepare(sql).all(...params);
+  const exercises = rows.map((r) => exerciseRowToJson(r, loadExerciseTags(r.id)));
+  res.json({ ok: true, exercises });
+});
+
+router.post('/exercises', verifyToken, (req, res) => {
+  const clubId = getClubId(req.user.id);
+  if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
+
+  const {
+    name, description, default_duration_minutes: dur, difficulty, scope, tag_ids: tagIds,
+  } = req.body || {};
+  const scopeVal = scope === 'club' ? 'club' : 'private';
+
+  if (scopeVal === 'club') {
+    if (!canEditTraining(req.user.id, clubId)) {
+      return res.status(403).json({ ok: false, error: 'Alleen beheerders kunnen club-oefeningen aanmaken' });
+    }
+  } else if (!isClubCoach(req.user.id, clubId) && !canEditTraining(req.user.id, clubId)) {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches kunnen privé-oefeningen aanmaken' });
+  }
+
+  if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Naam is verplicht' });
+  const d = parseInt(dur, 10);
+  if (!Number.isFinite(d) || d < 1 || d > 480) {
+    return res.status(400).json({ ok: false, error: 'Ongeldige duur (1–480 min)' });
+  }
+  const diff = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+
+  const r = db.prepare(`
+    INSERT INTO training_exercises (
+      club_id, created_by_user_id, name, description, default_duration_minutes, difficulty, scope, share_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'none')
+  `).run(
+    clubId,
+    req.user.id,
+    name.trim(),
+    (description || '').trim(),
+    d,
+    diff,
+    scopeVal
+  );
+  const id = r.lastInsertRowid;
+  setExerciseTags(id, tagIds);
+  const row = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(id);
+  res.status(201).json({ ok: true, exercise: exerciseRowToJson(row, loadExerciseTags(id)) });
+});
+
+router.patch('/exercises/:id', verifyToken, (req, res) => {
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const clubId = getClubId(req.user.id);
+  if (!clubId || ex.club_id !== clubId) return res.status(403).json({ ok: false, error: 'Geen toegang' });
+
+  if (ex.scope === 'club') {
+    if (!canEditTraining(req.user.id, clubId)) {
+      return res.status(403).json({ ok: false, error: 'Geen toegang' });
+    }
+  } else if (ex.created_by_user_id !== req.user.id) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const { name, description, default_duration_minutes: dur, difficulty, tag_ids: tagIds } = req.body || {};
+  const fields = [];
+  const vals = [];
+  if (name != null) { fields.push('name = ?'); vals.push(String(name).trim()); }
+  if (description != null) { fields.push('description = ?'); vals.push(String(description).trim()); }
+  if (dur != null) {
+    const d = parseInt(dur, 10);
+    if (!Number.isFinite(d) || d < 1 || d > 480) {
+      return res.status(400).json({ ok: false, error: 'Ongeldige duur' });
+    }
+    fields.push('default_duration_minutes = ?'); vals.push(d);
+  }
+  if (difficulty != null && ['easy', 'medium', 'hard'].includes(difficulty)) {
+    fields.push('difficulty = ?'); vals.push(difficulty);
+  }
+  if (fields.length) {
+    vals.push(ex.id);
+    db.prepare(`UPDATE training_exercises SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+  }
+  if (tagIds != null) setExerciseTags(ex.id, tagIds);
+  const row = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(ex.id);
+  res.json({ ok: true, exercise: exerciseRowToJson(row, loadExerciseTags(ex.id)) });
+});
+
+router.delete('/exercises/:id', verifyToken, (req, res) => {
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const clubId = getClubId(req.user.id);
+  if (!clubId || ex.club_id !== clubId) return res.status(403).json({ ok: false, error: 'Geen toegang' });
+
+  if (ex.scope === 'club') {
+    if (!canEditTraining(req.user.id, clubId)) {
+      return res.status(403).json({ ok: false, error: 'Geen toegang' });
+    }
+  } else if (ex.created_by_user_id !== req.user.id) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+
+  const used = db.prepare('SELECT 1 FROM training_session_exercises WHERE exercise_id = ? LIMIT 1').get(ex.id);
+  if (used) {
+    return res.status(400).json({ ok: false, error: 'Oefening is nog gekoppeld aan trainingen; verwijder eerst uit sessies' });
+  }
+  db.prepare('DELETE FROM training_exercises WHERE id = ?').run(ex.id);
+  res.json({ ok: true });
+});
+
+router.post('/exercises/:id/request-share', verifyToken, (req, res) => {
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const clubId = getClubId(req.user.id);
+  if (!clubId || ex.club_id !== clubId) return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  if (ex.created_by_user_id !== req.user.id) {
+    return res.status(403).json({ ok: false, error: 'Alleen de maker kan delen' });
+  }
+  if (ex.scope !== 'private') {
+    return res.status(400).json({ ok: false, error: 'Alleen privé-oefeningen kunnen worden aangeboden' });
+  }
+  if (ex.share_status === 'pending') {
+    return res.status(400).json({ ok: false, error: 'Er loopt al een aanvraag voor deze oefening' });
+  }
+  const pitch = String(req.body?.share_pitch ?? req.body?.pitch ?? '').trim();
+  if (pitch.length < 20) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Leg in minimaal 20 tekens uit waarom deze oefening in de clubbibliotheek past',
+    });
+  }
+  if (pitch.length > 2000) {
+    return res.status(400).json({ ok: false, error: 'Toelichting mag maximaal 2000 tekens zijn' });
+  }
+  db.prepare('UPDATE training_exercises SET share_status = ?, share_pitch = ? WHERE id = ?').run('pending', pitch, ex.id);
+  const row = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(ex.id);
+  res.json({ ok: true, exercise: exerciseRowToJson(row, loadExerciseTags(ex.id)) });
+});
+
+router.post('/exercises/:id/approve-share', verifyToken, (req, res) => {
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId) || ex.club_id !== clubId) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  if (ex.share_status !== 'pending') {
+    return res.status(400).json({ ok: false, error: 'Geen open aanvraag' });
+  }
+  db.prepare('UPDATE training_exercises SET scope = ?, share_status = ?, share_pitch = ? WHERE id = ?').run('club', 'none', '', ex.id);
+  const row = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(ex.id);
+  res.json({ ok: true, exercise: exerciseRowToJson(row, loadExerciseTags(ex.id)) });
+});
+
+router.post('/exercises/:id/reject-share', verifyToken, (req, res) => {
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(req.params.id);
+  if (!ex) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  const clubId = getClubId(req.user.id);
+  if (!clubId || !canEditTraining(req.user.id, clubId) || ex.club_id !== clubId) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang' });
+  }
+  if (ex.share_status !== 'pending') {
+    return res.status(400).json({ ok: false, error: 'Geen open aanvraag' });
+  }
+  db.prepare('UPDATE training_exercises SET share_status = ?, share_pitch = ? WHERE id = ?').run('rejected', '', ex.id);
+  const row = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(ex.id);
+  res.json({ ok: true, exercise: exerciseRowToJson(row, loadExerciseTags(ex.id)) });
+});
+
 // ─── Training sessions (attendance + notes) ─────────────────────────────────
 
 function getTeamMembership(userId, teamId) {
@@ -591,6 +888,212 @@ router.delete('/session/:id/guest/:userId', verifyToken, (req, res) => {
   res.json({ ok: true });
 });
 
+function canUseExercise(userId, exercise) {
+  if (!exercise) return false;
+  if (exercise.scope === 'club') return true;
+  return exercise.created_by_user_id === userId;
+}
+
+function getSessionExercisesForResponse(sessionId, isCoach, userId) {
+  const rows = db.prepare(`
+    SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
+           e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+    FROM training_session_exercises se
+    JOIN training_exercises e ON e.id = se.exercise_id
+    WHERE se.session_id = ?
+    ORDER BY se.sort_order ASC, se.id ASC
+  `).all(sessionId);
+  return rows.map((r) => {
+    const tags = loadExerciseTags(r.exercise_id);
+    const base = {
+      id: r.link_id,
+      exercise_id: r.exercise_id,
+      name: r.name,
+      description: r.description || '',
+      default_duration_minutes: r.default_duration_minutes,
+      duration_minutes: r.duration_minutes,
+      difficulty: r.difficulty,
+      tags,
+      sort_order: r.sort_order,
+    };
+    if (isCoach) {
+      base.performance_rating = r.performance_rating;
+      base.performance_note = r.performance_note || '';
+      base.exercise_scope = r.exercise_scope;
+      base.share_status = r.share_status;
+      base.created_by_user_id = r.created_by_user_id;
+      base.share_pitch = r.share_pitch != null ? String(r.share_pitch) : '';
+      base.can_request_share = r.exercise_scope === 'private'
+        && r.share_status === 'none'
+        && r.created_by_user_id === userId;
+    }
+    return base;
+  });
+}
+
+router.post('/session/:id/exercises', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const exerciseId = parseInt(req.body.exercise_id, 10);
+  if (!exerciseId) return res.status(400).json({ ok: false, error: 'exercise_id verplicht' });
+  const ex = db.prepare('SELECT * FROM training_exercises WHERE id = ?').get(exerciseId);
+  if (!ex || ex.club_id !== session.club_id) {
+    return res.status(404).json({ ok: false, error: 'Oefening niet gevonden' });
+  }
+  if (!canUseExercise(req.user.id, ex)) {
+    return res.status(403).json({ ok: false, error: 'Geen toegang tot deze oefening' });
+  }
+  const dup = db.prepare(
+    'SELECT 1 FROM training_session_exercises WHERE session_id = ? AND exercise_id = ?'
+  ).get(session.id, exerciseId);
+  if (dup) return res.status(400).json({ ok: false, error: 'Deze oefening staat al in het programma' });
+
+  let dur = ex.default_duration_minutes;
+  if (req.body.duration_minutes != null) {
+    const d = parseInt(req.body.duration_minutes, 10);
+    if (!Number.isFinite(d) || d < 1 || d > 480) {
+      return res.status(400).json({ ok: false, error: 'Ongeldige duur' });
+    }
+    dur = d;
+  }
+  const maxRow = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) AS m FROM training_session_exercises WHERE session_id = ?'
+  ).get(session.id);
+  let sortOrder = maxRow.m + 1;
+  if (req.body.sort_order != null) {
+    const s = parseInt(req.body.sort_order, 10);
+    if (Number.isFinite(s)) sortOrder = s;
+  }
+  const ins = db.prepare(`
+    INSERT INTO training_session_exercises (session_id, exercise_id, duration_minutes, sort_order, performance_note)
+    VALUES (?, ?, ?, ?, '')
+  `).run(session.id, exerciseId, dur, sortOrder);
+  const linkId = ins.lastInsertRowid;
+  const row = db.prepare(`
+    SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
+           e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+    FROM training_session_exercises se
+    JOIN training_exercises e ON e.id = se.exercise_id
+    WHERE se.id = ?
+  `).get(linkId);
+  const one = {
+    id: row.link_id,
+    exercise_id: row.exercise_id,
+    name: row.name,
+    description: row.description || '',
+    default_duration_minutes: row.default_duration_minutes,
+    duration_minutes: row.duration_minutes,
+    difficulty: row.difficulty,
+    tags: loadExerciseTags(row.exercise_id),
+    sort_order: row.sort_order,
+    performance_rating: row.performance_rating,
+    performance_note: row.performance_note || '',
+    exercise_scope: row.exercise_scope,
+    share_status: row.share_status,
+    created_by_user_id: row.created_by_user_id,
+    share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
+    can_request_share: row.exercise_scope === 'private'
+      && row.share_status === 'none'
+      && row.created_by_user_id === req.user.id,
+  };
+  res.status(201).json({ ok: true, exercise: one });
+});
+
+router.patch('/session/:id/exercises/:linkId', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const linkId = parseInt(req.params.linkId, 10);
+  const link = db.prepare(
+    'SELECT * FROM training_session_exercises WHERE id = ? AND session_id = ?'
+  ).get(linkId, session.id);
+  if (!link) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+
+  const { duration_minutes: durIn, sort_order: sortIn, performance_rating: pr, performance_note: pn } = req.body || {};
+  const fields = [];
+  const vals = [];
+  if (durIn != null) {
+    const d = parseInt(durIn, 10);
+    if (!Number.isFinite(d) || d < 1 || d > 480) {
+      return res.status(400).json({ ok: false, error: 'Ongeldige duur' });
+    }
+    fields.push('duration_minutes = ?'); vals.push(d);
+  }
+  if (sortIn != null) {
+    const s = parseInt(sortIn, 10);
+    if (Number.isFinite(s)) { fields.push('sort_order = ?'); vals.push(s); }
+  }
+  if (pr !== undefined) {
+    if (pr === null) {
+      fields.push('performance_rating = ?'); vals.push(null);
+    } else {
+      const p = parseInt(pr, 10);
+      if (!Number.isFinite(p) || p < 1 || p > 5) {
+        return res.status(400).json({ ok: false, error: 'Score 1–5 of leeg' });
+      }
+      fields.push('performance_rating = ?'); vals.push(p);
+    }
+  }
+  if (pn !== undefined) {
+    fields.push('performance_note = ?'); vals.push(String(pn));
+  }
+  if (fields.length) {
+    vals.push(linkId);
+    db.prepare(`UPDATE training_session_exercises SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+  }
+  const row = db.prepare(`
+    SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
+           e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+    FROM training_session_exercises se
+    JOIN training_exercises e ON e.id = se.exercise_id
+    WHERE se.id = ?
+  `).get(linkId);
+  const one = {
+    id: row.link_id,
+    exercise_id: row.exercise_id,
+    name: row.name,
+    description: row.description || '',
+    default_duration_minutes: row.default_duration_minutes,
+    duration_minutes: row.duration_minutes,
+    difficulty: row.difficulty,
+    tags: loadExerciseTags(row.exercise_id),
+    sort_order: row.sort_order,
+    performance_rating: row.performance_rating,
+    performance_note: row.performance_note || '',
+    exercise_scope: row.exercise_scope,
+    share_status: row.share_status,
+    created_by_user_id: row.created_by_user_id,
+    share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
+    can_request_share: row.exercise_scope === 'private'
+      && row.share_status === 'none'
+      && row.created_by_user_id === req.user.id,
+  };
+  res.json({ ok: true, exercise: one });
+});
+
+router.delete('/session/:id/exercises/:linkId', verifyToken, (req, res) => {
+  const session = db.prepare('SELECT * FROM training_sessions WHERE id = ?').get(req.params.id);
+  if (!session) return res.status(404).json({ ok: false, error: 'Sessie niet gevonden' });
+  const membership = getTeamMembership(req.user.id, session.team_id);
+  if (!membership || membership.membership_type !== 'coach') {
+    return res.status(403).json({ ok: false, error: 'Alleen coaches' });
+  }
+  const linkId = parseInt(req.params.linkId, 10);
+  const info = db.prepare('DELETE FROM training_session_exercises WHERE id = ? AND session_id = ?').run(linkId, session.id);
+  if (!info.changes) return res.status(404).json({ ok: false, error: 'Niet gevonden' });
+  res.json({ ok: true });
+});
+
 router.get('/session/:teamId/:date/:startTime', verifyToken, (req, res) => {
   const teamId = parseInt(req.params.teamId, 10);
   const { date, startTime } = req.params;
@@ -646,6 +1149,7 @@ router.get('/session/:teamId/:date/:startTime', verifyToken, (req, res) => {
     },
     attendance,
     is_coach: isCoach,
+    exercises: getSessionExercisesForResponse(session.id, isCoach, req.user.id),
   });
 });
 

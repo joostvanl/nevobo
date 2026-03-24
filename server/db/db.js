@@ -215,6 +215,46 @@ const migrations = [
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(session_id, user_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS training_skill_tags (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id  INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL,
+    UNIQUE(club_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_exercises (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id                  INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    created_by_user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name                     TEXT NOT NULL,
+    description              TEXT NOT NULL DEFAULT '',
+    default_duration_minutes INTEGER NOT NULL DEFAULT 20,
+    difficulty               TEXT NOT NULL DEFAULT 'medium',
+    scope                    TEXT NOT NULL DEFAULT 'private',
+    share_status             TEXT NOT NULL DEFAULT 'none',
+    share_pitch              TEXT NOT NULL DEFAULT '',
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (difficulty IN ('easy', 'medium', 'hard')),
+    CHECK (scope IN ('club', 'private')),
+    CHECK (share_status IN ('none', 'pending', 'rejected'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_exercise_tags (
+    exercise_id INTEGER NOT NULL REFERENCES training_exercises(id) ON DELETE CASCADE,
+    tag_id      INTEGER NOT NULL REFERENCES training_skill_tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (exercise_id, tag_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS training_session_exercises (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id           INTEGER NOT NULL REFERENCES training_sessions(id) ON DELETE CASCADE,
+    exercise_id          INTEGER NOT NULL REFERENCES training_exercises(id) ON DELETE RESTRICT,
+    duration_minutes     INTEGER NOT NULL,
+    sort_order           INTEGER NOT NULL DEFAULT 0,
+    performance_rating   INTEGER,
+    performance_note     TEXT NOT NULL DEFAULT '',
+    CHECK (performance_rating IS NULL OR (performance_rating >= 1 AND performance_rating <= 5))
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_training_session_exercises_session_exercise
+    ON training_session_exercises(session_id, exercise_id)`,
+  `ALTER TABLE training_exercises ADD COLUMN share_pitch TEXT NOT NULL DEFAULT ''`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

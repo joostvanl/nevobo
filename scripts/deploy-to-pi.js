@@ -3,6 +3,7 @@
 //
 // Usage:
 //   node scripts/deploy-to-pi.js
+//   node scripts/deploy-to-pi.js --no-cache   # rebuild app image without Docker layer cache (fix stale server/)
 //   node scripts/deploy-to-pi.js --dry-run
 //
 // Reads PI_HOST, PI_USER, PI_PATH from .env (same as pull-from-pi.js).
@@ -14,6 +15,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const dryRun = process.argv.includes('--dry-run');
+const noCache = process.argv.includes('--no-cache');
 
 const envVars = {};
 const envFile = path.join(root, '.env');
@@ -35,13 +37,17 @@ if (!piHost) {
 
 const remote = `${piUser}@${piHost}`;
 
+const buildCmd = noCache
+  ? 'echo "==> docker compose build --no-cache app" && docker compose build --no-cache app'
+  : 'docker compose build app';
+
 const remoteScript = `
 set -e
 cd ${piPath}
 echo "==> $(pwd)  branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 git fetch origin main
 git reset --hard origin/main
-docker compose build
+${buildCmd}
 docker compose up -d --remove-orphans
 echo "==> Deploy finished."
 docker compose ps

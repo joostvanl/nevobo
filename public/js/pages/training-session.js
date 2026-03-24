@@ -39,7 +39,7 @@ export async function render(container, params = {}) {
     return;
   }
 
-  const { session, attendance, is_coach: isCoach } = data;
+  const { session, attendance, is_coach: isCoach, exercises: sessionExercises = [] } = data;
 
   const d = new Date(session.date + 'T00:00:00');
   const dow = (d.getDay() + 6) % 7;
@@ -52,7 +52,7 @@ export async function render(container, params = {}) {
   const guests  = attendance.filter(a => a.membership_type === 'guest');
 
   container.innerHTML = `
-    <div class="ts-page">
+    <div class="ts-page" id="ts-page-root" data-session-id="${session.id}" data-team-id="${teamId}" data-date="${escHtml(session.date)}" data-start="${escHtml(session.start_time)}" data-end="${escHtml(session.end_time || '')}" data-venue="${escHtml(session.venue_name || '')}" data-location="${escHtml(session.location_name || '')}">
       <div class="ts-header">
         <button type="button" class="btn btn-ghost btn-sm ts-back" id="ts-back">← Terug</button>
         <div class="ts-info">
@@ -83,7 +83,9 @@ export async function render(container, params = {}) {
           <div id="ts-guest-results" class="ts-guest-results"></div>
         </div>
       </div>
+      ` : ''}
 
+      ${isCoach ? `
       <div class="card mb-3">
         <div class="card-header"><h3>📝 Notities</h3></div>
         <div class="card-body">
@@ -91,6 +93,19 @@ export async function render(container, params = {}) {
           <div class="ts-notes-status text-muted text-small" id="ts-notes-status"></div>
         </div>
       </div>` : ''}
+
+      <div class="card mb-3">
+        <div class="card-header"><h3>📋 Trainingsprogramma</h3></div>
+        <div class="card-body" id="ts-ex-wrap">
+          ${isCoach ? `
+          <div class="ts-ex-toolbar mb-2">
+            <input type="search" id="ts-ex-search" class="form-input" placeholder="Oefening zoeken in bibliotheek…" autocomplete="off" />
+            <button type="button" class="btn btn-sm btn-secondary" id="ts-ex-new-private">+ Nieuwe privé-oefening</button>
+          </div>
+          <div id="ts-ex-pick-results" class="ts-ex-pick-results mb-2"></div>` : ''}
+          <div id="ts-ex-list">${renderExerciseRows(sessionExercises, isCoach)}</div>
+        </div>
+      </div>
     </div>`;
 
   container.querySelector('#ts-back')?.addEventListener('click', () => {
@@ -101,7 +116,465 @@ export async function render(container, params = {}) {
     setupAttendanceButtons(container, session.id);
     setupGuestSearch(container, session.id);
     setupNotes(container, session.id);
+    setupSessionExercises(container, session, { teamId, date, startTime, endTime, venue, location });
   }
+}
+
+const DIFF_LABEL = { easy: 'Makkelijk', medium: 'Gemiddeld', hard: 'Moeilijk' };
+
+function diffBadgeHtml(difficulty) {
+  const d = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+  const label = DIFF_LABEL[d] || difficulty;
+  return `<span class="ts-diff-badge ts-diff-badge--${d}">${escHtml(label)}</span>`;
+}
+
+/** Club = gedeelde clubbibliotheek; privé = alleen voor jou zichtbaar in zoeken. */
+function scopeBadgeHtml(scope) {
+  if (scope === 'club') {
+    return '<span class="ts-ex-scope-badge ts-ex-scope-badge--club" title="Club-oefening (bibliotheek)">Club</span>';
+  }
+  return '<span class="ts-ex-scope-badge ts-ex-scope-badge--private" title="Privé-oefening">Privé</span>';
+}
+
+/** Read-only sterren voor spelers (1–5). */
+function teamPerformanceStarsReadonlyHtml(rating) {
+  const r = Math.min(5, Math.max(1, parseInt(rating, 10) || 0));
+  if (!r) return '';
+  const stars = [1, 2, 3, 4, 5]
+    .map((n) => `<span class="ts-ex-star-read${n <= r ? ' ts-ex-star-read--on' : ''}" aria-hidden="true">★</span>`)
+    .join('');
+  return `<div class="ts-ex-stars-readonly" role="img" aria-label="Teamprestatie: ${r} van 5 sterren">${stars}</div>`;
+}
+
+function applyTeamStarButtons(row, pr) {
+  row.querySelectorAll('.ts-ex-star').forEach((star) => {
+    const n = parseInt(star.dataset.rating, 10);
+    const on = pr != null && Number.isFinite(pr) && n <= pr;
+    star.classList.toggle('ts-ex-star--on', on);
+    star.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+/** Modal: toelichting voor clubbeheer bij delen van privé-oefening. */
+function showSharePitchModal(exerciseId, onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ts-modal-overlay';
+  overlay.innerHTML = `
+    <div class="card ts-modal-card ts-share-pitch-modal">
+      <h3 class="mb-2">Clubbibliotheek</h3>
+      <p class="text-small text-muted mb-2">Clubbeheer ziet de volledige oefening (naam, beschrijving, duur, moeilijkheid, tags). Leg hieronder uit waarom deze oefening voor de hele club bruikbaar is (minimaal 20 tekens).</p>
+      <label class="mb-2" style="display:block">Motivatie *
+        <textarea id="tssp-pitch" class="form-input" rows="4" maxlength="2000" placeholder="Bijvoorbeeld: past bij jeugd omdat…"></textarea>
+      </label>
+      <div class="flex gap-2 justify-end mt-2">
+        <button type="button" class="btn btn-ghost" id="tssp-cancel">Annuleren</button>
+        <button type="button" class="btn btn-primary" id="tssp-send">Indienen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const ta = overlay.querySelector('#tssp-pitch');
+  setTimeout(() => ta?.focus(), 100);
+  const close = () => overlay.remove();
+  overlay.querySelector('#tssp-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector('#tssp-send').addEventListener('click', async () => {
+    const pitch = ta.value.trim();
+    if (pitch.length < 20) {
+      showToast('Schrijf minimaal 20 tekens', 'error');
+      return;
+    }
+    try {
+      await api(`/api/training/exercises/${exerciseId}/request-share`, {
+        method: 'POST',
+        body: { share_pitch: pitch },
+      });
+      showToast('Aanvraag verstuurd naar clubbeheer', 'success');
+      close();
+      if (onSuccess) await onSuccess();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+}
+
+function renderExerciseRows(exercises, isCoach) {
+  if (!exercises?.length) {
+    return '<div class="ts-ex-empty text-muted text-small">Nog geen oefeningen in dit programma.</div>';
+  }
+  const sorted = [...exercises].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  return sorted.map((ex) => {
+    const diffLabel = DIFF_LABEL[ex.difficulty] || ex.difficulty;
+    const tags = (ex.tags || []).map(t => `<span class="ts-ex-tag">${escHtml(t.name)}</span>`).join('');
+    const desc = ex.description ? `<p class="ts-ex-desc text-small text-muted">${escHtml(ex.description)}</p>` : '';
+
+    if (!isCoach) {
+      const prStars =
+        ex.performance_rating != null
+          ? teamPerformanceStarsReadonlyHtml(ex.performance_rating)
+          : '';
+      return `
+        <div class="ts-ex-block ts-ex-row" data-link-id="${ex.id}">
+          <div class="ts-ex-main">
+            <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
+            <div class="ts-ex-line">
+              <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.duration_minutes} min</span>
+              ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
+            </div>
+            ${prStars}
+            ${desc}
+          </div>
+        </div>`;
+    }
+
+    const rating = ex.performance_rating;
+    const note = ex.performance_note || '';
+    return `
+      <div class="ts-ex-block ts-ex-row ts-ex-row-coach" data-link-id="${ex.id}" data-exercise-id="${ex.exercise_id}" data-sort-order="${ex.sort_order ?? 0}">
+        <div class="ts-ex-main">
+          <div class="ts-ex-head">
+            <div class="ts-ex-title-row">
+              <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
+              <div class="ts-ex-order">
+                <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="up" title="Omhoog">↑</button>
+                <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="down" title="Omlaag">↓</button>
+                <button type="button" class="btn btn-xs btn-ghost ts-ex-remove" title="Verwijderen">✕</button>
+              </div>
+            </div>
+            <div class="ts-ex-line">
+              <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.default_duration_minutes} min std.</span>
+              ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
+            </div>
+          </div>
+          ${desc}
+          <div class="ts-ex-fields ts-ex-fields--compact">
+            <label class="ts-ex-field ts-ex-field--dur">
+              <span>Duur</span>
+              <input type="number" class="form-input form-input--compact ts-ex-dur" min="1" max="480" value="${ex.duration_minutes}" inputmode="numeric" />
+            </label>
+            <div class="ts-ex-field ts-ex-field--rating">
+              <span title="Teamprestatie">Sterren</span>
+              <div class="ts-ex-stars" role="radiogroup" aria-label="Teamprestatie in sterren">
+                ${[1, 2, 3, 4, 5]
+                  .map(
+                    (n) => `
+                <button type="button" class="ts-ex-star${rating != null && rating >= n ? ' ts-ex-star--on' : ''}" data-rating="${n}" aria-label="${n} van 5 sterren" aria-pressed="${rating != null && rating >= n ? 'true' : 'false'}">★</button>`
+                  )
+                  .join('')}
+                <button type="button" class="ts-ex-star-clear" data-rating="" title="Geen score" aria-label="Score wissen">✕</button>
+              </div>
+            </div>
+            <label class="ts-ex-field ts-ex-field--note">
+              <span>Evaluatie</span>
+              <textarea class="form-input form-input--compact ts-ex-note" rows="2" placeholder="Optioneel">${escHtml(note)}</textarea>
+            </label>
+            ${ex.can_request_share || ex.share_status === 'pending'
+              ? `<div class="ts-ex-foot">
+              ${ex.can_request_share ? `<button type="button" class="ts-ex-share-link" title="Privé-oefening ter goedkeuring aan clubbeheer voorleggen">Club voorleggen</button>` : ''}
+              ${
+                ex.share_status === 'pending'
+                  ? `<div class="ts-ex-pending-block">
+                  <span class="ts-ex-share-pending">In behandeling bij clubbeheer</span>
+                  ${ex.share_pitch ? `<p class="ts-ex-my-pitch text-small">${escHtml(ex.share_pitch)}</p>` : ''}
+                </div>`
+                  : ''
+              }
+            </div>`
+              : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+const _exSaveTimers = new Map();
+
+function setupSessionExercises(container, session, routeParams) {
+  const sessionId = session.id;
+  const listEl = container.querySelector('#ts-ex-list');
+  const searchEl = container.querySelector('#ts-ex-search');
+  const pickResults = container.querySelector('#ts-ex-pick-results');
+
+  async function reloadList() {
+    const { teamId, date, startTime, endTime, venue, location } = routeParams;
+    const qs = new URLSearchParams();
+    if (endTime) qs.set('end_time', endTime);
+    if (venue) qs.set('venue', venue);
+    if (location) qs.set('location', location);
+    try {
+      const data = await api(`/api/training/session/${teamId}/${date}/${startTime}?${qs}`);
+      if (listEl) listEl.innerHTML = renderExerciseRows(data.exercises || [], true);
+      bindExerciseRows();
+    } catch (_) {
+      showToast('Programma verversen mislukt', 'error');
+    }
+  }
+
+  function bindExerciseRow(row) {
+    const linkId = parseInt(row.dataset.linkId, 10);
+
+    row.querySelector('.ts-ex-dur')?.addEventListener('change', async (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 1) return;
+      try {
+        await api(`/api/training/session/${sessionId}/exercises/${linkId}`, {
+          method: 'PATCH',
+          body: { duration_minutes: v },
+        });
+        showToast('Duur opgeslagen', 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+
+    row.querySelectorAll('.ts-ex-star').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const pr = parseInt(btn.dataset.rating, 10);
+        applyTeamStarButtons(row, pr);
+        try {
+          await api(`/api/training/session/${sessionId}/exercises/${linkId}`, {
+            method: 'PATCH',
+            body: { performance_rating: pr },
+          });
+        } catch (err) {
+          showToast(err.message, 'error');
+          await reloadList();
+        }
+      });
+    });
+
+    row.querySelector('.ts-ex-star-clear')?.addEventListener('click', async () => {
+      applyTeamStarButtons(row, null);
+      try {
+        await api(`/api/training/session/${sessionId}/exercises/${linkId}`, {
+          method: 'PATCH',
+          body: { performance_rating: null },
+        });
+      } catch (err) {
+        showToast(err.message, 'error');
+        await reloadList();
+      }
+    });
+
+    const noteEl = row.querySelector('.ts-ex-note');
+    if (noteEl) {
+      noteEl.addEventListener('input', () => {
+        const k = `${sessionId}-${linkId}`;
+        if (_exSaveTimers.get(k)) clearTimeout(_exSaveTimers.get(k));
+        _exSaveTimers.set(k, setTimeout(async () => {
+          try {
+            await api(`/api/training/session/${sessionId}/exercises/${linkId}`, {
+              method: 'PATCH',
+              body: { performance_note: noteEl.value },
+            });
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        }, 600));
+      });
+    }
+
+    row.querySelector('.ts-ex-share-link')?.addEventListener('click', () => {
+      const eid = parseInt(row.dataset.exerciseId, 10);
+      showSharePitchModal(eid, reloadList);
+    });
+
+    row.querySelector('.ts-ex-remove')?.addEventListener('click', async () => {
+      if (!confirm('Oefening uit programma halen?')) return;
+      try {
+        await api(`/api/training/session/${sessionId}/exercises/${linkId}`, { method: 'DELETE' });
+        await reloadList();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+
+    row.querySelectorAll('.ts-ex-move').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const dir = btn.dataset.dir;
+        const wrap = container.querySelector('#ts-ex-list');
+        const rows = [...wrap.querySelectorAll('.ts-ex-row-coach')];
+        const idx = rows.indexOf(row);
+        const j = dir === 'up' ? idx - 1 : idx + 1;
+        if (j < 0 || j >= rows.length) return;
+        const a = rows[idx];
+        const b = rows[j];
+        const idA = parseInt(a.dataset.linkId, 10);
+        const idB = parseInt(b.dataset.linkId, 10);
+        const sortA = parseInt(a.dataset.sortOrder, 10);
+        const sortB = parseInt(b.dataset.sortOrder, 10);
+        try {
+          await api(`/api/training/session/${sessionId}/exercises/${idA}`, { method: 'PATCH', body: { sort_order: sortB } });
+          await api(`/api/training/session/${sessionId}/exercises/${idB}`, { method: 'PATCH', body: { sort_order: sortA } });
+          await reloadList();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  }
+
+  function bindExerciseRows() {
+    container.querySelectorAll('.ts-ex-row-coach').forEach(bindExerciseRow);
+  }
+  bindExerciseRows();
+
+  let searchTimer = null;
+  searchEl?.addEventListener('input', () => {
+    if (searchTimer) clearTimeout(searchTimer);
+    const q = searchEl.value.trim();
+    if (q.length < 2) {
+      if (pickResults) pickResults.innerHTML = '';
+      return;
+    }
+    searchTimer = setTimeout(async () => {
+      try {
+        const data = await api(`/api/training/exercises?q=${encodeURIComponent(q)}`);
+        const exs = data.exercises || [];
+        if (!exs.length) {
+          pickResults.innerHTML = '<div class="text-muted text-small">Geen oefeningen gevonden</div>';
+          return;
+        }
+        pickResults.innerHTML = exs.map((ex) => `
+          <div class="ts-ex-pick-row" data-ex-id="${ex.id}">
+            <div class="ts-ex-pick-main">
+              <div class="ts-ex-pick-title">
+                <strong>${escHtml(ex.name)}</strong>
+                ${scopeBadgeHtml(ex.scope)}
+              </div>
+              <div class="ts-ex-pick-meta">
+                ${diffBadgeHtml(ex.difficulty)}
+                <span class="text-small text-muted ts-ex-pick-dur">${ex.default_duration_minutes} min</span>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary ts-ex-add">Toevoegen</button>
+          </div>
+        `).join('');
+        pickResults.querySelectorAll('.ts-ex-add').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const rid = btn.closest('.ts-ex-pick-row').dataset.exId;
+            btn.disabled = true;
+            try {
+              await api(`/api/training/session/${sessionId}/exercises`, {
+                method: 'POST',
+                body: { exercise_id: parseInt(rid, 10) },
+              });
+              searchEl.value = '';
+              pickResults.innerHTML = '';
+              await reloadList();
+              showToast('Oefening toegevoegd', 'success');
+            } catch (err) {
+              showToast(err.message, 'error');
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (_) {
+        pickResults.innerHTML = '<div class="text-muted">Zoeken mislukt</div>';
+      }
+    }, 300);
+  });
+
+  container.querySelector('#ts-ex-new-private')?.addEventListener('click', () => {
+    showNewPrivateExerciseModal(
+      sessionId,
+      async () => {
+        await reloadList();
+      }
+    );
+  });
+}
+
+/** @param {number} sessionId — na opslag wordt de oefening direct aan deze training gekoppeld */
+function showNewPrivateExerciseModal(sessionId, onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'ts-modal-overlay';
+  overlay.innerHTML = `
+    <div class="card ts-modal-card">
+      <h3 class="mb-2">Nieuwe privé-oefening</h3>
+      <label class="mb-2" style="display:block">Naam *
+        <input type="text" id="tsp-name" class="form-input" required />
+      </label>
+      <label class="mb-2" style="display:block">Beschrijving
+        <textarea id="tsp-desc" class="form-input" rows="3"></textarea>
+      </label>
+      <label class="mb-2" style="display:block">Duur (min) *
+        <input type="number" id="tsp-dur" class="form-input" value="20" min="1" max="480" />
+      </label>
+      <label class="mb-2" style="display:block">Moeilijkheid
+        <select id="tsp-diff" class="form-input">
+          <option value="easy">Makkelijk</option>
+          <option value="medium" selected>Gemiddeld</option>
+          <option value="hard">Moeilijk</option>
+        </select>
+      </label>
+      <div class="mb-2" id="tsp-tags-wrap"><span class="text-small text-muted">Tags laden…</span></div>
+      <div class="flex gap-2 justify-end mt-2">
+        <button type="button" class="btn btn-ghost" id="tsp-cancel">Annuleren</button>
+        <button type="button" class="btn btn-primary" id="tsp-save">Opslaan</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  (async () => {
+    try {
+      const data = await api('/api/training/skill-tags');
+      const tags = data.tags || [];
+      const wrap = overlay.querySelector('#tsp-tags-wrap');
+      if (!tags.length) {
+        wrap.innerHTML = '<span class="text-small text-muted">Geen tags — vraag een beheerder om vaardigheidstags aan te maken.</span>';
+      } else {
+        wrap.innerHTML = '<div class="text-small mb-1">Vaardigheden</div>' + tags.map((t) => `
+          <label class="ts-tag-chk"><input type="checkbox" value="${t.id}" /> ${escHtml(t.name)}</label>
+        `).join('');
+      }
+    } catch (_) {
+      overlay.querySelector('#tsp-tags-wrap').innerHTML = '<span class="text-small text-danger">Tags laden mislukt</span>';
+    }
+  })();
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#tsp-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#tsp-save').addEventListener('click', async () => {
+    const name = overlay.querySelector('#tsp-name').value.trim();
+    const description = overlay.querySelector('#tsp-desc').value.trim();
+    const dur = parseInt(overlay.querySelector('#tsp-dur').value, 10);
+    const difficulty = overlay.querySelector('#tsp-diff').value;
+    if (!name) {
+      showToast('Naam is verplicht', 'error');
+      return;
+    }
+    const tagIds = [...overlay.querySelectorAll('#tsp-tags-wrap input[type=checkbox]:checked')].map((c) => parseInt(c.value, 10));
+    try {
+      const created = await api('/api/training/exercises', {
+        method: 'POST',
+        body: {
+          name,
+          description,
+          default_duration_minutes: dur,
+          difficulty,
+          scope: 'private',
+          tag_ids: tagIds,
+        },
+      });
+      const newId = created.exercise?.id;
+      if (sessionId && newId) {
+        await api(`/api/training/session/${sessionId}/exercises`, {
+          method: 'POST',
+          body: { exercise_id: newId },
+        });
+        showToast('Privé-oefening toegevoegd aan dit programma', 'success');
+      } else {
+        showToast('Privé-oefening opgeslagen', 'success');
+      }
+      close();
+      if (onDone) await onDone();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 }
 
 function renderAttendanceRows(members, isCoach, sessionId) {
