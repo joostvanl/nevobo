@@ -32,6 +32,108 @@ const _dayScroll = {};
 const ZOOM_MIN = 1;
 const ZOOM_MAX = 5;
 const ZOOM_STEP = 0.2;
+/** Matcht .tp-venue-label width (CSS) — gebruikt in zoom/scroll-math */
+const TP_VENUE_LABEL_W = 120;
+
+/** Zelfde breakpoint als zoom-knoppen in training-planner.css — planning nooit bewerkbaar op mobiel */
+function isPlannerMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+}
+
+let _plannerResizeBound = false;
+function bindPlannerViewportResizeOnce() {
+  if (_plannerResizeBound || typeof window === 'undefined') return;
+  _plannerResizeBound = true;
+  let t;
+  window.addEventListener('resize', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      if (_ctx?.container?.querySelector('.tp-wrapper')) renderPlanner();
+    }, 150);
+  });
+}
+
+/**
+ * Zet zoom voor één dag; anchorClientX = viewport-X om onder muis te blijven; null = midden van de scrollstrip.
+ */
+function applyDayZoom(dayEl, dow, newZoom, anchorClientX) {
+  const scrollEl = dayEl.querySelector('.tp-day-scroll');
+  const contentEl = dayEl.querySelector('.tp-day-content');
+  if (!scrollEl || !contentEl) return;
+
+  newZoom = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom)) * 100) / 100;
+  const oldZoom = _dayZoom[dow] || 1;
+  if (newZoom === oldZoom) return;
+
+  if (newZoom <= ZOOM_MIN) delete _dayZoom[dow];
+  else _dayZoom[dow] = newZoom;
+
+  const effectiveZoom = _dayZoom[dow] || 1;
+
+  const scrollRect = scrollEl.getBoundingClientRect();
+  const labelW = TP_VENUE_LABEL_W;
+  const mouseX = anchorClientX != null
+    ? anchorClientX - scrollRect.left
+    : scrollRect.width / 2;
+
+  const oldContentWidth = scrollEl.scrollWidth;
+  const denom = Math.max(1, oldContentWidth - labelW);
+  const posFrac = (scrollEl.scrollLeft + mouseX - labelW) / denom;
+
+  contentEl.style.minWidth = `${effectiveZoom * 100}%`;
+
+  syncDayZoomHeader(dayEl, dow, effectiveZoom);
+
+  requestAnimationFrame(() => {
+    const newContentWidth = scrollEl.scrollWidth;
+    const newScrollLeft = posFrac * Math.max(1, newContentWidth - labelW) - (mouseX - labelW);
+    scrollEl.scrollLeft = Math.max(0, newScrollLeft);
+    _dayScroll[dow] = scrollEl.scrollLeft;
+  });
+}
+
+function syncDayZoomHeader(dayEl, dow, zoom) {
+  const header = dayEl.querySelector('.tp-day-header');
+  if (!header) return;
+
+  const zIn = header.querySelector('.tp-zoom-in');
+  const zOut = header.querySelector('.tp-zoom-out');
+  if (zIn) zIn.disabled = zoom >= ZOOM_MAX - 1e-9;
+  if (zOut) zOut.disabled = zoom <= ZOOM_MIN + 1e-9;
+
+  const touch = header.querySelector('.tp-zoom-touch');
+  if (touch) {
+    let mobReset = touch.querySelector('.tp-zoom-reset-btn');
+    if (zoom > 1) {
+      if (!mobReset) {
+        mobReset = document.createElement('button');
+        mobReset.type = 'button';
+        mobReset.className = 'tp-zoom-btn tp-zoom-reset-btn';
+        mobReset.dataset.dow = String(dow);
+        mobReset.setAttribute('aria-label', 'Zoom resetten');
+        mobReset.textContent = '↺';
+        touch.appendChild(mobReset);
+      }
+    } else if (mobReset) {
+      mobReset.remove();
+    }
+  }
+
+  let deskReset = header.querySelector('.tp-zoom-reset-desktop');
+  if (zoom > 1) {
+    if (!deskReset) {
+      deskReset = document.createElement('button');
+      deskReset.type = 'button';
+      deskReset.className = 'tp-zoom-reset-desktop tp-zoom-reset-btn';
+      deskReset.dataset.dow = String(dow);
+      deskReset.setAttribute('aria-label', 'Zoom resetten');
+      deskReset.textContent = '🔍 Reset zoom';
+      header.appendChild(deskReset);
+    }
+  } else if (deskReset) {
+    deskReset.remove();
+  }
+}
 
 function pushUndo(trainings) {
   _undoStack.push(JSON.stringify(trainings));
@@ -136,7 +238,7 @@ export async function render(container) {
 
   if (_keyHandler) document.removeEventListener('keydown', _keyHandler);
   _keyHandler = (e) => {
-    if (!_editMode || _ctx?.mode !== 'blueprint') return;
+    if (!_editMode || _ctx?.mode !== 'blueprint' || isPlannerMobileViewport()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); performRedo(); }
   };
@@ -168,6 +270,7 @@ export async function render(container) {
       container,
     };
 
+    bindPlannerViewportResizeOnce();
     await loadAndRender();
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${escHtml(err.message)}</p></div>`;
@@ -270,7 +373,8 @@ function renderPlanner() {
     });
   }
   const { trainings, isException } = c.weekData;
-  const editable = (c.mode === 'blueprint' && _editMode) || isException;
+  const mobileReadOnly = isPlannerMobileViewport();
+  const editable = !mobileReadOnly && ((c.mode === 'blueprint' && _editMode) || isException);
 
   const isBlueprint = c.mode === 'blueprint';
 
@@ -284,15 +388,27 @@ function renderPlanner() {
   // Context bar (second row)
   let contextBar = '';
   if (isBlueprint) {
-    const snapLabel = _activeSnapshotName
-      ? `<span class="tp-snap-name" id="tp-rename-snapshot" title="Klik om naam te wijzigen">${escHtml(_activeSnapshotName)}</span>`
-      : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
-    const lockBtn = _editMode
-      ? '<button class="tp-ctx-btn tp-ctx-edit-active" id="tp-toggle-edit" title="Bewerken uitschakelen">✏️ Bewerken</button>'
-      : '<button class="tp-ctx-btn" id="tp-toggle-edit" title="Bewerken inschakelen">🔒 Vergrendeld</button>';
-    const undoDisabled = _undoStack.length === 0 ? ' disabled' : '';
-    const redoDisabled = _redoStack.length === 0 ? ' disabled' : '';
-    const editActions = _editMode ? `
+    if (mobileReadOnly) {
+      const snapLabel = _activeSnapshotName
+        ? `<span class="tp-snap-name">${escHtml(_activeSnapshotName)}</span>`
+        : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
+      contextBar = `<div class="tp-context-bar tp-context-bar--mobile-readonly">
+        <div class="tp-context-left">
+          <span class="tp-mobile-readonly-hint" title="Gebruik een tablet of desktop om de planning te wijzigen">Alleen bekijken op mobiel</span>
+          <span class="tp-ctx-sep"></span>
+          ${snapLabel}
+        </div>
+      </div>`;
+    } else {
+      const snapLabel = _activeSnapshotName
+        ? `<span class="tp-snap-name" id="tp-rename-snapshot" title="Klik om naam te wijzigen">${escHtml(_activeSnapshotName)}</span>`
+        : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
+      const lockBtn = _editMode
+        ? '<button class="tp-ctx-btn tp-ctx-edit-active" id="tp-toggle-edit" title="Bewerken uitschakelen">✏️ Bewerken</button>'
+        : '<button class="tp-ctx-btn" id="tp-toggle-edit" title="Bewerken inschakelen">🔒 Vergrendeld</button>';
+      const undoDisabled = _undoStack.length === 0 ? ' disabled' : '';
+      const redoDisabled = _redoStack.length === 0 ? ' disabled' : '';
+      const editActions = _editMode ? `
         <button class="tp-ctx-btn" id="tp-undo" title="Ongedaan maken"${undoDisabled}>↩ Undo</button>
         <button class="tp-ctx-btn" id="tp-redo" title="Opnieuw"${redoDisabled}>↪ Redo</button>
         <span class="tp-ctx-sep"></span>
@@ -304,10 +420,25 @@ function renderPlanner() {
         <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>` : `
         <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
         <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>`;
-    contextBar = `<div class="tp-context-bar">
-      <div class="tp-context-left">${lockBtn}<span class="tp-ctx-sep"></span>${snapLabel}</div>
-      <div class="tp-context-actions">${editActions}
+      contextBar = `<div class="tp-context-bar">
+        <div class="tp-context-left">${lockBtn}<span class="tp-ctx-sep"></span>${snapLabel}</div>
+        <div class="tp-context-actions">${editActions}
+        </div>
+      </div>`;
+    }
+  } else if (mobileReadOnly) {
+    const weekBadge = isException
+      ? `<span class="tp-badge tp-badge-exception">Afwijkend${c.weekData.exceptionLabel ? ': ' + escHtml(c.weekData.exceptionLabel) : ''}</span>`
+      : '<span class="tp-badge tp-badge-readonly">Standaard schema</span>';
+    contextBar = `<div class="tp-context-bar tp-context-bar--mobile-readonly">
+      <div class="tp-context-left">
+        <div class="tp-week-nav">
+          <button id="tp-prev-week">◀</button>
+          <span>${formatWeekLabel(c.isoWeek)}</span>
+          <button id="tp-next-week">▶</button>
+        </div>
       </div>
+      <div class="tp-context-actions">${weekBadge}</div>
     </div>`;
   } else {
     let weekStatus = '';
@@ -401,7 +532,7 @@ function renderPlanner() {
           if (startMin < 0 || startMin + dur > TOTAL_MINUTES) continue;
           const leftPct = (startMin / TOTAL_MINUTES) * 100;
           const widthPct = (dur / TOTAL_MINUTES) * 100;
-          blocksHtml += `<div class="tp-block match" title="${m.label}" data-match-key="${escHtml(m.key)}" style="left:${leftPct}%;width:${widthPct}%"><span class="tp-block-label">${m.label}</span><span class="tp-resize-right"></span></div>`;
+          blocksHtml += `<div class="tp-block match${editable ? '' : ' readonly'}" title="${m.label}" data-match-key="${escHtml(m.key)}" style="left:${leftPct}%;width:${widthPct}%"><span class="tp-block-label">${m.label}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
         }
 
         const rowLabel = locVenues.length > 1 || c.locations.length > 1
@@ -416,9 +547,22 @@ function renderPlanner() {
     }
 
     const dz = _dayZoom[dow] || 1;
+    const zoomTouch = `
+      <div class="tp-zoom-touch" role="group" aria-label="Zoom tijdas">
+        <button type="button" class="tp-zoom-btn tp-zoom-out" data-dow="${dow}" aria-label="Uitzoomen"${dz <= ZOOM_MIN ? ' disabled' : ''}>−</button>
+        <button type="button" class="tp-zoom-btn tp-zoom-in" data-dow="${dow}" aria-label="Inzoomen"${dz >= ZOOM_MAX ? ' disabled' : ''}>+</button>
+        ${dz > 1 ? `<button type="button" class="tp-zoom-btn tp-zoom-reset-btn" data-dow="${dow}" aria-label="Zoom resetten">↺</button>` : ''}
+      </div>`;
+    const zoomDesktopReset = dz > 1
+      ? `<button type="button" class="tp-zoom-reset-desktop tp-zoom-reset-btn" data-dow="${dow}" aria-label="Zoom resetten">🔍 Reset zoom</button>`
+      : '';
     daysHtml += `
       <div class="tp-day" data-dow="${dow}">
-        <div class="tp-day-header">${dayLabel}${dz > 1 ? `<button class="tp-zoom-reset" data-dow="${dow}" style="margin-left:auto;border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--text-muted)">🔍 Reset zoom</button>` : ''}</div>
+        <div class="tp-day-header">
+          <span class="tp-day-header-label">${dayLabel}</span>
+          ${zoomTouch}
+          ${zoomDesktopReset}
+        </div>
         <div class="tp-day-scroll">
           <div class="tp-day-content" style="min-width:${dz * 100}%">
             <div class="tp-time-header">${buildTimeHeader()}</div>
@@ -464,7 +608,7 @@ function renderPlanner() {
     </details>`;
 
   c.container.innerHTML = `
-    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${isBlueprint && !_editMode ? ' tp-locked' : ''}">
+    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${mobileReadOnly || (isBlueprint && !_editMode) ? ' tp-locked' : ''}${mobileReadOnly ? ' tp-mobile-readonly' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
         ${modeTabs}
@@ -587,7 +731,8 @@ function wireEvents() {
     });
   });
 
-  const editable = (c.mode === 'blueprint' && _editMode) || c.weekData?.isException;
+  const mobileReadOnly = isPlannerMobileViewport();
+  const editable = !mobileReadOnly && ((c.mode === 'blueprint' && _editMode) || c.weekData?.isException);
 
   if (editable) {
     el.querySelectorAll('.tp-venue-track').forEach(track => {
@@ -618,7 +763,7 @@ function wireEvents() {
     });
   }
 
-  // Zoom on Ctrl+wheel, per day
+  // Zoom: Ctrl+wheel (desktop) + +/- knoppen (mobiel, zie CSS)
   el.querySelectorAll('.tp-day').forEach(dayEl => {
     const scrollEl = dayEl.querySelector('.tp-day-scroll');
     const contentEl = dayEl.querySelector('.tp-day-content');
@@ -632,58 +777,45 @@ function wireEvents() {
 
       const oldZoom = _dayZoom[dow] || 1;
       const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-      const newZoom = Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom + delta)) * 100) / 100;
-      if (newZoom === oldZoom) return;
-      _dayZoom[dow] = newZoom;
-
-      const scrollRect = scrollEl.getBoundingClientRect();
-      const labelWidth = 120;
-      const mouseX = e.clientX - scrollRect.left;
-      const oldContentWidth = scrollEl.scrollWidth;
-      const posFrac = (scrollEl.scrollLeft + mouseX - labelWidth) / (oldContentWidth - labelWidth);
-
-      contentEl.style.minWidth = `${newZoom * 100}%`;
-
-      const resetBtn = dayEl.querySelector('.tp-zoom-reset');
-      if (newZoom > 1 && !resetBtn) {
-        const btn = document.createElement('button');
-        btn.className = 'tp-zoom-reset';
-        btn.dataset.dow = dow;
-        btn.style.cssText = 'margin-left:auto;border:none;background:none;cursor:pointer;font-size:0.7rem;color:var(--text-muted)';
-        btn.textContent = '🔍 Reset zoom';
-        btn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          delete _dayZoom[dow];
-          contentEl.style.minWidth = '100%';
-          scrollEl.scrollLeft = 0;
-          btn.remove();
-        });
-        dayEl.querySelector('.tp-day-header').appendChild(btn);
-      } else if (newZoom <= 1 && resetBtn) {
-        resetBtn.remove();
-        delete _dayZoom[dow];
-      }
-
-      requestAnimationFrame(() => {
-        const newContentWidth = scrollEl.scrollWidth;
-        const newScrollLeft = posFrac * (newContentWidth - labelWidth) - (mouseX - labelWidth);
-        scrollEl.scrollLeft = Math.max(0, newScrollLeft);
-      });
+      applyDayZoom(dayEl, dow, oldZoom + delta, e.clientX);
     }, { passive: false });
   });
 
-  el.querySelectorAll('.tp-zoom-reset').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  el.addEventListener('click', (e) => {
+    const zIn = e.target.closest('.tp-zoom-in');
+    if (zIn && el.contains(zIn)) {
+      e.preventDefault();
       e.stopPropagation();
-      const dow = parseInt(btn.dataset.dow, 10);
+      const dow = parseInt(zIn.dataset.dow, 10);
+      const dayEl = zIn.closest('.tp-day');
+      const old = _dayZoom[dow] || 1;
+      applyDayZoom(dayEl, dow, old + ZOOM_STEP, null);
+      return;
+    }
+    const zOut = e.target.closest('.tp-zoom-out');
+    if (zOut && el.contains(zOut)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const dow = parseInt(zOut.dataset.dow, 10);
+      const dayEl = zOut.closest('.tp-day');
+      const old = _dayZoom[dow] || 1;
+      applyDayZoom(dayEl, dow, old - ZOOM_STEP, null);
+      return;
+    }
+    const zReset = e.target.closest('.tp-zoom-reset-btn');
+    if (zReset && el.contains(zReset)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const dow = parseInt(zReset.dataset.dow, 10);
       delete _dayZoom[dow];
-      const dayEl = btn.closest('.tp-day');
+      const dayEl = zReset.closest('.tp-day');
       const contentEl = dayEl.querySelector('.tp-day-content');
       const scrollEl = dayEl.querySelector('.tp-day-scroll');
-      contentEl.style.minWidth = '100%';
-      scrollEl.scrollLeft = 0;
-      btn.remove();
-    });
+      if (contentEl) contentEl.style.minWidth = '100%';
+      if (scrollEl) scrollEl.scrollLeft = 0;
+      _dayScroll[dow] = 0;
+      syncDayZoomHeader(dayEl, dow, 1);
+    }
   });
 }
 
