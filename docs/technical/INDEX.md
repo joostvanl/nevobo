@@ -27,6 +27,7 @@
 | Docs vs. “expert”, wat je nog in code moet lezen | [12-expectations-expert-vs-documentation.md](./12-expectations-expert-vs-documentation.md) |
 | `.env`, secrets, JWT, publiek vs. beschermd, risico’s | [13-environment-security-and-secrets.md](./13-environment-security-and-secrets.md) |
 | Volledige API-route-inventory (`/api/*`) | [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) |
+| Training: module, planner, sessies, oefeningen, DB | [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md) |
 | `match_id`, media, tegenstander (datamodel) | [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md) |
 | NeVoBo RSS-parse, caches, merge | [15-nevobo-rss-parse-and-merge.md](./15-nevobo-rss-parse-and-merge.md) |
 | Admin-autorisatie (profile, delete, rollen) | [16-admin-authorization-detailed.md](./16-admin-authorization-detailed.md) |
@@ -54,6 +55,7 @@
 | `routes/carpool.js` | Offers, bookings per `match_id` |
 | `routes/gamification.js` | Badges, goals, leaderboard, XP |
 | `routes/admin.js` | Super/club/team admin, users, social links (admin) |
+| `routes/training.js` | Trainingsplanner, snapshots, oefeningen, sessies, AI-webhook — zie [21](./21-training-module-planner-and-exercises.md) |
 | `routes/scout.js` | Scout-sessies als JSON op schijf + in-memory locks |
 | `services/faceBlur.js` | Gezichtsdetectie, blur, kwaliteitscheck upload |
 | `lib/tiktok-scraper.js` | Optioneel — profiel-sync / vm-URL; zie `docs/tiktok-scraper.md` |
@@ -71,6 +73,7 @@
 | `js/scout/*.js` | Client scout-hulpmodules — routes: [08](./08-api-scout.md) |
 | `sw.js` | Service worker: cache-naam bump, network-first voor JS/CSS |
 | `css/app.css` | Styling |
+| `css/training-planner.css`, `css/training-module.css` | Full-width training UI ([21](./21-training-module-planner-and-exercises.md)) |
 
 ### Overig
 
@@ -94,8 +97,9 @@
 7. [13-environment-security-and-secrets.md](./13-environment-security-and-secrets.md) + [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) — env, security-kader, alle routes.  
 8. [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md), [15](./15-nevobo-rss-parse-and-merge.md), [16](./16-admin-authorization-detailed.md), [17](./17-functional-documentation-scope.md), [18](./18-face-blur-thresholds-and-error-paths.md) — waar nodig voor de taak.  
 9. [19](./19-technical-debt-inventory.md) — bewuste schuld en verbeterkansen (niet elke bug).  
-10. [20](./20-carpool-behavior-and-authorization.md) — **carpool-taken** (auth, privacy, Express-mounts).
+10. [20](./20-carpool-behavior-and-authorization.md) — **carpool-taken** (auth, privacy, Express-mounts).  
+11. [21](./21-training-module-planner-and-exercises.md) — **training** (planner, module, sessies, API).
 
 ---
 
-*Laatste uitbreiding: 20 carpool-behavior-and-authorization.*
+*Laatste uitbreiding: 21 training-module-planner-and-exercises.*

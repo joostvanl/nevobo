@@ -25,6 +25,8 @@
    - `team_social_links`
    - `face_references`
    - Kolommen o.a. op `match_media` (`blur_regions`), nullable `user_id` op `match_media` (re-migratie) — **geen** vaste `match_home_team` / `match_away_team` kolommen in baseline `schema.sql`/`db.js`; teamnamen komen uit `feed_cache` / API (zie [datamodel](../datamodel-match-media-opponent.md))
+   - `training_exercises.share_pitch` — motivatietekst bij aanvraag om privé-oefening in clubbibliotheek te delen
+   - Overige training-tabellen (o.a. `training_locations`, `training_venues`, `training_snapshots`, `training_sessions`, `training_attendance`, `training_skill_tags`, `training_exercises`, `training_exercise_tags`, `training_session_exercises`) — zie [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md)
 
 **Waarom zo:** SQLite heeft geen ingebouwde migratie-tool; dit patroon is eenvoudig maar vereist discipline: nieuwe kolommen via `ALTER TABLE` in de migrations-array.
 
@@ -42,6 +44,14 @@
 | `match_media` | Foto/video; `post_id`, `user_id`, `match_id`, `blur_regions`, … |
 | `feed_cache` | Gecachte NeVoBo JSON (`cache_key`, `data_json`, `ttl_ms`) |
 | `team_social_links` | TikTok/Instagram embed per team (`embed_id`, `url`) |
+| `training_locations`, `training_venues` | Club-locaties en velden (planner) |
+| `training_snapshots` | Blauwdruk-versies; `is_active` bepaalt zichtbaar schema op teampagina’s |
+| `training_sessions` | Concrete sessie per team/datum/starttijd; notities |
+| `training_attendance` | Aanwezigheid per sessie en user |
+| `training_skill_tags` | Vaardigheidstags per club |
+| `training_exercises` | Oefening (`scope` club/private, `share_status`, `share_pitch`, …) |
+| `training_exercise_tags` | Koppeling oefening ↔ tag |
+| `training_session_exercises` | Programma: oefening in sessie met duur, sort_order, performance |
 
 ## `feed_cache`
 
@@ -61,4 +71,5 @@ Scout-wedstrijdstate staat in **`server/data/scout/<matchId>.json`** (zie [08-ap
 ## Zie ook
 
 - `docs/datamodel-match-media-opponent.md` — match_id vs home/away op media  
-- [06-api-social-media-and-reel.md](./06-api-social-media-and-reel.md)
+- [06-api-social-media-and-reel.md](./06-api-social-media-and-reel.md)  
+- [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md)

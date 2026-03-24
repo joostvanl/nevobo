@@ -402,6 +402,9 @@ const PAGE_TITLES = {
   privacy:       'Privacy',
   'scout-setup': '🏐 Scout setup',
   'scout-match': '🏐 Scouting',
+  'training-planner': 'Trainingsplanner',
+  'training-module': 'Trainingsmodule',
+  'training-session': 'Training',
 };
 
 /** Zet document-scroll bovenaan (SPA: nieuwe route of volledige inhoudswissel). */
@@ -412,23 +415,23 @@ export function scrollAppToTop() {
   window.scrollTo(0, 0);
 }
 
-let headerGearMenuBound = false;
+let headerMoreMenuBound = false;
 
-function bindHeaderGearMenu() {
-  if (headerGearMenuBound) return;
-  const gearWrap = document.getElementById('header-gear-wrap');
-  const gearBtn = document.getElementById('header-gear-btn');
-  const menu = document.getElementById('header-gear-menu');
-  if (!gearWrap || !gearBtn || !menu) return;
-  headerGearMenuBound = true;
+function bindHeaderMoreMenu() {
+  if (headerMoreMenuBound) return;
+  const moreWrap = document.getElementById('header-more-wrap');
+  const moreBtn = document.getElementById('header-more-btn');
+  const menu = document.getElementById('header-more-menu');
+  if (!moreWrap || !moreBtn || !menu) return;
+  headerMoreMenuBound = true;
 
   const closeMenu = () => {
     menu.classList.add('hidden');
     menu.setAttribute('aria-hidden', 'true');
-    gearBtn.setAttribute('aria-expanded', 'false');
+    moreBtn.setAttribute('aria-expanded', 'false');
   };
 
-  gearBtn.addEventListener('click', e => {
+  moreBtn.addEventListener('click', e => {
     e.preventDefault();
     e.stopPropagation();
     const opening = menu.classList.contains('hidden');
@@ -437,7 +440,7 @@ function bindHeaderGearMenu() {
       requestAnimationFrame(() => {
         menu.classList.remove('hidden');
         menu.setAttribute('aria-hidden', 'false');
-        gearBtn.setAttribute('aria-expanded', 'true');
+        moreBtn.setAttribute('aria-expanded', 'true');
       });
     } else {
       closeMenu();
@@ -451,17 +454,24 @@ function bindHeaderGearMenu() {
     e.stopPropagation();
     closeMenu();
     const r = item.dataset.nav;
-    if (r === 'settings' || r === 'admin') navigate(r);
+    if (
+      r === 'settings' ||
+      r === 'admin' ||
+      r === 'training-module' ||
+      r === 'training-planner'
+    ) {
+      navigate(r);
+    }
   });
 
-  // Sluit alleen bij klik buiten tandwiel + dropdown (capture: vóór andere handlers)
+  // Sluit bij klik buiten knop + dropdown (capture: vóór andere handlers)
   document.addEventListener(
     'click',
     e => {
-      if (gearWrap.classList.contains('hidden')) return;
+      if (moreWrap.classList.contains('hidden')) return;
       const t = e.target;
       const el = t && t.nodeType === Node.ELEMENT_NODE ? t : t?.parentElement;
-      if (!el || gearWrap.contains(el)) return;
+      if (!el || moreWrap.contains(el)) return;
       closeMenu();
     },
     true
@@ -472,30 +482,27 @@ function bindHeaderGearMenu() {
   });
 }
 
-/** Profielfoto/initialen + beheer-menu in de app-header (na login of user-update). */
+/** Profielfoto/initialen + hamburger-menu (trainingsmodule, planner, platform, gebruikers) in de app-header. */
 export function syncAppHeaderChrome() {
   const profileBtn = document.getElementById('header-profile-btn');
-  const gearWrap = document.getElementById('header-gear-wrap');
-  const menu = document.getElementById('header-gear-menu');
-  const gearBtn = document.getElementById('header-gear-btn');
+  const moreWrap = document.getElementById('header-more-wrap');
+  const menu = document.getElementById('header-more-menu');
+  const moreBtn = document.getElementById('header-more-btn');
   if (!profileBtn) return;
 
-  bindHeaderGearMenu();
+  bindHeaderMoreMenu();
 
   if (menu) {
     menu.classList.add('hidden');
     menu.setAttribute('aria-hidden', 'true');
   }
-  if (gearBtn) gearBtn.setAttribute('aria-expanded', 'false');
-
-  const plannerBtn = document.getElementById('header-planner-btn');
+  if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
 
   const user = state.user;
   if (!user) {
     profileBtn.innerHTML = '👤';
     profileBtn.classList.remove('header-action--profile');
-    gearWrap?.classList.add('hidden');
-    plannerBtn?.classList.add('hidden');
+    moreWrap?.classList.add('hidden');
     if (menu) menu.innerHTML = '';
     return;
   }
@@ -505,32 +512,32 @@ export function syncAppHeaderChrome() {
 
   const isSuperAdmin = user.roles?.some(r => r.role === 'super_admin');
   const hasAdminRole = (user.roles?.length ?? 0) > 0;
-  const showGear = isSuperAdmin || hasAdminRole;
+  const showMoreMenu = isSuperAdmin || hasAdminRole;
 
-  if (plannerBtn) {
-    if (hasAdminRole) {
-      plannerBtn.classList.remove('hidden');
-      plannerBtn.onclick = () => navigate('training-planner');
-    } else {
-      plannerBtn.classList.add('hidden');
-    }
-  }
-
-  if (!showGear || !gearWrap || !menu) {
-    gearWrap?.classList.add('hidden');
-    menu && (menu.innerHTML = '');
+  if (!showMoreMenu || !moreWrap || !menu) {
+    moreWrap?.classList.add('hidden');
+    if (menu) menu.innerHTML = '';
     return;
   }
 
   let items = '';
+  if (hasAdminRole) {
+    items +=
+      '<button type="button" class="header-gear-item" data-nav="training-module" role="menuitem">📚 Trainingsmodule</button>';
+    items +=
+      '<button type="button" class="header-gear-item" data-nav="training-planner" role="menuitem">📋 Trainingsplanner</button>';
+    items += '<hr class="header-menu-sep" role="separator">';
+  }
   if (isSuperAdmin) {
-    items += '<button type="button" class="header-gear-item" data-nav="settings" role="menuitem">🎛️ Platform</button>';
+    items +=
+      '<button type="button" class="header-gear-item" data-nav="settings" role="menuitem">🎛️ Platform</button>';
   }
   if (hasAdminRole) {
-    items += '<button type="button" class="header-gear-item" data-nav="admin" role="menuitem">⚙️ Gebruikersbeheer</button>';
+    items +=
+      '<button type="button" class="header-gear-item" data-nav="admin" role="menuitem">⚙️ Gebruikersbeheer</button>';
   }
   menu.innerHTML = items;
-  gearWrap.classList.remove('hidden');
+  moreWrap.classList.remove('hidden');
 }
 
 export function navigate(route, params = {}) {
@@ -681,6 +688,7 @@ async function boot() {
     import('./pages/scout-setup.js'),
     import('./pages/scout-match.js'),
     import('./pages/training-planner.js'),
+    import('./pages/training-module.js'),
     import('./pages/training-session.js'),
   ]);
 
@@ -705,7 +713,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage, trainingSessionPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage, trainingModulePage, trainingSessionPage] = await pagesPromise;
 
   registerRoute('home',         homePage.render);
   registerRoute('matches',      matchesPage.render);
@@ -721,6 +729,7 @@ async function boot() {
   registerRoute('scout-setup',  scoutSetupPage.render);
   registerRoute('scout-match',  scoutMatchPage.render);
   registerRoute('training-planner', trainingPlannerPage.render);
+  registerRoute('training-module', trainingModulePage.render);
   registerRoute('training-session', trainingSessionPage.render);
 
   // Bottom nav clicks

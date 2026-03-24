@@ -182,6 +182,99 @@
 
 ---
 
+## `/api/training` — `routes/training.js`
+
+**Middleware:** vrijwel alle routes `verifyToken` (JWT). Autorisatie (clubbeheer, coach, teamlid) per endpoint in de route-logica. Functioneel overzicht: [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md).
+
+**Legenda:** `V` = `verifyToken`.
+
+### Locaties en velden
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/locations` | V |
+| POST | `/locations` | V |
+| PATCH | `/locations/:id` | V |
+| DELETE | `/locations/:id` | V |
+| GET | `/venues` | V |
+| POST | `/venues` | V |
+| PATCH | `/venues/:id` | V |
+| DELETE | `/venues/:id` | V |
+
+### Blauwdruk (defaults), week en uitzonderingen
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/defaults` | V |
+| POST | `/defaults` | V |
+| PATCH | `/defaults/:id` | V |
+| DELETE | `/defaults/:id` | V |
+| DELETE | `/defaults/all` | V |
+| POST | `/defaults/restore` | V |
+| GET | `/week/:isoWeek` | V |
+| POST | `/week/:isoWeek/override` | V |
+| DELETE | `/week/:isoWeek/override` | V |
+| POST | `/exceptions` | V |
+| PATCH | `/exceptions/:id` | V |
+| DELETE | `/exceptions/:id` | V |
+
+### Team, snapshots, import
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/team/:teamId/schedule` | V |
+| GET | `/teams` | V |
+| PATCH | `/teams/:id` | V |
+| GET | `/snapshots` | V |
+| GET | `/snapshots/active` | V |
+| POST | `/snapshots` | V |
+| POST | `/snapshots/:id/activate` | V |
+| PATCH | `/snapshots/:id` | V |
+| DELETE | `/snapshots/:id` | V |
+| POST | `/import` | V |
+
+### Vaardigheidstags en oefeningen
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/skill-tags` | V |
+| POST | `/skill-tags` | V |
+| DELETE | `/skill-tags/:id` | V |
+| GET | `/exercises/pending-share` | V |
+| GET | `/exercises` | V |
+| POST | `/exercises` | V |
+| PATCH | `/exercises/:id` | V |
+| DELETE | `/exercises/:id` | V |
+| POST | `/exercises/:id/request-share` | V |
+| POST | `/exercises/:id/approve-share` | V |
+| POST | `/exercises/:id/reject-share` | V |
+
+### Trainingssessies (aanwezigheid, gasten, programma)
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/session/:teamId/:date/:startTime` | V |
+| PATCH | `/session/:id` | V |
+| PATCH | `/session/:id/attendance` | V |
+| GET | `/session/:id/attendance-list` | V |
+| GET | `/session/:id/search-club-members` | V |
+| POST | `/session/:id/add-guest` | V |
+| DELETE | `/session/:id/guest/:userId` | V |
+| POST | `/session/:id/exercises` | V |
+| PATCH | `/session/:id/exercises/:linkId` | V |
+| DELETE | `/session/:id/exercises/:linkId` | V |
+
+### AI en NeVoBo-hulp (planner)
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/ai-webhook-status` | V |
+| POST | `/ai-optimize` | V |
+| GET | `/nevobo-venues` | V |
+| GET | `/nevobo-match-fields/:isoWeek` | V |
+
+---
+
 ## `/api/scout` — `routes/scout.js`
 
 | Methode | Pad | Middleware |

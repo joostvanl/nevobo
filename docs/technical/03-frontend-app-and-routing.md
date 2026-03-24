@@ -45,6 +45,11 @@ Sessie: `localStorage` keys `vb_token`, `vb_user` — bij login gezet, bij logou
 | `admin.js` | `admin` | Rollen, leden, social links |
 | `privacy.js` | privacy-achtige flows | |
 | `scout-setup.js`, `scout-match.js` | scout | Feature branch |
+| `training-planner.js` | `training-planner` | Clubbeheerders; zet `tp-fullwidth` op `#app`; zie [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md) |
+| `training-module.js` | `training-module` | Zelfde rechten als planner; full-screen beheer UI + `tp-fullwidth`; CSS: `training-module.css` |
+| `training-session.js` | `training-session` | Trainingssessie (params: `teamId`, `date`, `startTime`, …); bereikbaar vanaf `team.js` schema |
+
+**Trainings-UI:** `training-planner.css` en `training-module.css` in `index.html` na `app.css`.
 
 ## `public/js/reel-viewer.js`
 
@@ -65,4 +70,5 @@ Sessie: `localStorage` keys `vb_token`, `vb_user` — bij login gezet, bij logou
 ## Zie ook
 
 - [06-api-social-media-and-reel.md](./06-api-social-media-and-reel.md)  
-- [10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md)
+- [10-deployment-pwa-and-caching.md](./10-deployment-pwa-and-caching.md)  
+- [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md)
