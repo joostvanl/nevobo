@@ -1064,10 +1064,11 @@ router.get('/team-by-name', async (req, res) => {
       }
     }
 
-    const members = dbTeam
+    const membersRaw = dbTeam
       ? db.prepare(`
           SELECT u.id, u.name, u.avatar_url, u.level, u.xp,
-            tm.membership_type
+            COALESCE(u.is_npc, 0) AS is_npc,
+            tm.membership_type AS membership_type
           FROM team_memberships tm
           JOIN users u ON u.id = tm.user_id
           WHERE tm.team_id = ?
@@ -1082,6 +1083,10 @@ router.get('/team-by-name', async (req, res) => {
             u.xp DESC
         `).all(dbTeam.id)
       : [];
+    const members = membersRaw.map((m) => ({
+      ...m,
+      is_npc: Number(m.is_npc) === 1 ? 1 : 0,
+    }));
 
     res.json({
       ok: true,

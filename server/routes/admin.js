@@ -415,7 +415,7 @@ router.get('/teams/:teamId/users-search', requireTeamAdminOrCoach('teamId'), (re
   res.json({ ok: true, users });
 });
 
-// PATCH /api/admin/users/:userId/npc — mark/unmark placeholder account (club admin or super admin)
+// PATCH /api/admin/users/:userId/npc — mark/unmark placeholder (club admin, teambeheerder of coach van gedeeld team)
 router.patch('/users/:userId/npc', (req, res) => {
   const requesterId = req.user.id;
   const targetId = parseInt(req.params.userId, 10);
@@ -436,8 +436,12 @@ router.patch('/users/:userId/npc', (req, res) => {
   }
 
   const allowed =
-    hasSuperAdmin(requesterId) || [...clubIds].some((cid) => hasClubAdmin(requesterId, cid));
-  if (!allowed) return res.status(403).json({ ok: false, error: 'Geen clubbeheerdersrechten' });
+    hasSuperAdmin(requesterId) ||
+    [...clubIds].some((cid) => hasClubAdmin(requesterId, cid)) ||
+    canTeamStaffEditUser(requesterId, targetId);
+  if (!allowed) {
+    return res.status(403).json({ ok: false, error: 'Geen rechten om NPC-status te wijzigen' });
+  }
 
   try {
     db.prepare('UPDATE users SET is_npc = ? WHERE id = ?').run(is_npc, targetId);

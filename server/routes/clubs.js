@@ -192,8 +192,9 @@ router.get('/:id/teams/:teamId', async (req, res) => {
   if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
 
   // Alleen echte team_memberships — niet users.team_id (die kan achterlopen na verwijderen lidmaatschap)
-  const members = db.prepare(`
+  const membersRaw = db.prepare(`
     SELECT u.id, u.name, u.avatar_url, u.level, u.xp,
+      COALESCE(u.is_npc, 0) AS is_npc,
       tm.membership_type AS membership_type
     FROM team_memberships tm
     JOIN users u ON u.id = tm.user_id
@@ -208,6 +209,10 @@ router.get('/:id/teams/:teamId', async (req, res) => {
       END,
       u.xp DESC
   `).all(team.id);
+  const members = membersRaw.map((m) => ({
+    ...m,
+    is_npc: Number(m.is_npc) === 1 ? 1 : 0,
+  }));
 
   const followerCount = db.prepare(
     "SELECT COUNT(*) AS n FROM user_follows WHERE followee_type = 'team' AND followee_id = ?"

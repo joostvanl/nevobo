@@ -360,6 +360,23 @@ async function renderTeamAdminTab(panel, teamId, opts = {}) {
         showNpcMergeModal(teamId, +btn.dataset.userid, btn.dataset.name, refresh);
       });
     });
+
+    panel.querySelectorAll('.member-npc-cb').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        const want = cb.checked;
+        try {
+          await api(`/api/admin/users/${cb.dataset.userid}/npc`, {
+            method: 'PATCH',
+            body: { is_npc: want },
+          });
+          showToast(want ? 'Opgeslagen als NPC (geen login)' : 'NPC uitgezet', 'success');
+          refresh();
+        } catch (err) {
+          cb.checked = !want;
+          showToast(err.message || 'Opslaan mislukt', 'error');
+        }
+      });
+    });
   } catch (err) {
     panel.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
   }
@@ -397,6 +414,12 @@ function memberRow(m, teamId, canManageMembers = true) {
   const mergeBtn = m.is_npc
     ? `<button type="button" class="btn btn-primary btn-sm npc-merge-btn" data-userid="${m.user_id}" data-name="${escAttr(m.name)}" title="Data overzetten naar echt account">Koppel</button>`
     : '';
+  const npcToggle = `
+    <label style="display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;font-size:0.72rem;margin-right:0.35rem;white-space:nowrap;color:var(--text-muted)"
+      title="Placeholder: geen login, wel zichtbaar op teampagina als NPC">
+      <input type="checkbox" class="member-npc-cb" data-userid="${m.user_id}" ${Number(m.is_npc) === 1 ? 'checked' : ''} />
+      NPC
+    </label>`;
   const manageBtns = canManageMembers
     ? `<button class="btn btn-ghost btn-sm change-role-btn"
           data-userid="${m.user_id}"
@@ -433,6 +456,7 @@ function memberRow(m, teamId, canManageMembers = true) {
         <span class="text-muted text-small">${escHtml(m.email)}</span>
       </div>
       <div class="flex gap-1 items-center" style="flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+        ${npcToggle}
         ${mergeBtn}
         ${manageBtns}
       </div>

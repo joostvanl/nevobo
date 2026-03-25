@@ -267,12 +267,12 @@ function renderPage(container, opts) {
         const staff   = members.filter(u => u.membership_type === 'coach' || u.membership_type === 'staff');
         // parents are intentionally excluded from public view
         const ROLE_LABEL = { coach: 'Trainer/Coach', staff: 'Begeleiding' };
-        /** Placeholder / roster-only: DB flag, or level 1 (typisch NPC-accounts zonder echte progressie). */
-        const isNpcDisplay = (u) => !!u.is_npc || Number(u.level) === 1;
+        const isNpc = (u) =>
+          u && (Number(u.is_npc) === 1 || u.is_npc === true || u.is_npc === '1');
         const memberStatsLine = (u) =>
-          isNpcDisplay(u) ? 'NPC' : `Level ${u.level} · ${u.xp} XP`;
+          isNpc(u) ? 'NPC' : `Level ${u.level} · ${u.xp} XP`;
         const memberLevelBadge = (u) =>
-          isNpcDisplay(u) ? 'NPC' : `Lvl ${u.level}`;
+          isNpc(u) ? 'NPC' : `Lvl ${u.level}`;
         const memberCard = (u) => `
           <div class="team-member-row">
             ${renderAvatar(u.name, u.avatar_url, 'sm')}

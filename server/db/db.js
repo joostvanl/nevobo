@@ -268,6 +268,28 @@ for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
 }
 
+// Eenmalig: placeholder-e-mails die op NPC wijzen, zonder handmatige vink
+try {
+  const r = db.prepare(`
+    UPDATE users SET is_npc = 1 WHERE is_npc = 0 AND (
+      LOWER(email) LIKE '%@npc.local' OR
+      LOWER(email) LIKE '%@placeholder.local' OR
+      LOWER(email) LIKE '%@example.invalid'
+    )
+  `).run();
+  if (r.changes > 0) console.log(`[db] NPC backfill: ${r.changes} user(s) marked is_npc from email pattern`);
+} catch (_) {}
+
+// Alle @vtcwoerden.nl accounts als NPC (zelfde regel als scripts/mark-npc-vtcwoerden-email.sql; bij elke serverstart)
+try {
+  const r = db.prepare(`
+    UPDATE users SET is_npc = 1
+    WHERE LOWER(TRIM(email)) LIKE '%@vtcwoerden.nl'
+      AND COALESCE(is_npc, 0) != 1
+  `).run();
+  if (r.changes > 0) console.log(`[db] NPC vtcwoerden.nl: ${r.changes} user(s) updated`);
+} catch (_) {}
+
 // Recreanten default to 1 training per week
 try {
   db.exec(`UPDATE teams SET trainings_per_week = 1 WHERE trainings_per_week = 2 AND (nevobo_team_type LIKE '%recreant%' OR display_name LIKE '%HR %' OR display_name LIKE '%DR %' OR display_name LIKE '%XR %')`);
