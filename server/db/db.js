@@ -255,6 +255,14 @@ const migrations = [
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_training_session_exercises_session_exercise
     ON training_session_exercises(session_id, exercise_id)`,
   `ALTER TABLE training_exercises ADD COLUMN share_pitch TEXT NOT NULL DEFAULT ''`,
+  // NPC placeholder accounts + merge audit (see server/lib/npcMerge.js)
+  `ALTER TABLE users ADD COLUMN is_npc INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS npc_merge_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    merged_to_user_id INTEGER NOT NULL,
+    npc_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }

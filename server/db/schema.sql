@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
   xp            INTEGER NOT NULL DEFAULT 0,
   level         INTEGER NOT NULL DEFAULT 1,
   role          TEXT NOT NULL DEFAULT 'player',  -- 'player' | 'coach' | 'admin'
+  is_npc        INTEGER NOT NULL DEFAULT 0,      -- 1 = placeholder (no real login)
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

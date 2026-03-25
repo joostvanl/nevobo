@@ -13,15 +13,16 @@ export async function render(container) {
   }
 
   try {
-    const { roles } = await api('/api/admin/my-roles');
+    const { roles, coach_teams: coachTeamsRaw } = await api('/api/admin/my-roles');
     state.user.roles = roles;
+    const coachTeams = coachTeamsRaw || [];
 
-    if (!roles.length) {
+    if (!roles.length && !coachTeams.length) {
       container.innerHTML = `
         <div class="empty-state">
           <div class="empty-icon">🔒</div>
           <h3>Geen beheerdersrechten</h3>
-          <p>Je hebt nog geen beheerdersrol. Neem contact op met een beheerder van je club.</p>
+          <p>Je hebt nog geen beheerdersrol of coach-toegang. Neem contact op met een beheerder van je club.</p>
         </div>`;
       return;
     }
@@ -29,12 +30,18 @@ export async function render(container) {
     const isSuperAdmin = roles.some(r => r.role === 'super_admin');
     const clubAdminRoles = roles.filter(r => r.role === 'club_admin');
     const teamAdminRoles = roles.filter(r => r.role === 'team_admin');
+    const teamAdminIds = new Set(teamAdminRoles.map(r => r.team_id));
 
     // Build tabs list
     const tabs = [];
     if (isSuperAdmin) tabs.push({ id: 'super', label: '⚡ Opperbeheerder' });
     clubAdminRoles.forEach(r => tabs.push({ id: `club_${r.club_id}`, label: `🏛 ${r.club_name || 'Club'}` }));
     teamAdminRoles.forEach(r => tabs.push({ id: `team_${r.team_id}`, label: `👥 ${r.team_name || 'Team'}` }));
+    coachTeams.forEach(ct => {
+      if (!teamAdminIds.has(ct.team_id)) {
+        tabs.push({ id: `coach_${ct.team_id}`, label: `📋 ${ct.team_name || 'Team'} (coach)` });
+      }
+    });
 
     container.innerHTML = `
       <div class="page-hero">
@@ -63,12 +70,12 @@ export async function render(container) {
       btn.addEventListener('click', () => {
         container.querySelectorAll('.filter-pill[data-tab]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        renderTab(btn.dataset.tab, panel, roles);
+        renderTab(btn.dataset.tab, panel, roles, coachTeams);
       });
     });
 
     // Render first tab
-    if (tabs.length) renderTab(tabs[0].id, panel, roles);
+    if (tabs.length) renderTab(tabs[0].id, panel, roles, coachTeams);
 
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
@@ -77,7 +84,7 @@ export async function render(container) {
 
 // ─── Tab renderers ────────────────────────────────────────────────────────────
 
-async function renderTab(tabId, panel, roles) {
+async function renderTab(tabId, panel, roles, coachTeams = []) {
   panel.innerHTML = '<div class="spinner" style="padding:2rem;text-align:center"></div>';
 
   if (tabId === 'super') {
@@ -87,7 +94,10 @@ async function renderTab(tabId, panel, roles) {
     await renderClubAdminTab(panel, clubId);
   } else if (tabId.startsWith('team_')) {
     const teamId = parseInt(tabId.replace('team_', ''));
-    await renderTeamAdminTab(panel, teamId);
+    await renderTeamAdminTab(panel, teamId, { canManageMembers: true });
+  } else if (tabId.startsWith('coach_')) {
+    const teamId = parseInt(tabId.replace('coach_', ''));
+    await renderTeamAdminTab(panel, teamId, { canManageMembers: false });
   }
 }
 
@@ -220,6 +230,7 @@ async function renderClubAdminTab(panel, clubId) {
           <div class="admin-user-row" style="display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0.25rem;border-bottom:1px solid var(--border)">
             <div>
               <strong style="font-size:0.9rem">${escHtml(u.name)}</strong>
+              ${u.is_npc ? '<span class="chip" style="font-size:0.65rem;margin-left:0.35rem">NPC</span>' : ''}
               <span class="text-muted text-small" style="display:block">${escHtml(u.email || '')}${u.team_names ? ` · ${escHtml(u.team_names)}` : ''}</span>
             </div>
             <div style="display:flex;gap:0.4rem;flex-shrink:0;margin-left:0.5rem">
@@ -248,8 +259,12 @@ async function renderClubAdminTab(panel, clubId) {
         usersEl.querySelectorAll('.delete-user-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
             if (!confirm(`Gebruiker "${btn.dataset.username}" permanent verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
+            const restoreNpc = confirm(
+              'Ooit een echte speler gekoppeld aan een NPC? Kies OK om (indien van toepassing) een team-placeholder (NPC) terug te zetten vóór verwijderen. Annuleren = alleen account wissen.'
+            );
             try {
-              await api(`/api/admin/users/${btn.dataset.userid}`, { method: 'DELETE' });
+              const q = restoreNpc ? '?restore_npc=1' : '';
+              await api(`/api/admin/users/${btn.dataset.userid}${q}`, { method: 'DELETE' });
               showToast(`Gebruiker verwijderd`, 'success');
               renderClubAdminTab(panel, clubId);
             } catch (err) { showToast(err.message, 'error'); }
@@ -266,7 +281,8 @@ async function renderClubAdminTab(panel, clubId) {
 
 // ─── Team Admin Tab ───────────────────────────────────────────────────────────
 
-async function renderTeamAdminTab(panel, teamId) {
+async function renderTeamAdminTab(panel, teamId, opts = {}) {
+  const canManageMembers = opts.canManageMembers !== false;
   try {
     const { members, team } = await api(`/api/admin/teams/${teamId}/members`);
 
@@ -277,10 +293,15 @@ async function renderTeamAdminTab(panel, teamId) {
       { key: 'parent', label: '👨‍👩‍👧 Ouders / Contacten', list: members.filter(m => m.membership_type === 'parent') },
     ];
 
+    const refresh = () => renderTeamAdminTab(panel, teamId, opts);
+
     panel.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+      <p class="text-muted text-small" style="margin-bottom:0.75rem">
+        NPC = team-placeholder zonder echte login. Koppel aan een geregistreerde speler om data te overzetten.
+      </p>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
         <span class="text-muted text-small">${team?.club_name || ''} · ${members.length} leden</span>
-        <button class="btn btn-primary btn-sm" id="add-member-btn">+ Lid toevoegen</button>
+        ${canManageMembers ? `<button class="btn btn-primary btn-sm" id="add-member-btn">+ Lid toevoegen</button>` : ''}
       </div>
       ${groups.map(g => `
         <div class="section-header mt-3 mb-1">
@@ -288,13 +309,16 @@ async function renderTeamAdminTab(panel, teamId) {
         </div>
         <div id="group-${g.key}">
           ${g.list.length
-            ? g.list.map(m => memberRow(m, teamId)).join('')
+            ? g.list.map(m => memberRow(m, teamId, canManageMembers)).join('')
             : `<p class="text-muted text-small" style="padding:0.35rem 0.5rem">Geen ${g.label.replace(/^[^ ]+ /, '').toLowerCase()}.</p>`}
         </div>`).join('')}`;
 
-    panel.querySelector('#add-member-btn').addEventListener('click', () => {
-      showAddMemberModal(teamId, team.club_id, () => renderTeamAdminTab(panel, teamId));
-    });
+    const addBtn = panel.querySelector('#add-member-btn');
+    if (addBtn) {
+      addBtn.addEventListener('click', () => {
+        showAddMemberModal(teamId, team.club_id, refresh);
+      });
+    }
 
     panel.querySelectorAll('.edit-member-btn').forEach(btn => {
       btn.addEventListener('click', e => {
@@ -307,15 +331,14 @@ async function renderTeamAdminTab(panel, teamId) {
           shirt:     btn.dataset.shirt,
           position:  btn.dataset.position,
           birthDate: btn.dataset.birthdate,
-        }, () => renderTeamAdminTab(panel, teamId));
+        }, refresh);
       });
     });
 
     panel.querySelectorAll('.change-role-btn').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        showChangeRoleModal(teamId, btn.dataset.userid, btn.dataset.name, btn.dataset.role,
-          () => renderTeamAdminTab(panel, teamId));
+        showChangeRoleModal(teamId, btn.dataset.userid, btn.dataset.name, btn.dataset.role, refresh);
       });
     });
 
@@ -326,8 +349,15 @@ async function renderTeamAdminTab(panel, teamId) {
         try {
           await api(`/api/admin/teams/${teamId}/members/${btn.dataset.userid}`, { method: 'DELETE' });
           showToast('Lid verwijderd', 'info');
-          renderTeamAdminTab(panel, teamId);
+          refresh();
         } catch (err) { showToast(err.message, 'error'); }
+      });
+    });
+
+    panel.querySelectorAll('.npc-merge-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        showNpcMergeModal(teamId, +btn.dataset.userid, btn.dataset.name, refresh);
       });
     });
   } catch (err) {
@@ -359,21 +389,16 @@ const ROLE_LABELS = {
   parent: 'Ouder',
 };
 
-function memberRow(m, teamId) {
+function memberRow(m, teamId, canManageMembers = true) {
   const posLabel   = m.position     ? `<span class="chip chip-neutral" style="font-size:0.62rem">${escHtml(m.position)}</span>` : '';
   const shirtLabel = m.shirt_number != null ? `<span class="chip chip-neutral" style="font-size:0.62rem">#${m.shirt_number}</span>` : '';
   const roleLabel  = ROLE_LABELS[m.membership_type] || m.membership_type;
-  return `
-    <div class="admin-user-row" data-member-id="${m.user_id}">
-      <div class="admin-user-info" style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
-          <strong>${escHtml(m.name)}</strong>
-          ${shirtLabel}${posLabel}
-        </div>
-        <span class="text-muted text-small">${escHtml(m.email)}</span>
-      </div>
-      <div class="flex gap-1 items-center" style="flex-shrink:0">
-        <button class="btn btn-ghost btn-sm change-role-btn"
+  const npcChip = m.is_npc ? `<span class="chip" style="font-size:0.62rem;background:var(--bg-subtle,#eee)">NPC</span>` : '';
+  const mergeBtn = m.is_npc
+    ? `<button type="button" class="btn btn-primary btn-sm npc-merge-btn" data-userid="${m.user_id}" data-name="${escAttr(m.name)}" title="Data overzetten naar echt account">Koppel</button>`
+    : '';
+  const manageBtns = canManageMembers
+    ? `<button class="btn btn-ghost btn-sm change-role-btn"
           data-userid="${m.user_id}"
           data-name="${escAttr(m.name)}"
           data-role="${m.membership_type}"
@@ -388,9 +413,124 @@ function memberRow(m, teamId) {
           data-birthdate="${escAttr(m.birth_date || '')}"
           data-team="${teamId}"
           style="color:var(--primary)">✏️</button>
-        <button class="btn btn-secondary btn-sm remove-member-btn" data-userid="${m.user_id}" data-team="${teamId}">✕</button>
+        <button class="btn btn-secondary btn-sm remove-member-btn" data-userid="${m.user_id}" data-team="${teamId}">✕</button>`
+    : `<button class="btn btn-ghost btn-sm edit-member-btn"
+          data-userid="${m.user_id}"
+          data-name="${escAttr(m.name)}"
+          data-email="${escAttr(m.email)}"
+          data-shirt="${m.shirt_number ?? ''}"
+          data-position="${escAttr(m.position || '')}"
+          data-birthdate="${escAttr(m.birth_date || '')}"
+          data-team="${teamId}"
+          style="color:var(--primary)">✏️</button>`;
+  return `
+    <div class="admin-user-row" data-member-id="${m.user_id}">
+      <div class="admin-user-info" style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+          <strong>${escHtml(m.name)}</strong>
+          ${npcChip}${shirtLabel}${posLabel}
+        </div>
+        <span class="text-muted text-small">${escHtml(m.email)}</span>
+      </div>
+      <div class="flex gap-1 items-center" style="flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+        ${mergeBtn}
+        ${manageBtns}
       </div>
     </div>`;
+}
+
+function showNpcMergeModal(teamId, npcUserId, npcName, onSuccess) {
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:400px">
+      <h3 style="margin-bottom:0.5rem">NPC koppelen</h3>
+      <p class="text-muted text-small" style="margin-bottom:1rem">
+        Alle teamdata van <strong>${escHtml(npcName)}</strong> gaat naar het gekozen account (éénmalig, niet omkeerbaar via deze knop).
+      </p>
+      <div class="form-group">
+        <label class="form-label">Zoek geregistreerde speler (e-mail of naam)</label>
+        <input type="text" id="npc-merge-q" class="form-input" placeholder="Minimaal 2 tekens…" autocomplete="off" />
+        <div id="npc-merge-suggestions" style="margin-top:4px;border:1px solid var(--border);border-radius:8px;overflow:hidden;display:none;max-height:200px;overflow-y:auto;background:var(--card-bg)"></div>
+      </div>
+      <div id="npc-merge-selected" style="display:none;padding:0.5rem 0.75rem;background:var(--bg-subtle,#f5f5f5);border-radius:8px;margin-bottom:0.5rem;font-size:0.9rem"></div>
+      <div class="flex gap-2 mt-3">
+        <button class="btn btn-secondary" style="flex:1" id="npc-merge-cancel">Annuleren</button>
+        <button class="btn btn-primary" style="flex:1" id="npc-merge-confirm" disabled>Koppelen</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  let selectedRealId = null;
+  let debounceTimer = null;
+  const qInput = overlay.querySelector('#npc-merge-q');
+  const sugg = overlay.querySelector('#npc-merge-suggestions');
+  const selectedBox = overlay.querySelector('#npc-merge-selected');
+  const confirmBtn = overlay.querySelector('#npc-merge-confirm');
+
+  function pickUser(u) {
+    selectedRealId = u.id;
+    selectedBox.textContent = `${u.name} (${u.email})`;
+    selectedBox.style.display = 'block';
+    qInput.value = u.name;
+    sugg.style.display = 'none';
+    confirmBtn.disabled = false;
+  }
+
+  qInput.addEventListener('input', () => {
+    selectedRealId = null;
+    confirmBtn.disabled = true;
+    selectedBox.style.display = 'none';
+    clearTimeout(debounceTimer);
+    const q = qInput.value.trim();
+    if (q.length < 2) { sugg.style.display = 'none'; return; }
+    debounceTimer = setTimeout(async () => {
+      try {
+        const data = await api(`/api/admin/teams/${teamId}/users-search?q=${encodeURIComponent(q)}`);
+        const users = (data.users || []).filter(u => u.id !== npcUserId);
+        if (!users.length) {
+          sugg.innerHTML = '<div style="padding:0.5rem 0.75rem;color:var(--text-muted);font-size:0.85rem">Geen resultaten</div>';
+        } else {
+          sugg.innerHTML = users.map(u => `
+            <div class="member-suggestion-item" data-id="${u.id}" data-name="${escAttr(u.name)}" data-email="${escAttr(u.email)}"
+              style="padding:0.5rem 0.75rem;cursor:pointer;border-bottom:1px solid var(--border)">
+              <div style="font-size:0.9rem;font-weight:500">${escHtml(u.name)}</div>
+              <div style="font-size:0.75rem;color:var(--text-muted)">${escHtml(u.email)}</div>
+            </div>`).join('');
+          sugg.querySelectorAll('.member-suggestion-item').forEach(item => {
+            item.addEventListener('mousedown', e => {
+              e.preventDefault();
+              pickUser({ id: +item.dataset.id, name: item.dataset.name, email: item.dataset.email });
+            });
+          });
+        }
+        sugg.style.display = 'block';
+      } catch (_) {
+        sugg.style.display = 'none';
+      }
+    }, 220);
+  });
+
+  qInput.addEventListener('blur', () => {
+    setTimeout(() => { sugg.style.display = 'none'; }, 150);
+  });
+
+  overlay.querySelector('#npc-merge-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#npc-merge-confirm').addEventListener('click', async () => {
+    if (!selectedRealId) return;
+    if (!confirm(`Gegevens van NPC naar dit account verplaatsen? De NPC wordt daarna verwijderd.`)) return;
+    try {
+      await api('/api/admin/npc/merge', {
+        method: 'POST',
+        body: { npc_user_id: npcUserId, real_user_id: selectedRealId },
+      });
+      overlay.remove();
+      showToast('NPC gekoppeld — data staat nu op het echte account', 'success');
+      onSuccess?.();
+    } catch (err) {
+      showToast(err.message || 'Koppelen mislukt', 'error');
+    }
+  });
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
@@ -726,6 +866,12 @@ function showEditUserModal({ userId, name, email, teamNames }, onSuccess) {
     <div class="badge-unlock-card" style="max-width:400px">
       <h3 style="margin-bottom:1rem">✏️ Gebruiker bewerken</h3>
       <p class="text-muted text-small" style="margin-bottom:1rem">${escHtml(teamNames || 'Geen team')}</p>
+      <div class="form-group" style="margin-bottom:1rem">
+        <label class="form-label" style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+          <input type="checkbox" id="eu-is-npc" />
+          Team-placeholder (NPC) — geen login, alleen voor rooster
+        </label>
+      </div>
       <div class="form-group">
         <label class="form-label">Naam</label>
         <input type="text" id="eu-name" class="form-input" value="${escAttr(name)}" />
@@ -753,6 +899,7 @@ function showEditUserModal({ userId, name, email, teamNames }, onSuccess) {
   api(`/api/admin/users/${userId}/profile`).then(data => {
     if (data.user) {
       if (data.user.birth_date) overlay.querySelector('#eu-birth').value = data.user.birth_date;
+      if (data.user.is_npc) overlay.querySelector('#eu-is-npc').checked = true;
     }
   }).catch(() => {});
 
@@ -770,7 +917,11 @@ function showEditUserModal({ userId, name, email, teamNames }, onSuccess) {
     if (!body.name) { showToast('Naam is verplicht', 'error'); return; }
 
     try {
-      await api(`/api/admin/users/${userId}/profile`, { method: 'POST', body: JSON.stringify(body) });
+      await api(`/api/admin/users/${userId}/profile`, { method: 'POST', body });
+      await api(`/api/admin/users/${userId}/npc`, {
+        method: 'PATCH',
+        body: { is_npc: overlay.querySelector('#eu-is-npc').checked },
+      });
       showToast('Gebruiker opgeslagen', 'success');
       overlay.remove();
       onSuccess?.();

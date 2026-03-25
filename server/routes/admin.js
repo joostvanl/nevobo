@@ -9,7 +9,10 @@ const {
   requireSuperAdmin,
   requireClubAdmin,
   requireTeamAdmin,
+  requireTeamAdminOrCoach,
+  canTeamStaffEditUser,
 } = require('../middleware/auth');
+const { canMergeNpcAccount, mergeNpcIntoUser, recreateNpcFromSnapshot } = require('../lib/npcMerge');
 
 // All admin routes require a valid token
 router.use(verifyToken);
@@ -125,7 +128,7 @@ router.get('/clubs/:clubId/users', requireClubAdmin('clubId'), (req, res) => {
   if (q) {
     // Search mode (for adding team members/admins)
     users = db.prepare(`
-      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url,
+      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url, u.is_npc,
         GROUP_CONCAT(DISTINCT t.display_name) AS team_names
       FROM users u
       LEFT JOIN team_memberships tm ON tm.user_id = u.id
@@ -138,7 +141,7 @@ router.get('/clubs/:clubId/users', requireClubAdmin('clubId'), (req, res) => {
   } else {
     // Full list mode (for user management)
     users = db.prepare(`
-      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url,
+      SELECT DISTINCT u.id, u.name, u.email, u.avatar_url, u.is_npc,
         GROUP_CONCAT(DISTINCT t.display_name) AS team_names
       FROM users u
       LEFT JOIN team_memberships tm ON tm.user_id = u.id
@@ -155,11 +158,11 @@ router.get('/clubs/:clubId/users', requireClubAdmin('clubId'), (req, res) => {
 // ─── Team admin views ─────────────────────────────────────────────────────────
 
 // GET /api/admin/teams/:teamId/members
-router.get('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => {
+router.get('/teams/:teamId/members', requireTeamAdminOrCoach('teamId'), (req, res) => {
   const teamId = parseInt(req.params.teamId);
   const members = db.prepare(`
     SELECT tm.*, u.name, u.email, u.avatar_url, u.level, u.xp,
-           u.birth_date,
+           u.birth_date, u.is_npc,
            tm.shirt_number, tm.position
     FROM team_memberships tm JOIN users u ON u.id = tm.user_id
     WHERE tm.team_id = ?
@@ -259,14 +262,14 @@ router.get('/users/:userId/profile', (req, res) => {
   const requesterId = req.user.id;
   const targetId = parseInt(req.params.userId);
 
-  const target = db.prepare('SELECT id, name, email, birth_date FROM users WHERE id = ?').get(targetId);
+  const target = db.prepare('SELECT id, name, email, birth_date, is_npc FROM users WHERE id = ?').get(targetId);
   if (!target) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
 
-  const userTeams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(targetId).map(r => r.team_id);
-  const userClub  = db.prepare('SELECT club_id FROM users WHERE id = ?').get(targetId);
-  const canView   = hasSuperAdmin(requesterId) ||
+  const userClub = db.prepare('SELECT club_id FROM users WHERE id = ?').get(targetId);
+  const canView =
+    hasSuperAdmin(requesterId) ||
     (userClub && hasClubAdmin(requesterId, userClub.club_id)) ||
-    userTeams.some(tid => hasTeamAdmin(requesterId, tid));
+    canTeamStaffEditUser(requesterId, targetId);
   if (!canView) return res.status(403).json({ ok: false, error: 'Geen rechten' });
 
   res.json({ ok: true, user: target });
@@ -279,17 +282,9 @@ router.post('/users/:userId/profile', async (req, res) => {
   const targetId = parseInt(req.params.userId);
   const { name, email, birth_date, password } = req.body;
 
-  // Authorization: check if requester has any admin role over this user
-  const userTeams = db.prepare(
-    'SELECT team_id FROM team_memberships WHERE user_id = ?'
-  ).all(targetId).map(r => r.team_id);
-
   const userClub = db.prepare('SELECT club_id FROM users WHERE id = ?').get(targetId);
 
-  const canEdit =
-    hasSuperAdmin(requesterId) ||
-    (userClub && hasClubAdmin(requesterId, userClub.club_id)) ||
-    userTeams.some(tid => hasTeamAdmin(requesterId, tid));
+  const canEdit = canTeamStaffEditUser(requesterId, targetId);
 
   if (!canEdit) {
     return res.status(403).json({ ok: false, error: 'Geen rechten om dit profiel te bewerken' });
@@ -349,11 +344,113 @@ router.get('/my-roles', (req, res) => {
     WHERE ur.user_id = ?
     ORDER BY ur.role, c.name, t.display_name
   `).all(userId);
-  res.json({ ok: true, roles });
+
+  const coach_teams = db.prepare(`
+    SELECT t.id AS team_id, t.display_name AS team_name, t.club_id, c.name AS club_name
+    FROM team_memberships tm
+    JOIN teams t ON t.id = tm.team_id
+    JOIN clubs c ON c.id = t.club_id
+    WHERE tm.user_id = ? AND tm.membership_type IN ('coach','trainer')
+    ORDER BY c.name, t.display_name
+  `).all(userId);
+
+  res.json({ ok: true, roles, coach_teams });
+});
+
+// POST /api/admin/npc/merge — move all data from NPC user into an existing real user
+router.post('/npc/merge', (req, res) => {
+  const requesterId = req.user.id;
+  const npc_user_id = parseInt(req.body?.npc_user_id, 10);
+  const real_user_id = parseInt(req.body?.real_user_id, 10);
+  if (!npc_user_id || !real_user_id) {
+    return res.status(400).json({ ok: false, error: 'npc_user_id en real_user_id zijn verplicht' });
+  }
+  if (!canMergeNpcAccount(requesterId, npc_user_id)) {
+    return res.status(403).json({ ok: false, error: 'Geen rechten om deze NPC te koppelen' });
+  }
+
+  try {
+    mergeNpcIntoUser(npc_user_id, real_user_id);
+  } catch (e) {
+    const code = String(e.message || '');
+    if (code === 'SOURCE_NOT_NPC') {
+      return res.status(400).json({ ok: false, error: 'Bron is geen NPC-account' });
+    }
+    if (code === 'TARGET_IS_NPC') {
+      return res.status(400).json({ ok: false, error: 'Doel mag geen NPC zijn' });
+    }
+    if (code === 'SAME_USER') {
+      return res.status(400).json({ ok: false, error: 'Zelfde gebruiker' });
+    }
+    if (code === 'USER_NOT_FOUND') {
+      return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+    }
+    throw e;
+  }
+
+  const user = db.prepare('SELECT id, name, email, club_id, team_id, xp, level, is_npc FROM users WHERE id = ?').get(
+    real_user_id
+  );
+  res.json({ ok: true, user });
+});
+
+// GET /api/admin/teams/:teamId/users-search?q= — club users (non-NPC) for NPC merge picker
+router.get('/teams/:teamId/users-search', requireTeamAdminOrCoach('teamId'), (req, res) => {
+  const teamId = parseInt(req.params.teamId, 10);
+  const team = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(teamId);
+  if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+  const q = req.query.q !== undefined ? `%${String(req.query.q)}%` : '%';
+  const users = db.prepare(`
+    SELECT DISTINCT u.id, u.name, u.email, u.avatar_url
+    FROM users u
+    LEFT JOIN team_memberships tm ON tm.user_id = u.id
+    LEFT JOIN teams t ON t.id = tm.team_id
+    WHERE (u.club_id = ? OR t.club_id = ?)
+      AND COALESCE(u.is_npc, 0) = 0
+      AND (u.name LIKE ? OR u.email LIKE ?)
+    GROUP BY u.id
+    ORDER BY u.name ASC
+    LIMIT 40
+  `).all(team.club_id, team.club_id, q, q);
+  res.json({ ok: true, users });
+});
+
+// PATCH /api/admin/users/:userId/npc — mark/unmark placeholder account (club admin or super admin)
+router.patch('/users/:userId/npc', (req, res) => {
+  const requesterId = req.user.id;
+  const targetId = parseInt(req.params.userId, 10);
+  const is_npc = req.body?.is_npc === true || req.body?.is_npc === 1 || req.body?.is_npc === '1' ? 1 : 0;
+
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
+  if (!target) return res.status(404).json({ ok: false, error: 'Gebruiker niet gevonden' });
+  if (targetId === requesterId) {
+    return res.status(400).json({ ok: false, error: 'Je kunt je eigen account niet als NPC markeren' });
+  }
+
+  const teams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(targetId);
+  const clubIds = new Set();
+  if (target.club_id) clubIds.add(target.club_id);
+  for (const { team_id } of teams) {
+    const t = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(team_id);
+    if (t) clubIds.add(t.club_id);
+  }
+
+  const allowed =
+    hasSuperAdmin(requesterId) || [...clubIds].some((cid) => hasClubAdmin(requesterId, cid));
+  if (!allowed) return res.status(403).json({ ok: false, error: 'Geen clubbeheerdersrechten' });
+
+  try {
+    db.prepare('UPDATE users SET is_npc = ? WHERE id = ?').run(is_npc, targetId);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'Bijwerken mislukt' });
+  }
+
+  res.json({ ok: true, is_npc });
 });
 
 // DELETE /api/admin/users/:userId — permanently delete a user and all their data
-router.delete('/users/:userId', (req, res) => {
+// Query: restore_npc=1 — before delete, recreate NPC placeholder from npc_merge_history (if any)
+router.delete('/users/:userId', async (req, res) => {
   const requesterId = req.user.id;
   const targetId = parseInt(req.params.userId);
 
@@ -377,6 +474,20 @@ router.delete('/users/:userId', (req, res) => {
 
   if (!canDelete) {
     return res.status(403).json({ ok: false, error: 'Geen rechten om deze gebruiker te verwijderen' });
+  }
+
+  const restoreNpc = req.query.restore_npc === '1' || req.query.restore_npc === 'true';
+  const hist = db.prepare('SELECT * FROM npc_merge_history WHERE merged_to_user_id = ?').get(targetId);
+  if (restoreNpc && hist) {
+    try {
+      await recreateNpcFromSnapshot(hist.npc_snapshot_json);
+      db.prepare('DELETE FROM npc_merge_history WHERE id = ?').run(hist.id);
+    } catch (e) {
+      console.error('[admin] NPC restore failed', e);
+      return res.status(500).json({ ok: false, error: 'NPC-placeholder kon niet worden hersteld' });
+    }
+  } else if (hist) {
+    db.prepare('DELETE FROM npc_merge_history WHERE merged_to_user_id = ?').run(targetId);
   }
 
   // Clean up physical files before DB delete

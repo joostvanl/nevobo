@@ -109,6 +109,14 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ ok: false, error: 'Ongeldige inloggegevens' });
   }
 
+  if (user.is_npc) {
+    metrics.recordAuthLogin('invalid_credentials');
+    return res.status(403).json({
+      ok: false,
+      error: 'Dit account is een team-placeholder (NPC) en kan niet inloggen. Neem contact op met de club.',
+    });
+  }
+
   const token = generateToken(user);
   metrics.recordAuthLogin('success');
   res.json({ ok: true, token, user: safeUser(user), features: getClientFeatures() });

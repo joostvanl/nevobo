@@ -57,6 +57,38 @@ function hasTeamAdmin(userId, teamId) {
   ).get(userId, teamId);
 }
 
+/** Coach or trainer team membership (used for roster/NPC merge access). */
+function hasTeamCoachOrTrainer(userId, teamId) {
+  return !!db.prepare(
+    `SELECT 1 FROM team_memberships WHERE user_id = ? AND team_id = ? AND membership_type IN ('coach','trainer')`
+  ).get(userId, teamId);
+}
+
+/** Club admin, team admin, or coach/trainer on this team — read team roster / NPC tools. */
+function canViewTeamRoster(userId, teamId) {
+  const tid = parseInt(teamId, 10);
+  if (!tid) return false;
+  if (hasSuperAdmin(userId)) return true;
+  const team = db.prepare('SELECT club_id FROM teams WHERE id = ?').get(tid);
+  if (!team) return false;
+  if (hasClubAdmin(userId, team.club_id)) return true;
+  if (hasTeamAdmin(userId, tid)) return true;
+  return hasTeamCoachOrTrainer(userId, tid);
+}
+
+/** Edit another user's profile when they share a team where requester is team_admin or coach/trainer, or club_admin. */
+function canTeamStaffEditUser(requesterId, targetUserId) {
+  if (hasSuperAdmin(requesterId)) return true;
+  const targetClub = db.prepare('SELECT club_id FROM users WHERE id = ?').get(targetUserId);
+  if (targetClub?.club_id && hasClubAdmin(requesterId, targetClub.club_id)) return true;
+  const teams = db.prepare('SELECT team_id FROM team_memberships WHERE user_id = ?').all(targetUserId);
+  for (const { team_id } of teams) {
+    if (hasTeamAdmin(requesterId, team_id)) return true;
+    if (hasTeamCoachOrTrainer(requesterId, team_id)) return true;
+  }
+  return false;
+}
+
 /**
  * Teamcarpool op wedstrijdniveau beheren (passagier eruit, geplande lift verwijderen):
  * coach-lidmaatschap, team_admin, club_admin of super_admin.
@@ -112,6 +144,18 @@ function requireTeamAdmin(teamIdParam = 'teamId') {
   };
 }
 
+/** Team admin OR club admin OR coach/trainer on team (view roster, NPC merge; not add/remove members). */
+function requireTeamAdminOrCoach(teamIdParam = 'teamId') {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ ok: false, error: 'Niet ingelogd' });
+    const teamId = parseInt(req.params[teamIdParam] || req.body?.team_id);
+    if (!teamId || !canViewTeamRoster(req.user.id, teamId)) {
+      return res.status(403).json({ ok: false, error: 'Geen rechten voor dit team' });
+    }
+    next();
+  };
+}
+
 module.exports = {
   verifyToken,
   optionalToken,
@@ -119,9 +163,13 @@ module.exports = {
   hasSuperAdmin,
   hasClubAdmin,
   hasTeamAdmin,
+  hasTeamCoachOrTrainer,
+  canViewTeamRoster,
+  canTeamStaffEditUser,
   canManageTeamCarpool,
   canPlanTeamCarpoolSeason,
   requireSuperAdmin,
   requireClubAdmin,
   requireTeamAdmin,
+  requireTeamAdminOrCoach,
 };
