@@ -3768,7 +3768,24 @@ img.hl-avatar {
 .ts-guest-empty { padding: 0.75rem 0; color: var(--text-secondary); font-size: 0.85rem; }
 .ts-guest-add { white-space: nowrap; flex-shrink: 0; }
 
-.ts-ex-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ts-ex-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+.ts-ex-toolbar-main {
+  flex: 1;
+  min-width: min(100%, 12rem);
+}
+.ts-ex-search-hint {
+  margin: 0.35rem 0 0;
+  line-height: 1.35;
+}
+.ts-ex-new-private-shrink {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
 .ts-ex-pick-results { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.35rem; max-height: 220px; overflow-y: auto; }
 .ts-ex-pick-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
 .ts-ex-pick-row:last-child { border-bottom: none; }
@@ -4089,6 +4106,26 @@ img.hl-avatar {
   border-top: 1px solid var(--border);
 }
 
+.ts-ex-foot--split {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ts-ex-foot-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ts-ex-foot-right {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
 .ts-ex-share-link {
   margin: 0;
   padding: 0;
@@ -4201,6 +4238,38 @@ img.hl-avatar {
   background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; padding: 1rem;
 }
 .ts-modal-card { max-width: 420px; width: 100%; padding: 1.25rem; }
+
+.tsp-private-modal .tsp-modal-foot {
+  margin-top: 0.5rem;
+}
+
+.tsp-modal-foot--split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.tsp-modal-foot--end {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tsp-modal-foot-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tsp-modal-foot-left {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
 .ts-tag-chk { display: inline-block; margin-right: 0.75rem; margin-bottom: 0.35rem; font-size: 0.82rem; }
 
 .tp-ex-h { font-size: 0.85rem; margin: 0.75rem 0 0.35rem; }

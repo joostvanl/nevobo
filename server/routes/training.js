@@ -603,6 +603,7 @@ function exerciseRowToJson(row, tags) {
     share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
     created_at: row.created_at,
     tags: tags || [],
+    private_in_library: Number(row.private_in_library) === 1,
   };
   if (row.author_name != null) out.author_name = row.author_name;
   return out;
@@ -695,7 +696,7 @@ router.get('/exercises', verifyToken, (req, res) => {
     SELECT e.* FROM training_exercises e
     WHERE e.club_id = ? AND (
       e.scope = 'club'
-      OR (e.scope = 'private' AND e.created_by_user_id = ?)
+      OR (e.scope = 'private' AND e.created_by_user_id = ? AND e.private_in_library = 1)
     )`;
   const params = [clubId, req.user.id];
   if (q) {
@@ -718,8 +719,10 @@ router.post('/exercises', verifyToken, (req, res) => {
 
   const {
     name, description, default_duration_minutes: dur, difficulty, scope, tag_ids: tagIds,
+    private_in_library: privateInLibrary,
   } = req.body || {};
   const scopeVal = scope === 'club' ? 'club' : 'private';
+  const pinLib = scopeVal === 'private' ? (privateInLibrary === true ? 1 : 0) : 0;
 
   if (scopeVal === 'club') {
     if (!canEditTraining(req.user.id, clubId)) {
@@ -738,8 +741,8 @@ router.post('/exercises', verifyToken, (req, res) => {
 
   const r = db.prepare(`
     INSERT INTO training_exercises (
-      club_id, created_by_user_id, name, description, default_duration_minutes, difficulty, scope, share_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'none')
+      club_id, created_by_user_id, name, description, default_duration_minutes, difficulty, scope, share_status, private_in_library
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'none', ?)
   `).run(
     clubId,
     req.user.id,
@@ -747,7 +750,8 @@ router.post('/exercises', verifyToken, (req, res) => {
     (description || '').trim(),
     d,
     diff,
-    scopeVal
+    scopeVal,
+    pinLib
   );
   const id = r.lastInsertRowid;
   setExerciseTags(id, tagIds);
@@ -769,7 +773,10 @@ router.patch('/exercises/:id', verifyToken, (req, res) => {
     return res.status(403).json({ ok: false, error: 'Geen toegang' });
   }
 
-  const { name, description, default_duration_minutes: dur, difficulty, tag_ids: tagIds } = req.body || {};
+  const {
+    name, description, default_duration_minutes: dur, difficulty, tag_ids: tagIds,
+    private_in_library: privateInLibrary,
+  } = req.body || {};
   const fields = [];
   const vals = [];
   if (name != null) { fields.push('name = ?'); vals.push(String(name).trim()); }
@@ -783,6 +790,9 @@ router.patch('/exercises/:id', verifyToken, (req, res) => {
   }
   if (difficulty != null && ['easy', 'medium', 'hard'].includes(difficulty)) {
     fields.push('difficulty = ?'); vals.push(difficulty);
+  }
+  if (privateInLibrary != null && ex.scope === 'private') {
+    fields.push('private_in_library = ?'); vals.push(privateInLibrary === true || privateInLibrary === 1 ? 1 : 0);
   }
   if (fields.length) {
     vals.push(ex.id);
@@ -974,7 +984,7 @@ function getSessionExercisesForResponse(sessionId, isCoach, userId) {
   const rows = db.prepare(`
     SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
            e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
-           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch, e.private_in_library
     FROM training_session_exercises se
     JOIN training_exercises e ON e.id = se.exercise_id
     WHERE se.session_id = ?
@@ -1000,6 +1010,7 @@ function getSessionExercisesForResponse(sessionId, isCoach, userId) {
       base.share_status = r.share_status;
       base.created_by_user_id = r.created_by_user_id;
       base.share_pitch = r.share_pitch != null ? String(r.share_pitch) : '';
+      base.private_in_library = Number(r.private_in_library) === 1;
       base.can_request_share = r.exercise_scope === 'private'
         && r.share_status === 'none'
         && r.created_by_user_id === userId;
@@ -1053,7 +1064,7 @@ router.post('/session/:id/exercises', verifyToken, (req, res) => {
   const row = db.prepare(`
     SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
            e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
-           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch, e.private_in_library
     FROM training_session_exercises se
     JOIN training_exercises e ON e.id = se.exercise_id
     WHERE se.id = ?
@@ -1074,6 +1085,7 @@ router.post('/session/:id/exercises', verifyToken, (req, res) => {
     share_status: row.share_status,
     created_by_user_id: row.created_by_user_id,
     share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
+    private_in_library: Number(row.private_in_library) === 1,
     can_request_share: row.exercise_scope === 'private'
       && row.share_status === 'none'
       && row.created_by_user_id === req.user.id,
@@ -1129,7 +1141,7 @@ router.patch('/session/:id/exercises/:linkId', verifyToken, (req, res) => {
   const row = db.prepare(`
     SELECT se.id AS link_id, se.duration_minutes, se.sort_order, se.performance_rating, se.performance_note,
            e.id AS exercise_id, e.name, e.description, e.default_duration_minutes, e.difficulty,
-           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch
+           e.scope AS exercise_scope, e.share_status, e.created_by_user_id, e.share_pitch, e.private_in_library
     FROM training_session_exercises se
     JOIN training_exercises e ON e.id = se.exercise_id
     WHERE se.id = ?
@@ -1150,6 +1162,7 @@ router.patch('/session/:id/exercises/:linkId', verifyToken, (req, res) => {
     share_status: row.share_status,
     created_by_user_id: row.created_by_user_id,
     share_pitch: row.share_pitch != null ? String(row.share_pitch) : '',
+    private_in_library: Number(row.private_in_library) === 1,
     can_request_share: row.exercise_scope === 'private'
       && row.share_status === 'none'
       && row.created_by_user_id === req.user.id,

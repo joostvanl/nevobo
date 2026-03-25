@@ -263,9 +263,23 @@ const migrations = [
     npc_snapshot_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  `ALTER TABLE training_exercises ADD COLUMN private_in_library INTEGER NOT NULL DEFAULT 0`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
+}
+
+// Eenmalig: bestaande privé-oefeningen blijven doorzoekbaar (voor migratie van bestaande clubs)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS _app_migrations (id TEXT PRIMARY KEY)`);
+  const done = db.prepare('SELECT 1 FROM _app_migrations WHERE id = ?').get('training_private_in_library_v1');
+  if (!done) {
+    db.prepare('UPDATE training_exercises SET private_in_library = 1 WHERE scope = ?').run('private');
+    db.prepare('INSERT INTO _app_migrations (id) VALUES (?)').run('training_private_in_library_v1');
+    console.log('[db] training: private_in_library backfill voor bestaande privé-oefeningen');
+  }
+} catch (e) {
+  console.warn('[db] training_private_in_library migration:', e.message);
 }
 
 // Eenmalig: placeholder-e-mails die op NPC wijzen, zonder handmatige vink

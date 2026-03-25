@@ -100,8 +100,11 @@ export async function render(container, params = {}) {
         <div class="card-body" id="ts-ex-wrap">
           ${isCoach ? `
           <div class="ts-ex-toolbar mb-2">
-            <input type="search" id="ts-ex-search" class="form-input" placeholder="Oefening zoeken in bibliotheek…" autocomplete="off" />
-            <button type="button" class="btn btn-sm btn-secondary" id="ts-ex-new-private">+ Nieuwe privé-oefening</button>
+            <div class="ts-ex-toolbar-main">
+              <input type="search" id="ts-ex-search" class="form-input" placeholder="Zoek club- en privé-oefeningen…" autocomplete="off" />
+              <p class="ts-ex-search-hint text-muted text-small">Club-oefeningen en privé-oefeningen die je expliciet in je bibliotheek hebt gezet. Andere privé-oefeningen staan alleen in dit programma.</p>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary ts-ex-new-private-shrink" id="ts-ex-new-private">+ Nieuwe privé-oefening</button>
           </div>
           <div id="ts-ex-pick-results" class="ts-ex-pick-results mb-2"></div>` : ''}
           <div id="ts-ex-list">${renderExerciseRows(sessionExercises, isCoach)}</div>
@@ -319,6 +322,9 @@ function renderExerciseRows(exercises, isCoach) {
         default_duration_minutes: ex.default_duration_minutes,
         difficulty: ex.difficulty,
         tag_ids: (ex.tags || []).map((t) => t.id),
+        can_request_share: !!ex.can_request_share,
+        share_status: ex.share_status || 'none',
+        private_in_library: !!ex.private_in_library,
       }))
       : '';
     const bodyIdCoach = `ts-ex-bd-${ex.id}`;
@@ -333,7 +339,6 @@ function renderExerciseRows(exercises, isCoach) {
               <div class="ts-ex-title-row">
                 <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
                 <div class="ts-ex-order">
-                  ${canEditPrivate ? `<button type="button" class="btn btn-xs btn-ghost ts-ex-edit-private" title="Naam, beschrijving, standaardduur, moeilijkheid en tags aanpassen" data-ex-edit="${editPayload}">Bewerken</button>` : ''}
                   <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="up" title="Omhoog">↑</button>
                   <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="down" title="Omlaag">↓</button>
                   <button type="button" class="btn btn-xs btn-ghost ts-ex-remove" title="Verwijderen">✕</button>
@@ -369,9 +374,11 @@ function renderExerciseRows(exercises, isCoach) {
               <span>Evaluatie</span>
               <textarea class="form-input form-input--compact ts-ex-note" rows="2" placeholder="Optioneel">${escHtml(note)}</textarea>
             </label>
-            ${ex.can_request_share || ex.share_status === 'pending'
-              ? `<div class="ts-ex-foot">
-              ${ex.can_request_share ? `<button type="button" class="ts-ex-share-link" title="Privé-oefening ter goedkeuring aan clubbeheer voorleggen">Club voorleggen</button>` : ''}
+            ${ex.can_request_share || ex.share_status === 'pending' || canEditPrivate
+              ? `<div class="ts-ex-foot ts-ex-foot--split">
+              <div class="ts-ex-foot-left">
+              ${canEditPrivate && !ex.private_in_library ? `<button type="button" class="ts-ex-share-link ts-ex-add-to-library" title="Doorzoekbaar maken bij zoeken">In bibliotheek</button>` : ''}
+              ${ex.can_request_share ? `<button type="button" class="ts-ex-share-link ts-ex-share-club" title="Privé-oefening ter goedkeuring aan clubbeheer voorleggen">Club voorleggen</button>` : ''}
               ${
                 ex.share_status === 'pending'
                   ? `<div class="ts-ex-pending-block">
@@ -380,6 +387,8 @@ function renderExerciseRows(exercises, isCoach) {
                 </div>`
                   : ''
               }
+              </div>
+              ${canEditPrivate ? `<div class="ts-ex-foot-right"><button type="button" class="ts-ex-share-link ts-ex-edit-private" title="Naam, beschrijving, standaardduur, moeilijkheid en tags aanpassen" data-ex-edit="${editPayload}">Opslaan</button></div>` : ''}
             </div>`
               : ''}
           </div>
@@ -476,9 +485,23 @@ function setupSessionExercises(container, session, routeParams) {
       });
     }
 
-    row.querySelector('.ts-ex-share-link')?.addEventListener('click', () => {
+    row.querySelector('.ts-ex-share-club')?.addEventListener('click', () => {
       const eid = parseInt(row.dataset.exerciseId, 10);
       showSharePitchModal(eid, reloadList);
+    });
+
+    row.querySelector('.ts-ex-add-to-library')?.addEventListener('click', async () => {
+      const eid = parseInt(row.dataset.exerciseId, 10);
+      try {
+        await api(`/api/training/exercises/${eid}`, {
+          method: 'PATCH',
+          body: { private_in_library: true },
+        });
+        showToast('Toegevoegd aan je privébibliotheek', 'success');
+        await reloadList();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     });
 
     row.querySelector('.ts-ex-edit-private')?.addEventListener('click', () => {
@@ -604,11 +627,12 @@ function setupSessionExercises(container, session, routeParams) {
 
 /**
  * Nieuwe privé-oefening of bestaande bewerken (alleen jouw privé-oefeningen).
- * @param {{ sessionId?: number, onDone?: () => void, edit?: { id: number, name: string, description?: string, default_duration_minutes: number, difficulty: string, tag_ids?: number[] } }} opts
+ * @param {{ sessionId?: number, onDone?: () => void, edit?: { id: number, name: string, description?: string, default_duration_minutes: number, difficulty: string, tag_ids?: number[], can_request_share?: boolean, share_status?: string, private_in_library?: boolean } }} opts
  */
 function showPrivateExerciseModal(opts) {
   const { sessionId, onDone, edit } = opts || {};
   const isEdit = edit && Number.isFinite(Number(edit.id));
+  const hasSession = !!(sessionId && Number.isFinite(Number(sessionId)));
   const overlay = document.createElement('div');
   overlay.className = 'ts-modal-overlay';
   const initialName = isEdit ? (edit.name || '') : '';
@@ -616,9 +640,37 @@ function showPrivateExerciseModal(opts) {
   const initialDur = isEdit ? edit.default_duration_minutes : 20;
   const initialDiff = isEdit && ['easy', 'medium', 'hard'].includes(edit.difficulty) ? edit.difficulty : 'medium';
   const initialTagIds = isEdit ? new Set((edit.tag_ids || []).map((id) => Number(id))) : new Set();
+  const showShareInEdit = isEdit && !!edit.can_request_share;
+  const initialInLib = isEdit && !!edit.private_in_library;
+
+  const footCreate = `
+      <label class="mb-2" style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="tsp-private-library" style="margin-top:0.2rem" />
+        <span class="text-small">Bewaar in mijn privébibliotheek (doorzoekbaar bij zoeken). Uit = alleen in dit programma, niet in zoeken.</span>
+      </label>
+      ${hasSession ? `
+      <label class="mb-2" style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="tsp-add-session" checked style="margin-top:0.2rem" />
+        <span class="text-small">Ook aan dit trainingsschema toevoegen</span>
+      </label>` : ''}
+      <div class="tsp-modal-foot tsp-modal-foot--end">
+        <button type="button" class="btn btn-ghost" id="tsp-cancel">Annuleren</button>
+        <button type="button" class="btn btn-primary" id="tsp-save">Opslaan</button>
+      </div>`;
+
+  const footEdit = `
+      <div class="tsp-modal-foot tsp-modal-foot--split">
+        <div class="tsp-modal-foot-left">
+          ${showShareInEdit ? '<button type="button" class="ts-ex-share-link" id="tsp-share-from-modal">Club voorleggen</button>' : ''}
+        </div>
+        <div class="tsp-modal-foot-actions">
+          <button type="button" class="btn btn-ghost" id="tsp-cancel">Annuleren</button>
+          <button type="button" class="ts-ex-share-link" id="tsp-save">Opslaan</button>
+        </div>
+      </div>`;
 
   overlay.innerHTML = `
-    <div class="card ts-modal-card">
+    <div class="card ts-modal-card tsp-private-modal">
       <h3 class="mb-2">${isEdit ? 'Privé-oefening bewerken' : 'Nieuwe privé-oefening'}</h3>
       <label class="mb-2" style="display:block">Naam *
         <input type="text" id="tsp-name" class="form-input" required value="${escHtml(initialName)}" />
@@ -638,11 +690,13 @@ function showPrivateExerciseModal(opts) {
           <option value="hard"${initialDiff === 'hard' ? ' selected' : ''}>Moeilijk</option>
         </select>
       </label>
+      ${isEdit ? `
+      <label class="mb-2" style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer">
+        <input type="checkbox" id="tsp-in-library"${initialInLib ? ' checked' : ''} style="margin-top:0.2rem" />
+        <span class="text-small">In privébibliotheek (doorzoekbaar bij zoeken)</span>
+      </label>` : ''}
       <div class="mb-2" id="tsp-tags-wrap"><span class="text-small text-muted">Tags laden…</span></div>
-      <div class="flex gap-2 justify-end mt-2">
-        <button type="button" class="btn btn-ghost" id="tsp-cancel">Annuleren</button>
-        <button type="button" class="btn btn-primary" id="tsp-save">${isEdit ? 'Bijwerken' : 'Opslaan'}</button>
-      </div>
+      ${isEdit ? footEdit : footCreate}
     </div>`;
   document.body.appendChild(overlay);
 
@@ -668,6 +722,16 @@ function showPrivateExerciseModal(opts) {
   const close = () => overlay.remove();
   overlay.querySelector('#tsp-cancel').addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  if (showShareInEdit) {
+    overlay.querySelector('#tsp-share-from-modal')?.addEventListener('click', () => {
+      showSharePitchModal(edit.id, async () => {
+        close();
+        if (onDone) await onDone();
+      });
+    });
+  }
+
   overlay.querySelector('#tsp-save').addEventListener('click', async () => {
     const name = overlay.querySelector('#tsp-name').value.trim();
     const description = overlay.querySelector('#tsp-desc').value.trim();
@@ -679,6 +743,18 @@ function showPrivateExerciseModal(opts) {
     }
     const tagIds = [...overlay.querySelectorAll('#tsp-tags-wrap input[type=checkbox]:checked')].map((c) => parseInt(c.value, 10));
     try {
+      if (!isEdit) {
+        const inLibraryPre = overlay.querySelector('#tsp-private-library')?.checked === true;
+        const addToSessionPre = hasSession && overlay.querySelector('#tsp-add-session')?.checked;
+        if (!hasSession && !inLibraryPre) {
+          showToast('Vink “privébibliotheek” aan om op te slaan, of gebruik + vanuit een training.', 'error');
+          return;
+        }
+        if (hasSession && !inLibraryPre && !addToSessionPre) {
+          showToast('Kies minimaal: in privébibliotheek en/of aan dit trainingsschema.', 'error');
+          return;
+        }
+      }
       if (isEdit) {
         await api(`/api/training/exercises/${edit.id}`, {
           method: 'PATCH',
@@ -688,10 +764,12 @@ function showPrivateExerciseModal(opts) {
             default_duration_minutes: dur,
             difficulty,
             tag_ids: tagIds,
+            private_in_library: overlay.querySelector('#tsp-in-library')?.checked === true,
           },
         });
-        showToast('Privé-oefening bijgewerkt', 'success');
+        showToast('Privé-oefening opgeslagen', 'success');
       } else {
+        const inLibrary = overlay.querySelector('#tsp-private-library')?.checked === true;
         const created = await api('/api/training/exercises', {
           method: 'POST',
           body: {
@@ -701,17 +779,24 @@ function showPrivateExerciseModal(opts) {
             difficulty,
             scope: 'private',
             tag_ids: tagIds,
+            private_in_library: inLibrary,
           },
         });
         const newId = created.exercise?.id;
-        if (sessionId && newId) {
+        const addCb = overlay.querySelector('#tsp-add-session');
+        const addToSession = hasSession && addCb?.checked;
+        if (addToSession && newId) {
           await api(`/api/training/session/${sessionId}/exercises`, {
             method: 'POST',
             body: { exercise_id: newId },
           });
-          showToast('Privé-oefening toegevoegd aan dit programma', 'success');
-        } else {
-          showToast('Privé-oefening opgeslagen', 'success');
+          if (inLibrary) {
+            showToast('Toegevoegd aan programma en privébibliotheek', 'success');
+          } else {
+            showToast('Toegevoegd aan dit programma (niet in zoek-bibliotheek)', 'success');
+          }
+        } else if (inLibrary) {
+          showToast('Opgeslagen in je privébibliotheek — zoek hierboven om opnieuw te gebruiken.', 'success');
         }
       }
       close();
