@@ -267,14 +267,20 @@ function renderPage(container, opts) {
         const staff   = members.filter(u => u.membership_type === 'coach' || u.membership_type === 'staff');
         // parents are intentionally excluded from public view
         const ROLE_LABEL = { coach: 'Trainer/Coach', staff: 'Begeleiding' };
+        /** Placeholder / roster-only: DB flag, or level 1 (typisch NPC-accounts zonder echte progressie). */
+        const isNpcDisplay = (u) => !!u.is_npc || Number(u.level) === 1;
+        const memberStatsLine = (u) =>
+          isNpcDisplay(u) ? 'NPC' : `Level ${u.level} · ${u.xp} XP`;
+        const memberLevelBadge = (u) =>
+          isNpcDisplay(u) ? 'NPC' : `Lvl ${u.level}`;
         const memberCard = (u) => `
           <div class="team-member-row">
             ${renderAvatar(u.name, u.avatar_url, 'sm')}
             <div class="team-member-info">
               <div class="team-member-name">${u.name}</div>
-              <div class="text-muted text-small">Level ${u.level} · ${u.xp} XP</div>
+              <div class="text-muted text-small">${memberStatsLine(u)}</div>
             </div>
-            <div class="team-member-level">Lvl ${u.level}</div>
+            <div class="team-member-level">${memberLevelBadge(u)}</div>
           </div>`;
         const sections = [];
         if (players.length > 0) sections.push(`
@@ -295,9 +301,9 @@ function renderPage(container, opts) {
                     <div class="team-member-name">${u.name}
                       <span class="chip chip-primary" style="font-size:0.62rem;margin-left:0.35rem">${ROLE_LABEL[u.membership_type] || u.membership_type}</span>
                     </div>
-                    <div class="text-muted text-small">Level ${u.level} · ${u.xp} XP</div>
+                    <div class="text-muted text-small">${memberStatsLine(u)}</div>
                   </div>
-                  <div class="team-member-level">Lvl ${u.level}</div>
+                  <div class="team-member-level">${memberLevelBadge(u)}</div>
                 </div>`).join('')}
             </div>
           </div>`);
