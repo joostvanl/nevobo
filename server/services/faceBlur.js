@@ -15,6 +15,7 @@ const fs    = require('fs');
 const sharp = require('sharp');
 const db    = require('../db/db');
 const { isFaceBlurEnabled } = require('../lib/featureSettings');
+const metrics = require('../lib/metrics');
 
 const MODELS_PATH       = path.join(__dirname, '../models');
 // Euclidean distance threshold for face matching.
@@ -180,20 +181,32 @@ async function getAnonymousDescriptors(teamId) {
 // entirely without loading models or running detection.
 
 async function blurFacesIfNeeded(absoluteFilePath, teamId) {
-  if (!isFaceBlurEnabled() || !modelsLoaded) return false;
+  if (!isFaceBlurEnabled() || !modelsLoaded) {
+    metrics.recordFaceBlur('skipped_feature_disabled');
+    return false;
+  }
 
   // Fast-path: skip when no relevant anonymous users exist
   if (teamId) {
-    if (!teamHasAnonymousMembers(teamId)) return false;
+    if (!teamHasAnonymousMembers(teamId)) {
+      metrics.recordFaceBlur('skipped_no_anonymous_members');
+      return false;
+    }
   } else {
     const anonCount = db.prepare(
       'SELECT COUNT(*) AS n FROM face_references fr JOIN users u ON u.id = fr.user_id WHERE u.anonymous_mode = 1'
     ).get();
-    if (!anonCount?.n) return false;
+    if (!anonCount?.n) {
+      metrics.recordFaceBlur('skipped_no_anonymous_members');
+      return false;
+    }
   }
 
   const userDescriptorMap = await getAnonymousDescriptors(teamId);
-  if (!userDescriptorMap.size) return false;
+  if (!userDescriptorMap.size) {
+    metrics.recordFaceBlur('skipped_no_descriptors');
+    return false;
+  }
 
   // Detect all faces in the uploaded photo
   const tensor = await imageToTensor(absoluteFilePath);
@@ -210,6 +223,7 @@ async function blurFacesIfNeeded(absoluteFilePath, teamId) {
   const fname = path.basename(absoluteFilePath);
   if (!detections || !detections.length) {
     console.log(`[faceBlur] ${fname}: 0 faces detected (team=${teamId ?? 'global'}, threshold: ${MIN_CONFIDENCE})`);
+    metrics.recordFaceBlur('no_faces_detected');
     return false;
   }
   console.log(`[faceBlur] ${fname}: ${detections.length} face(s) detected`);
@@ -235,14 +249,19 @@ async function blurFacesIfNeeded(absoluteFilePath, teamId) {
 
   if (!toBlur.length) {
     console.log(`[faceBlur] ${fname}: no faces matched anonymous users (threshold: ${MATCH_THRESHOLD})`);
+    metrics.recordFaceBlur('no_anonymous_match');
     return false;
   }
 
   // Apply blur to the matched regions and return the stored bounding boxes for re-use
   const regions = toBlur.map(b => ({ x: b.x, y: b.y, width: b.width, height: b.height }));
   const applied = await applyBlurRegions(absoluteFilePath, regions);
-  if (!applied) return false;
+  if (!applied) {
+    metrics.recordFaceBlur('blur_apply_failed');
+    return false;
+  }
   console.log(`[faceBlur] Blurred ${regions.length} face(s) in ${fname} (original saved as .orig)`);
+  metrics.recordFaceBlur('blurred');
   return { blurred: true, regions };
 }
 /* ─── Internal: generate SVG sticker buffer for a given style ────────────── */

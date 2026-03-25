@@ -1,0 +1,17 @@
+# Fragment voor Prometheus op dezelfde host als Docker.
+# Voeg toe aan scrape_configs (of include als apart bestand).
+#
+# Vereist dat de Prometheus-container het Docker-netwerk van de app deelt, bv.:
+#   docker network connect volleyapp_default prometheus
+#
+# Of gebruik host-gateway (Linux): targets: ['host.docker.internal:3000'] als poort 3000
+# op de host staat gepubliceerd (standaard compose publiceert de app niet op de host).
+
+scrape_configs:
+  - job_name: volleyapp
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['volleyapp:3000']
+        labels:
+          service: volleyapp

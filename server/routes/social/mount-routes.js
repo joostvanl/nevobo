@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 const path = require('path');
 const fs = require('fs');
@@ -22,6 +22,7 @@ const { getMatchTeamsMap, addMatchOpponentToMediaItems } = require('./helpers');
 const { publicPath } = require('./paths');
 const upload = require('./multer-upload');
 const parseSocialUrlForSocial = require('./parse-social-url');
+const metrics = require('../../lib/metrics');
 
 module.exports = function mountSocialRoutes(router) {
 // GET /api/social/feed — personalized feed (follows + own club)
@@ -95,6 +96,7 @@ router.post('/post', verifyToken, (req, res) => {
   ).run(req.user.id, user.club_id || null, team_id || null, match_id || null, 'post', body.trim());
 
   const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(result.lastInsertRowid);
+  metrics.recordSocialPost('text');
   res.status(201).json({ ok: true, post });
 });
 
@@ -238,6 +240,11 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
     item._qualityWarnings = qualityFlagsByIndex[i] || [];
     return item;
   });
+
+  for (const f of req.files) {
+    metrics.recordMediaUpload(f.mimetype.startsWith('video/') ? 'video' : 'image');
+  }
+  metrics.recordSocialPost('media');
 
   // Badge rewards for photos
   const totalPhotos = db.prepare('SELECT COUNT(*) AS n FROM match_media WHERE user_id = ? AND file_type = ?').get(req.user.id, 'image');
@@ -1164,7 +1171,9 @@ router.get('/team-media/:teamId', optionalToken, (req, res) => {
     cachePH ? `(p.team_id = ? AND mm.match_id IN (${cachePH}))` : null,
   ].filter(Boolean).join(' OR ');
 
-  const args = [userId, teamId, teamId, teamId, teamId, ...cacheIds, limit, offset];
+  // Placeholders: 3× teamId when geen feed_cache-match_ids; 4× teamId + cacheIds wél cache-filter
+  const teamArgs = cachePH ? [teamId, teamId, teamId, teamId, ...cacheIds] : [teamId, teamId, teamId];
+  const args = [userId, ...teamArgs, limit, offset];
 
   const media = db.prepare(`
     SELECT mm.*, u.name AS uploader_name, u.avatar_url AS uploader_avatar,

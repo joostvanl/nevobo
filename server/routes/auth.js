@@ -8,6 +8,7 @@ const fs = require('fs');
 const db = require('../db/db');
 const { verifyToken } = require('../middleware/auth');
 const { getClientFeatures } = require('../lib/featureSettings');
+const metrics = require('../lib/metrics');
 
 // Multer for avatar + face reference uploads
 const avatarStorage = multer.diskStorage({
@@ -47,14 +48,17 @@ function safeUser(user) {
 router.post('/register', async (req, res) => {
   const { name, email, password, club_id, team_id } = req.body;
   if (!name || !email || !password) {
+    metrics.recordAuthRegister('validation_error');
     return res.status(400).json({ ok: false, error: 'Naam, e-mail en wachtwoord zijn verplicht' });
   }
   if (password.length < 6) {
+    metrics.recordAuthRegister('validation_error');
     return res.status(400).json({ ok: false, error: 'Wachtwoord moet minimaal 6 tekens zijn' });
   }
 
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existing) {
+    metrics.recordAuthRegister('duplicate_email');
     return res.status(409).json({ ok: false, error: 'E-mailadres is al in gebruik' });
   }
 
@@ -62,6 +66,7 @@ router.post('/register', async (req, res) => {
   if (club_id !== undefined && club_id !== null && club_id !== '') {
     regClubId = parseInt(String(club_id), 10);
     if (Number.isNaN(regClubId) || !db.prepare('SELECT id FROM clubs WHERE id = ?').get(regClubId)) {
+      metrics.recordAuthRegister('invalid_club');
       return res.status(400).json({ ok: false, error: 'Ongeldige vereniging' });
     }
   }
@@ -80,6 +85,7 @@ router.post('/register', async (req, res) => {
   }
 
   const token = generateToken(user);
+  metrics.recordAuthRegister('success');
   res.status(201).json({ ok: true, token, user: safeUser(user), features: getClientFeatures() });
 });
 
@@ -87,20 +93,24 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
+    metrics.recordAuthLogin('validation_error');
     return res.status(400).json({ ok: false, error: 'E-mail en wachtwoord zijn verplicht' });
   }
 
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!user) {
+    metrics.recordAuthLogin('invalid_credentials');
     return res.status(401).json({ ok: false, error: 'Ongeldige inloggegevens' });
   }
 
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) {
+    metrics.recordAuthLogin('invalid_credentials');
     return res.status(401).json({ ok: false, error: 'Ongeldige inloggegevens' });
   }
 
   const token = generateToken(user);
+  metrics.recordAuthLogin('success');
   res.json({ ok: true, token, user: safeUser(user), features: getClientFeatures() });
 });
 

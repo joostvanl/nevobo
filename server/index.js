@@ -1,6 +1,7 @@
 const app = require('./app');
 const PORT = process.env.PORT || 3000;
 
+const metrics = require('./lib/metrics');
 const featureSettings = require('./lib/featureSettings');
 const { loadModels } = require('./services/faceBlur');
 
@@ -15,8 +16,10 @@ if (featureSettings.isFaceBlurEnabled()) {
 
 // Prevent uncaught TF/WASM errors from killing the server process
 process.on('uncaughtException', err => {
+  metrics.recordProcessEvent('uncaught_exception');
   console.error('[server] Uncaught exception (server continues):', err.message);
 });
 process.on('unhandledRejection', (reason) => {
+  metrics.recordProcessEvent('unhandled_rejection');
   console.error('[server] Unhandled rejection (server continues):', reason?.message ?? reason);
 });

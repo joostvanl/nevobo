@@ -6,6 +6,9 @@ const path = require('path');
 
 const app = express();
 
+const metrics = require('./lib/metrics');
+metrics.mount(app);
+
 const featureSettings = require('./lib/featureSettings');
 const { loadModels } = require('./services/faceBlur');
 const { verifyToken, requireSuperAdmin } = require('./middleware/auth');
