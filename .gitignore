@@ -25,6 +25,7 @@ server/models/*.bin
 
 # Temp/debug scripts
 test-*.js
+!volleyball-scout/test-team-validation.js
 fix-*.js
 flush-*.js
 seed-*.js

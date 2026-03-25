@@ -1,0 +1,10 @@
+{
+  "name": "Volleybal Scouting",
+  "short_name": "Scouting",
+  "description": "Scouting app voor volleybalwedstrijden",
+  "start_url": "index.php",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0f0f14",
+  "theme_color": "#1a1a2e"
+}

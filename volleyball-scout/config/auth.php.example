@@ -1,0 +1,21 @@
+<?php
+/**
+ * OAuth-credentials en mailconfiguratie.
+ * Kopieer dit bestand naar auth.php en vul de waarden in.
+ * auth.php wordt niet gecommit (voeg toe aan .gitignore).
+ */
+return [
+    'base_url' => 'http://localhost:8080/volleyball-scout',
+    // E-mailadres als afzender voor password-reset mails (PHP mail())
+    'mail_from' => 'noreply@example.com',
+    // Geldigheidsduur reset-link in minuten (standaard 60)
+    'password_reset_expiry_minutes' => 60,
+    'google' => [
+        'client_id' => '',
+        'client_secret' => '',
+    ],
+    'facebook' => [
+        'app_id' => '',
+        'app_secret' => '',
+    ],
+];

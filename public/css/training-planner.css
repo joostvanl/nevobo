@@ -843,6 +843,27 @@ tr.tp-tov-skip { opacity: 0.5; }
   overflow: hidden;
 }
 
+/* AI prompts editor (full editor in modal — opperbeheerder) */
+.tp-prompts-modal-overlay {
+  z-index: 220;
+}
+
+.tp-prompts-editor-modal {
+  width: min(920px, 96vw);
+  max-height: min(92vh, 900px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tp-prompts-editor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 20px 16px;
+}
+
 .tp-ai-header {
   display: flex;
   align-items: center;

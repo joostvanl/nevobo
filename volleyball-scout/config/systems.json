@@ -1,0 +1,20 @@
+{
+  "5-1": {
+    "name": "5-1",
+    "description": "1 spelverdeler, 5 aanvallers. Spelverdeler draait door alle posities.",
+    "setters": 1,
+    "positions": ["Pos 1", "Pos 2", "Pos 3", "Pos 4", "Pos 5", "Pos 6"]
+  },
+  "4-2": {
+    "name": "4-2",
+    "description": "2 spelverdelers tegenover elkaar, altijd uit voorrij. 4 aanvallers.",
+    "setters": 2,
+    "positions": ["Pos 1", "Pos 2", "Pos 3", "Pos 4", "Pos 5", "Pos 6"]
+  },
+  "geen": {
+    "name": "Geen systeem",
+    "description": "Geen vaste spelverdeler(s). Vrije opstelling.",
+    "setters": 0,
+    "positions": ["Pos 1", "Pos 2", "Pos 3", "Pos 4", "Pos 5", "Pos 6"]
+  }
+}

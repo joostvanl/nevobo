@@ -1,4 +1,5 @@
 import { api, state, showToast } from '../app.js';
+import { mountTrainingAiPromptsEditor } from '../training-ai-prompts-editor.js';
 import { escHtml } from '../escape-html.js';
 
 const DAY_NAMES = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
@@ -13,6 +14,10 @@ const _MO_KEY = 'tp_match_overrides';
 let _matchOverrides = {};
 try { _matchOverrides = JSON.parse(localStorage.getItem(_MO_KEY) || '{}'); } catch (_) {}
 function _saveMatchOverrides() { localStorage.setItem(_MO_KEY, JSON.stringify(_matchOverrides)); }
+
+function isTpSuperAdmin() {
+  return !!state.user?.roles?.some((r) => r.role === 'super_admin');
+}
 
 const TEAM_COLORS = [
   '#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6',
@@ -416,6 +421,7 @@ function renderPlanner() {
         <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>
         <span class="tp-ctx-sep"></span>
         <button class="tp-ctx-btn tp-ctx-accent" id="tp-ai-optimize">🤖 AI assistent</button>
+        ${isTpSuperAdmin() ? '<button type="button" class="tp-ctx-btn" id="tp-ai-prompts" title="Systeemprompts voor de AI bewerken">📝 AI-prompts</button>' : ''}
         <span class="tp-ctx-sep"></span>
         <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>` : `
         <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
@@ -672,6 +678,7 @@ function wireEvents() {
   el.querySelector('#tp-save-snapshot')?.addEventListener('click', () => showSaveSnapshotModal());
   el.querySelector('#tp-load-snapshot')?.addEventListener('click', () => showLoadSnapshotModal());
   el.querySelector('#tp-ai-optimize')?.addEventListener('click', () => triggerAiOptimize());
+  el.querySelector('#tp-ai-prompts')?.addEventListener('click', () => openTrainingAiPromptsModal());
   el.querySelector('#tp-rename-snapshot')?.addEventListener('click', () => showRenameSnapshotModal());
   el.querySelector('#tp-clear-defaults')?.addEventListener('click', () => clearAllDefaults());
   el.querySelector('#tp-prev-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, -1); loadAndRender(); });
@@ -1280,6 +1287,40 @@ async function showRenameSnapshotModal() {
 
 // ─── AI optimize via webhook ────────────────────────────────────────────────
 
+async function openTrainingAiPromptsModal(initialMode) {
+  if (!isTpSuperAdmin()) {
+    showToast('Alleen opperbeheerders kunnen systeemprompts wijzigen.', 'error');
+    return;
+  }
+  let overlay = document.querySelector('.tp-prompts-modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'tp-modal-overlay tp-prompts-modal-overlay';
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `
+    <div class="tp-modal tp-ai-modal tp-prompts-editor-modal">
+      <div class="tp-prompts-modal-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;padding:16px 20px 12px;border-bottom:1px solid var(--border-color,#e5e7eb)">
+        <div>
+          <h3 style="margin:0;font-size:1.05rem;font-weight:700">AI-prompts bewerken</h3>
+          <p class="text-muted text-small" style="margin:0.35rem 0 0;line-height:1.35">Zelfde editor als onder Beheer → opperbeheerder. Opslaan schrijft naar de server (live bestand op productie).</p>
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary tp-prompts-close" aria-label="Sluiten">✕</button>
+      </div>
+      <div id="tp-prompts-editor-root" class="tp-prompts-editor-scroll"></div>
+      <div class="tp-ai-footer" style="border-top:1px solid var(--border-color,#e5e7eb);padding:12px 20px 16px">
+        <button type="button" class="btn btn-sm btn-primary tp-prompts-close">Sluiten</button>
+      </div>
+    </div>`;
+  overlay.style.display = 'flex';
+  const close = () => { overlay.style.display = 'none'; };
+  overlay.querySelectorAll('.tp-prompts-close').forEach((b) => b.addEventListener('click', close));
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const root = overlay.querySelector('#tp-prompts-editor-root');
+  const mode = ['new', 'complete', 'optimize'].includes(initialMode) ? initialMode : 'complete';
+  await mountTrainingAiPromptsEditor(root, { variant: 'modal', initialMode: mode });
+}
+
 async function triggerAiOptimize() {
   let overlay = document.querySelector('.tp-modal-overlay');
   if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
@@ -1320,6 +1361,10 @@ async function triggerAiOptimize() {
       <label for="tp-ai-message">Extra opdracht <span class="tp-ai-optional">optioneel</span></label>
       <textarea id="tp-ai-message" rows="2" placeholder="Bijv. 'Focus op coach-dubbelrollen' of 'Plan N5 op dinsdag en donderdag'"></textarea>
       <div id="tp-ai-status" class="tp-ai-status">Verbinding controleren...</div>
+      ${isTpSuperAdmin() ? `<p class="tp-ai-prompts-hint text-small text-muted" style="margin:0.75rem 0 0">
+        <button type="button" class="btn btn-ghost btn-sm tp-ai-open-prompts" style="padding:0.2rem 0.5rem;font-size:0.8rem">📝 Systeemprompts bewerken</button>
+        <span style="opacity:0.85"> — opperbeheerder</span>
+      </p>` : ''}
     </div>
     <div class="tp-ai-footer">
       <button class="btn btn-sm btn-secondary tp-ai-cancel">Annuleren</button>
@@ -1332,6 +1377,11 @@ async function triggerAiOptimize() {
   const startBtn = overlay.querySelector('.tp-ai-start');
   const msgInput = overlay.querySelector('#tp-ai-message');
   overlay.querySelector('.tp-ai-cancel').onclick = () => { overlay.style.display = 'none'; };
+  overlay.querySelector('.tp-ai-open-prompts')?.addEventListener('click', () => {
+    const m = overlay.querySelector('input[name="tp-ai-mode"]:checked')?.value || 'complete';
+    overlay.style.display = 'none';
+    openTrainingAiPromptsModal(m);
+  });
 
   try {
     const check = await api('/api/training/ai-webhook-status');

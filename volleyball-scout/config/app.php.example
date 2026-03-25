@@ -1,0 +1,14 @@
+<?php
+/**
+ * App configuratie – feature toggles en algemene instellingen.
+ * Kopieer naar app.php en pas aan voor jouw omgeving.
+ */
+return [
+    // Feature toggle: inloggen en gebruikersbeheer.
+    'feature_auth_enabled' => true,
+
+    // AI Coach (Timeout advies) – N8N webhook URLs.
+    'timeout_webhook_env' => 'test',  // 'test' of 'production'
+    'timeout_webhook_test' => 'http://localhost:5678/webhook/xxx',
+    'timeout_webhook_production' => 'https://jouw-n8n-domein.nl/webhook/xxx',
+];

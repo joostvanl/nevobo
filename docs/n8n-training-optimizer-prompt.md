@@ -1,7 +1,7 @@
 # N8N Training Schedule Optimizer — Webhook Agent
 
 De planner stuurt via "🤖 AI Assistent" een POST naar de N8N webhook.
-Alle data inclusief het system prompt en user message worden vanuit de app meegestuurd, zodat alles centraal in de app code beheerd wordt.
+Het **system prompt** komt uit configuratie (per modus `new` / `complete` / `optimize`, per omgeving **development** / **production**), met **revisiegeschiedenis** en rollback via de knop **AI-prompts** op de **trainingsplanner** (alleen voor opperbeheerders). De bron staat in git als `server/config/training-planner-ai-prompts.json`; op productie wordt bij voorkeur `data/training-planner-ai-prompts.json` gebruikt (Docker-volume), zodat wijzigingen bewaard blijven. Optioneel: `TRAINING_AI_PROMPT_ENV=development|production` in `.env` om te forceren welke set prompts de server kiest (anders: `NODE_ENV`). De **user message** wordt nog steeds in code opgebouwd.
 
 De gebruiker kiest een van drie modi in de app:
 
@@ -118,4 +118,4 @@ return {
 
 ## Prompt beheer
 
-Het system prompt en user message worden gegenereerd in `server/routes/training.js` (functies `buildAiSystemPrompt(mode)` en `buildAiUserMessage(mode, extraMessage)`). De `mode` parameter (`new`, `complete`, `optimize`) wordt door de frontend meegegeven. Wijzigingen aan de prompt hoeven alleen in de app code te worden gedaan — N8N pikt ze automatisch op via `$json.body.systemPrompt` en `$json.body.userMessage`.
+Het actieve **system prompt** komt uit `server/lib/training-ai-prompts.js` (JSON-bestanden zoals hierboven); **revisies en rollback** beheer je in de UI via **trainingsplanner → AI-prompts** (opperbeheerders). De **user message** wordt in `server/routes/training.js` opgebouwd (`buildAiUserMessage`); de `mode` (`new`, `complete`, `optimize`) geeft de frontend mee. N8N ontvangt beide via `$json.body.systemPrompt` en `$json.body.userMessage`.

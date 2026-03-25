@@ -55,7 +55,7 @@ Zie ook [OWASP-rapport](../owasp-security-report.md) (trainingssessies gekoppeld
 
 ## AI / N8N (planner)
 
-Webhook en prompt-opbouw: `server/routes/training.js` (`buildAiSystemPrompt`, `buildAiUserMessage`). Functionele beschrijving: [../n8n-training-optimizer-prompt.md](../n8n-training-optimizer-prompt.md).
+Webhook en prompt-opbouw: `server/routes/training.js`; systeemprompts (revisies, omgeving dev/prod) worden beheerd via **trainingsplanner → knop AI-prompts** (alleen opperbeheerders), niet via de beheerderspagina. Functionele beschrijving: [../n8n-training-optimizer-prompt.md](../n8n-training-optimizer-prompt.md).
 
 ---
 

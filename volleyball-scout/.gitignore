@@ -1,0 +1,9 @@
+# OAuth credentials (kopieer auth.php.example naar auth.php)
+config/auth.php
+
+# Wedstrijddata en gebruikersdata (lokaal / productie)
+data/*.json
+!data/.gitkeep
+
+# Lokale configuratie (webhook-URLs, feature-toggles)
+config/app.php

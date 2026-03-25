@@ -47,6 +47,7 @@ describe('A01 — Broken Access Control', () => {
       ['GET',  '/api/admin/users'],
       ['GET',  '/api/platform/settings'],
       ['GET',  '/api/training/teams'],
+      ['GET',  '/api/training/ai-prompts-config'],
       ['GET',  '/api/carpool/coach/teams'],
     ];
     for (const [method, path] of protectedRoutes) {
@@ -63,6 +64,7 @@ describe('A01 — Broken Access Control', () => {
     const adminRoutes = [
       ['GET',  '/api/admin/users'],
       ['GET',  '/api/platform/settings'],
+      ['GET',  '/api/training/ai-prompts-config'],
     ];
     for (const [method, path] of adminRoutes) {
       const res = await request(app)[method.toLowerCase()](path)
