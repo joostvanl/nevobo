@@ -6,11 +6,83 @@
  * Env:
  *   METRICS_ENABLED   — default true; set to "false" to disable endpoint and middleware
  *   METRICS_TOKEN     — optional; if set, require Authorization: Bearer <token> or X-Metrics-Token
+ *   METRICS_DISK_PATH — directory whose filesystem is reported (statfs); default public/uploads
+ *   METRICS_MEDIA_DIR_SCAN_INTERVAL_MS — scan uploads tree for total file bytes; 0=off; default 300000 (5m)
  */
 
 const client = require('prom-client');
+const fs = require('fs');
 const path = require('path');
 const db = require('../db/db');
+
+/** Filesystem containing uploads (statfs); default public/uploads */
+const diskPathForStats = path.resolve(
+  process.env.METRICS_DISK_PATH || path.join(__dirname, '../../public/uploads')
+);
+if (!process.env.METRICS_DISK_PATH) {
+  try {
+    fs.mkdirSync(diskPathForStats, { recursive: true });
+  } catch (_) {}
+}
+/** Background scan of uploads dir size (bytes); 0 = disabled */
+const mediaDirScanMs = Math.max(0, parseInt(process.env.METRICS_MEDIA_DIR_SCAN_INTERVAL_MS || '300000', 10) || 0);
+let cachedMediaDirBytes = 0;
+let mediaDirScanRunning = false;
+
+function refreshMediaDirSize() {
+  if (mediaDirScanMs <= 0 || mediaDirScanRunning) return;
+  const root = diskPathForStats;
+  mediaDirScanRunning = true;
+  (async () => {
+    let total = 0;
+    async function walk(dir) {
+      let entries;
+      try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch (_) {
+        return;
+      }
+      for (const e of entries) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) await walk(p);
+        else if (e.isFile()) {
+          try {
+            const st = await fs.promises.stat(p);
+            total += st.size;
+          } catch (_) {}
+        }
+      }
+    }
+    try {
+      await walk(root);
+      cachedMediaDirBytes = total;
+    } finally {
+      mediaDirScanRunning = false;
+    }
+  })().catch(() => {
+    mediaDirScanRunning = false;
+  });
+}
+
+function readFsStatfsBytes() {
+  if (typeof fs.statfsSync !== 'function') return { total: 0, free: 0 };
+  const n = (v) => {
+    if (v == null) return 0;
+    return typeof v === 'bigint' ? Number(v) : Number(v);
+  };
+  try {
+    const s = fs.statfsSync(diskPathForStats);
+    const bsize = n(s.bsize || s.frsize) || 4096;
+    const blocks = n(s.blocks);
+    const bavail = n(s.bavail);
+    return {
+      total: (Number.isFinite(blocks) ? blocks : 0) * bsize,
+      free: (Number.isFinite(bavail) ? bavail : 0) * bsize,
+    };
+  } catch (_) {
+    return { total: 0, free: 0 };
+  }
+}
 
 let pkgVersion = 'unknown';
 try {
@@ -19,6 +91,11 @@ try {
 
 const enabled = String(process.env.METRICS_ENABLED || '').toLowerCase() !== 'false';
 const metricsToken = (process.env.METRICS_TOKEN || '').trim();
+
+if (enabled && mediaDirScanMs > 0) {
+  setTimeout(refreshMediaDirSize, 3000);
+  setInterval(refreshMediaDirSize, mediaDirScanMs);
+}
 
 const register = new client.Registry();
 
@@ -120,6 +197,33 @@ if (enabled) {
     },
   });
 
+  new client.Gauge({
+    name: 'volleyapp_disk_bytes_total',
+    help: 'Total bytes on filesystem containing METRICS_DISK_PATH (statfs)',
+    registers: [register],
+    collect() {
+      this.set(readFsStatfsBytes().total);
+    },
+  });
+
+  new client.Gauge({
+    name: 'volleyapp_disk_bytes_free',
+    help: 'Free bytes on filesystem containing METRICS_DISK_PATH (statfs)',
+    registers: [register],
+    collect() {
+      this.set(readFsStatfsBytes().free);
+    },
+  });
+
+  new client.Gauge({
+    name: 'volleyapp_media_dir_bytes',
+    help: 'Total bytes under uploads directory (periodic scan; see METRICS_MEDIA_DIR_SCAN_INTERVAL_MS)',
+    registers: [register],
+    collect() {
+      this.set(cachedMediaDirBytes);
+    },
+  });
+
   new client.Counter({
     name: 'volleyapp_http_requests_total',
     help: 'HTTP requests',
@@ -160,6 +264,19 @@ if (enabled) {
     name: 'volleyapp_media_uploads_total',
     help: 'Media files stored (social upload)',
     labelNames: ['kind'],
+    registers: [register],
+  });
+
+  new client.Counter({
+    name: 'volleyapp_media_bytes_uploaded_total',
+    help: 'Bytes received for media uploads (multipart)',
+    labelNames: ['kind'],
+    registers: [register],
+  });
+
+  new client.Counter({
+    name: 'volleyapp_media_bytes_served_total',
+    help: 'Bytes sent for GET /uploads/* when Content-Length is set',
     registers: [register],
   });
 
@@ -227,6 +344,16 @@ function httpMiddleware(req, res, next) {
       const h = getMetric('volleyapp_http_request_duration_seconds');
       if (c) c.inc({ method, route_group: routeGroup, status_code: code });
       if (h) h.observe({ method, route_group: routeGroup }, duration);
+
+      const pathOnly = String(rawPath || '').split('?')[0] || '';
+      if (method === 'GET' && pathOnly.startsWith('/uploads')) {
+        const cl = res.getHeader('content-length');
+        const len = cl != null && cl !== '' ? parseInt(String(cl), 10) : 0;
+        if (Number.isFinite(len) && len > 0 && len < 1e13) {
+          const served = getMetric('volleyapp_media_bytes_served_total');
+          if (served) served.inc(len);
+        }
+      }
     } catch (_) {}
   });
   next();
@@ -283,6 +410,14 @@ function recordMediaUpload(kind) {
   if (m) m.inc({ kind });
 }
 
+function recordMediaBytesUploaded(kind, bytes) {
+  if (!enabled) return;
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const m = getMetric('volleyapp_media_bytes_uploaded_total');
+  if (m) m.inc({ kind }, n);
+}
+
 function recordFaceBlur(outcome) {
   if (!enabled) return;
   const m = getMetric('volleyapp_face_blur_runs_total');
@@ -311,6 +446,7 @@ module.exports = {
   recordAuthRegister,
   recordSocialPost,
   recordMediaUpload,
+  recordMediaBytesUploaded,
   recordFaceBlur,
   recordProcessEvent,
   recordDependencyRequest,

@@ -242,7 +242,9 @@ router.post('/upload', verifyToken, upload.array('files', 10), async (req, res) 
   });
 
   for (const f of req.files) {
-    metrics.recordMediaUpload(f.mimetype.startsWith('video/') ? 'video' : 'image');
+    const kind = f.mimetype.startsWith('video/') ? 'video' : 'image';
+    metrics.recordMediaUpload(kind);
+    metrics.recordMediaBytesUploaded(kind, f.size);
   }
   metrics.recordSocialPost('media');
 

@@ -382,6 +382,7 @@ router.post('/avatar', verifyToken, avatarUpload.single('avatar'), async (req, r
 
   db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(relativePath, req.user.id);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  metrics.recordMediaBytesUploaded('avatar', req.file.size);
   res.json({ ok: true, avatar_url: relativePath, user: safeUser(user) });
 });
 
@@ -426,6 +427,7 @@ router.post('/face-reference', verifyToken, avatarUpload.single('photo'), async 
   // Also keep legacy face_reference_path pointing to the first/latest one (backward compat)
   db.prepare('UPDATE users SET face_reference_path = ? WHERE id = ?').run(relativePath, req.user.id);
 
+  metrics.recordMediaBytesUploaded('face_reference', req.file.size);
   res.json({ ok: true, id: row.lastInsertRowid, file_path: relativePath });
 });
 
