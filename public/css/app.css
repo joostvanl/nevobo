@@ -3841,6 +3841,41 @@ img.hl-avatar {
   padding: 0.55rem 0.65rem;
 }
 
+.ts-ex-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.ts-ex-main--stretch {
+  flex: 1;
+  min-width: 0;
+}
+
+.ts-ex-collapse-toggle {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 0.12rem 0.28rem !important;
+  line-height: 1;
+  min-width: 1.65rem;
+  margin-top: 0.05rem;
+}
+
+.ts-ex-collapse-icon {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.ts-ex-collapse-icon--collapsed {
+  transform: rotate(-90deg);
+}
+
+.ts-ex-block--collapsed .ts-ex-card-body {
+  display: none;
+}
+
 .ts-ex-block .ts-ex-main { min-width: 0; }
 
 .ts-ex-name {
@@ -3900,6 +3935,109 @@ img.hl-avatar {
   margin: 0.35rem 0 0;
   font-size: 0.78rem;
   line-height: 1.4;
+}
+
+/* Markdown rendering for exercise descriptions (sanitized HTML) */
+.md-exercise,
+.ts-ex-desc--md {
+  line-height: 1.45;
+}
+
+.md-exercise :first-child,
+.ts-ex-desc--md :first-child {
+  margin-top: 0;
+}
+
+.md-exercise :last-child,
+.ts-ex-desc--md :last-child {
+  margin-bottom: 0;
+}
+
+.md-exercise p,
+.ts-ex-desc--md p {
+  margin: 0.35rem 0;
+}
+
+.md-exercise ul,
+.md-exercise ol,
+.ts-ex-desc--md ul,
+.ts-ex-desc--md ol {
+  margin: 0.35rem 0;
+  padding-left: 1.2rem;
+}
+
+.md-exercise li,
+.ts-ex-desc--md li {
+  margin: 0.15rem 0;
+}
+
+.md-exercise h1,
+.md-exercise h2,
+.md-exercise h3,
+.ts-ex-desc--md h1,
+.ts-ex-desc--md h2,
+.ts-ex-desc--md h3 {
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0.25rem;
+  line-height: 1.25;
+}
+
+.md-exercise h1,
+.ts-ex-desc--md h1 {
+  font-size: 0.95rem;
+}
+
+.md-exercise blockquote,
+.ts-ex-desc--md blockquote {
+  margin: 0.35rem 0;
+  padding-left: 0.65rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.md-exercise code,
+.ts-ex-desc--md code {
+  font-size: 0.85em;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.08em 0.28em;
+  border-radius: 3px;
+}
+
+.md-exercise pre,
+.ts-ex-desc--md pre {
+  margin: 0.35rem 0;
+  padding: 0.45rem 0.55rem;
+  overflow-x: auto;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.md-exercise pre code,
+.ts-ex-desc--md pre code {
+  background: none;
+  padding: 0;
+}
+
+.md-exercise a,
+.ts-ex-desc--md a {
+  color: var(--primary);
+  word-break: break-word;
+}
+
+.md-exercise hr,
+.ts-ex-desc--md hr {
+  margin: 0.5rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-exercise-fallback {
+  margin: 0;
 }
 
 .ts-ex-fields { margin-top: 0.45rem; }

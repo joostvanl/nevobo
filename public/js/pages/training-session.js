@@ -1,5 +1,6 @@
 import { api, state, renderAvatar, navigate, showToast } from '../app.js';
 import { escHtml } from '../escape-html.js';
+import { renderExerciseMarkdown } from '../markdown-render.js';
 
 const DAY_NAMES = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 
@@ -118,9 +119,72 @@ export async function render(container, params = {}) {
     setupNotes(container, session.id);
     setupSessionExercises(container, session, { teamId, date, startTime, endTime, venue, location });
   }
+  initExerciseCardCollapse(container, session.id);
 }
 
 const DIFF_LABEL = { easy: 'Makkelijk', medium: 'Gemiddeld', hard: 'Moeilijk' };
+
+function exerciseCollapsedStorageKey(sessionId) {
+  return `volley_ts_ex_collapsed_${sessionId}`;
+}
+
+function getCollapsedLinkIdSet(sessionId) {
+  try {
+    const raw = localStorage.getItem(exerciseCollapsedStorageKey(sessionId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(arr.map(Number));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedLinkIdSet(sessionId, set) {
+  localStorage.setItem(exerciseCollapsedStorageKey(sessionId), JSON.stringify([...set]));
+}
+
+function applyExerciseCollapseState(listEl, sessionId) {
+  if (!listEl) return;
+  const collapsed = getCollapsedLinkIdSet(sessionId);
+  listEl.querySelectorAll('.ts-ex-block[data-link-id]').forEach((block) => {
+    const id = parseInt(block.dataset.linkId, 10);
+    const isCollapsed = collapsed.has(id);
+    block.classList.toggle('ts-ex-block--collapsed', isCollapsed);
+    const btn = block.querySelector('.ts-ex-collapse-toggle');
+    const icon = block.querySelector('.ts-ex-collapse-icon');
+    if (btn) btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    if (icon) icon.classList.toggle('ts-ex-collapse-icon--collapsed', isCollapsed);
+  });
+}
+
+function initExerciseCardCollapse(container, sessionId) {
+  const listEl = container.querySelector('#ts-ex-list');
+  if (!listEl) return;
+  applyExerciseCollapseState(listEl, sessionId);
+  if (listEl.dataset.exCollapseBound === '1') return;
+  listEl.dataset.exCollapseBound = '1';
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ts-ex-collapse-toggle');
+    if (!btn || !listEl.contains(btn)) return;
+    e.preventDefault();
+    const block = btn.closest('.ts-ex-block');
+    if (!block) return;
+    const id = parseInt(block.dataset.linkId, 10);
+    if (!Number.isFinite(id)) return;
+    const set = getCollapsedLinkIdSet(sessionId);
+    if (block.classList.contains('ts-ex-block--collapsed')) {
+      block.classList.remove('ts-ex-block--collapsed');
+      set.delete(id);
+    } else {
+      block.classList.add('ts-ex-block--collapsed');
+      set.add(id);
+    }
+    saveCollapsedLinkIdSet(sessionId, set);
+    const isCollapsed = block.classList.contains('ts-ex-block--collapsed');
+    btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    const icon = block.querySelector('.ts-ex-collapse-icon');
+    if (icon) icon.classList.toggle('ts-ex-collapse-icon--collapsed', isCollapsed);
+  });
+}
 
 function diffBadgeHtml(difficulty) {
   const d = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
@@ -207,21 +271,35 @@ function renderExerciseRows(exercises, isCoach) {
   return sorted.map((ex) => {
     const diffLabel = DIFF_LABEL[ex.difficulty] || ex.difficulty;
     const tags = (ex.tags || []).map(t => `<span class="ts-ex-tag">${escHtml(t.name)}</span>`).join('');
-    const desc = ex.description ? `<p class="ts-ex-desc text-small text-muted">${escHtml(ex.description)}</p>` : '';
+    const desc = ex.description?.trim()
+      ? `<div class="ts-ex-desc ts-ex-desc--md text-small text-muted md-exercise">${renderExerciseMarkdown(ex.description)}</div>`
+      : '';
 
     if (!isCoach) {
       const prStars =
         ex.performance_rating != null
           ? teamPerformanceStarsReadonlyHtml(ex.performance_rating)
           : '';
+      const bodyId = `ts-ex-bd-${ex.id}`;
       return `
         <div class="ts-ex-block ts-ex-row" data-link-id="${ex.id}">
-          <div class="ts-ex-main">
-            <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
-            <div class="ts-ex-line">
-              <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.duration_minutes} min</span>
-              ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
+          <div class="ts-ex-card-top">
+            <button type="button" class="btn btn-xs btn-ghost ts-ex-collapse-toggle" aria-expanded="true" aria-controls="${bodyId}" aria-label="Details tonen of verbergen">
+              <span class="ts-ex-collapse-icon" aria-hidden="true">▾</span>
+            </button>
+            <div class="ts-ex-main ts-ex-main--stretch">
+              <div class="ts-ex-head">
+                <div class="ts-ex-title-row">
+                  <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
+                </div>
+                <div class="ts-ex-line">
+                  <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.duration_minutes} min</span>
+                  ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
+                </div>
+              </div>
             </div>
+          </div>
+          <div class="ts-ex-card-body" id="${bodyId}">
             ${prStars}
             ${desc}
           </div>
@@ -243,24 +321,32 @@ function renderExerciseRows(exercises, isCoach) {
         tag_ids: (ex.tags || []).map((t) => t.id),
       }))
       : '';
+    const bodyIdCoach = `ts-ex-bd-${ex.id}`;
     return `
       <div class="ts-ex-block ts-ex-row ts-ex-row-coach" data-link-id="${ex.id}" data-exercise-id="${ex.exercise_id}" data-sort-order="${ex.sort_order ?? 0}">
-        <div class="ts-ex-main">
-          <div class="ts-ex-head">
-            <div class="ts-ex-title-row">
-              <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
-              <div class="ts-ex-order">
-                ${canEditPrivate ? `<button type="button" class="btn btn-xs btn-ghost ts-ex-edit-private" title="Naam, beschrijving, standaardduur, moeilijkheid en tags aanpassen" data-ex-edit="${editPayload}">Bewerken</button>` : ''}
-                <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="up" title="Omhoog">↑</button>
-                <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="down" title="Omlaag">↓</button>
-                <button type="button" class="btn btn-xs btn-ghost ts-ex-remove" title="Verwijderen">✕</button>
+        <div class="ts-ex-card-top">
+          <button type="button" class="btn btn-xs btn-ghost ts-ex-collapse-toggle" aria-expanded="true" aria-controls="${bodyIdCoach}" aria-label="Details tonen of verbergen">
+            <span class="ts-ex-collapse-icon" aria-hidden="true">▾</span>
+          </button>
+          <div class="ts-ex-main ts-ex-main--stretch">
+            <div class="ts-ex-head">
+              <div class="ts-ex-title-row">
+                <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
+                <div class="ts-ex-order">
+                  ${canEditPrivate ? `<button type="button" class="btn btn-xs btn-ghost ts-ex-edit-private" title="Naam, beschrijving, standaardduur, moeilijkheid en tags aanpassen" data-ex-edit="${editPayload}">Bewerken</button>` : ''}
+                  <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="up" title="Omhoog">↑</button>
+                  <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="down" title="Omlaag">↓</button>
+                  <button type="button" class="btn btn-xs btn-ghost ts-ex-remove" title="Verwijderen">✕</button>
+                </div>
+              </div>
+              <div class="ts-ex-line">
+                <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.default_duration_minutes} min std.</span>
+                ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
               </div>
             </div>
-            <div class="ts-ex-line">
-              <span class="ts-ex-meta">${escHtml(diffLabel)} · ${ex.default_duration_minutes} min std.</span>
-              ${tags ? `<div class="ts-ex-tags">${tags}</div>` : ''}
-            </div>
           </div>
+        </div>
+        <div class="ts-ex-card-body" id="${bodyIdCoach}">
           ${desc}
           <div class="ts-ex-fields ts-ex-fields--compact">
             <label class="ts-ex-field ts-ex-field--dur">
@@ -319,6 +405,7 @@ function setupSessionExercises(container, session, routeParams) {
     try {
       const data = await api(`/api/training/session/${teamId}/${date}/${startTime}?${qs}`);
       if (listEl) listEl.innerHTML = renderExerciseRows(data.exercises || [], true);
+      applyExerciseCollapseState(listEl, sessionId);
       bindExerciseRows();
     } catch (_) {
       showToast('Programma verversen mislukt', 'error');
@@ -536,9 +623,11 @@ function showPrivateExerciseModal(opts) {
       <label class="mb-2" style="display:block">Naam *
         <input type="text" id="tsp-name" class="form-input" required value="${escHtml(initialName)}" />
       </label>
-      <label class="mb-2" style="display:block">Beschrijving
-        <textarea id="tsp-desc" class="form-input" rows="3">${escHtml(initialDesc)}</textarea>
-      </label>
+      <div class="mb-2">
+        <label style="display:block" for="tsp-desc">Beschrijving</label>
+        <p class="text-small text-muted" style="margin:0 0 0.35rem">Markdown toegestaan (koppen, lijsten, vet, links).</p>
+        <textarea id="tsp-desc" class="form-input" rows="3" placeholder="Optioneel — gebruik bijv. ## Kop of - bullet">${escHtml(initialDesc)}</textarea>
+      </div>
       <label class="mb-2" style="display:block">${isEdit ? 'Standaardduur (min) *' : 'Duur (min) *'}
         <input type="number" id="tsp-dur" class="form-input" value="${escHtml(String(initialDur))}" min="1" max="480" />
       </label>

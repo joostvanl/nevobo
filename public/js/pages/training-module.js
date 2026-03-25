@@ -1,5 +1,6 @@
 import { api, state, navigate, showToast } from '../app.js';
 import { escHtml } from '../escape-html.js';
+import { renderExerciseMarkdown } from '../markdown-render.js';
 
 const DIFF_LABEL = { easy: 'Makkelijk', medium: 'Gemiddeld', hard: 'Moeilijk' };
 
@@ -290,7 +291,7 @@ function renderPendingCard(ex) {
         </span>
       </div>
       ${tags ? `<div class="tm-flow-chips">${tags}</div>` : ''}
-      ${desc ? `<p class="text-small" style="margin:0;color:var(--text-secondary);white-space:pre-wrap">${escHtml(desc)}</p>` : ''}
+      ${desc ? `<div class="text-small tm-md-desc md-exercise" style="margin:0;color:var(--text-secondary)">${renderExerciseMarkdown(desc)}</div>` : ''}
       <div class="tm-flow-pitch"><strong style="display:block;margin-bottom:0.35rem;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85">Motivatie voor de club</strong>${pitch}</div>
       <div class="tm-flow-actions">
         <button type="button" class="tm-btn-primary tm-ex-approve" data-id="${ex.id}">Goedkeuren</button>
@@ -683,7 +684,8 @@ function renderDrawerContent() {
       </div>
       <div class="tm-field">
         <label for="tm-d-desc">Beschrijving</label>
-        <textarea id="tm-d-desc"></textarea>
+        <p class="text-small text-muted" style="margin:0 0 0.35rem">Markdown toegestaan: koppen, lijsten, <strong>vet</strong>, cursief, code, links.</p>
+        <textarea id="tm-d-desc" placeholder="Bijv. kopjes met ##, bullets met - …"></textarea>
       </div>
       <div class="tm-field">
         <label for="tm-d-dur">Duur (min)</label>
