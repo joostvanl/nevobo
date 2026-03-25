@@ -3,6 +3,7 @@ const router = express.Router();
 const RSSParser = require('rss-parser');
 const { dependencyFetch, DEPS } = require('../lib/dependencyFetch');
 const ical = require('node-ical');
+const metrics = require('../lib/metrics');
 
 const parser = new RSSParser({
   customFields: {
@@ -360,6 +361,7 @@ async function withFeedCache(key, fetchFn, ttlFn, { maxAgeMs } = {}) {
   const mem = feedMemCache.get(key);
   const memAge = mem ? now - mem.fetchedAt : Infinity;
   if (mem && memAge < mem.ttlMs && (!maxAgeMs || memAge < maxAgeMs)) {
+    metrics.recordNevoboFeedCacheHit('memory');
     return { data: mem.data, stale: false };
   }
 
@@ -370,16 +372,20 @@ async function withFeedCache(key, fetchFn, ttlFn, { maxAgeMs } = {}) {
   } catch (_) {}
   const dbAge = dbRow ? now - dbRow.fetched_at : Infinity;
   if (dbRow && dbAge < dbRow.ttl_ms && (!maxAgeMs || dbAge < maxAgeMs)) {
+    metrics.recordNevoboFeedCacheHit('sqlite');
     const data = JSON.parse(dbRow.data_json);
     feedMemCache.set(key, { data, fetchedAt: dbRow.fetched_at, ttlMs: dbRow.ttl_ms });
     return { data, stale: false };
   }
 
   // Layer 3: fetch from Nevobo API
+  const prevFetchedAt = dbRow ? dbRow.fetched_at : (mem ? mem.fetchedAt : null);
   try {
     const data = await fetchFn();
     const ttlMs = ttlFn ? ttlFn(data) : 3600_000;
     feedMemCache.set(key, { data, fetchedAt: now, ttlMs });
+    const intervalSec = prevFetchedAt != null ? (now - prevFetchedAt) / 1000 : undefined;
+    metrics.recordNevoboFeedCacheRefresh(intervalSec);
     try {
       db.prepare('INSERT OR REPLACE INTO feed_cache (cache_key, data_json, fetched_at, ttl_ms) VALUES (?, ?, ?, ?)')
         .run(key, JSON.stringify(data), now, ttlMs);
@@ -1505,6 +1511,7 @@ router.delete('/cache', async (req, res) => {
   feedMemCache.clear();
   standCache.clear();
   try { db.prepare('DELETE FROM feed_cache').run(); } catch (_) {}
+  metrics.recordNevoboFeedCacheFlush();
   res.json({ ok: true, message: 'Feed cache geleegd' });
 });
 
@@ -1517,6 +1524,7 @@ router.delete('/cache/:code', async (req, res) => {
   try {
     db.prepare("DELETE FROM feed_cache WHERE cache_key LIKE ?").run(`%:${code}`);
   } catch (_) {}
+  metrics.recordNevoboFeedCacheFlush();
   res.json({ ok: true, message: `Cache geleegd voor club ${code}` });
 });
 

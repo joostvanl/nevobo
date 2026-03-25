@@ -8,6 +8,8 @@
  *   METRICS_TOKEN     — optional; if set, require Authorization: Bearer <token> or X-Metrics-Token
  *   METRICS_DISK_PATH — directory whose filesystem is reported (statfs); default public/uploads
  *   METRICS_MEDIA_DIR_SCAN_INTERVAL_MS — scan uploads tree for total file bytes; 0=off; default 300000 (5m)
+ *
+ * Nevobo feed_cache metrics (volleyapp_nevobo_*): populated from SQLite feed_cache + withFeedCache in nevobo.js.
  */
 
 const client = require('prom-client');
@@ -309,6 +311,95 @@ if (enabled) {
     buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120],
     registers: [register],
   });
+
+  /** Nevobo RSS/LD feed_cache (SQLite + memory); see server/routes/nevobo.js withFeedCache */
+  new client.Gauge({
+    name: 'volleyapp_nevobo_feed_cache_entries',
+    help: 'Number of rows in feed_cache',
+    registers: [register],
+    collect() {
+      try {
+        const row = db.prepare('SELECT COUNT(*) AS c FROM feed_cache').get();
+        this.set(row.c);
+      } catch (_) {
+        this.set(0);
+      }
+    },
+  });
+
+  new client.Gauge({
+    name: 'volleyapp_nevobo_feed_cache_age_seconds_avg',
+    help: 'Mean age of feed_cache entries (now - fetched_at)',
+    registers: [register],
+    collect() {
+      try {
+        const now = Date.now();
+        const row = db.prepare(
+          'SELECT AVG(? - fetched_at) AS a FROM feed_cache'
+        ).get(now);
+        this.set(row && row.a != null ? Number(row.a) / 1000 : 0);
+      } catch (_) {
+        this.set(0);
+      }
+    },
+  });
+
+  new client.Gauge({
+    name: 'volleyapp_nevobo_feed_cache_ttl_seconds_avg',
+    help: 'Mean configured TTL (ttl_ms) of feed_cache rows',
+    registers: [register],
+    collect() {
+      try {
+        const row = db.prepare('SELECT AVG(ttl_ms) AS a FROM feed_cache').get();
+        this.set(row && row.a != null ? Number(row.a) / 1000 : 0);
+      } catch (_) {
+        this.set(0);
+      }
+    },
+  });
+
+  new client.Gauge({
+    name: 'volleyapp_nevobo_feed_cache_ttl_remaining_seconds_avg',
+    help: 'Mean remaining TTL before expiry (max(0, ttl_ms - age))',
+    registers: [register],
+    collect() {
+      try {
+        const now = Date.now();
+        const row = db.prepare(
+          `SELECT AVG(CASE WHEN ttl_ms > (? - fetched_at) THEN ttl_ms - (? - fetched_at) ELSE 0 END) AS a FROM feed_cache`
+        ).get(now, now);
+        this.set(row && row.a != null ? Number(row.a) / 1000 : 0);
+      } catch (_) {
+        this.set(0);
+      }
+    },
+  });
+
+  new client.Counter({
+    name: 'volleyapp_nevobo_feed_cache_hit_total',
+    help: 'Feed served from cache without Nevobo fetch',
+    labelNames: ['layer'],
+    registers: [register],
+  });
+
+  new client.Counter({
+    name: 'volleyapp_nevobo_feed_cache_refreshes_total',
+    help: 'Nevobo API fetches that repopulated feed_cache',
+    registers: [register],
+  });
+
+  new client.Histogram({
+    name: 'volleyapp_nevobo_feed_cache_refresh_interval_seconds',
+    help: 'Seconds since previous fetch_at when a cache entry is refreshed',
+    buckets: [60, 300, 600, 1800, 3600, 7200, 14400, 43200, 86400, 172800, 604800],
+    registers: [register],
+  });
+
+  new client.Counter({
+    name: 'volleyapp_nevobo_feed_cache_flush_total',
+    help: 'Admin/cache flush operations (DELETE feed_cache)',
+    registers: [register],
+  });
 }
 
 function getMetric(name) {
@@ -438,6 +529,31 @@ function recordDependencyRequest(dependency, outcome, durationSec) {
   if (h) h.observe({ dependency }, durationSec);
 }
 
+function recordNevoboFeedCacheHit(layer) {
+  if (!enabled) return;
+  const m = getMetric('volleyapp_nevobo_feed_cache_hit_total');
+  if (m) m.inc({ layer });
+}
+
+/**
+ * @param {number|null|undefined} intervalSec seconds since previous stored fetch (omit on first insert)
+ */
+function recordNevoboFeedCacheRefresh(intervalSec) {
+  if (!enabled) return;
+  const c = getMetric('volleyapp_nevobo_feed_cache_refreshes_total');
+  if (c) c.inc();
+  const n = Number(intervalSec);
+  if (!Number.isFinite(n) || n < 0 || n > 1e9) return;
+  const h = getMetric('volleyapp_nevobo_feed_cache_refresh_interval_seconds');
+  if (h) h.observe(n);
+}
+
+function recordNevoboFeedCacheFlush() {
+  if (!enabled) return;
+  const m = getMetric('volleyapp_nevobo_feed_cache_flush_total');
+  if (m) m.inc();
+}
+
 module.exports = {
   enabled,
   register,
@@ -450,4 +566,7 @@ module.exports = {
   recordFaceBlur,
   recordProcessEvent,
   recordDependencyRequest,
+  recordNevoboFeedCacheHit,
+  recordNevoboFeedCacheRefresh,
+  recordNevoboFeedCacheFlush,
 };
