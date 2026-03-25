@@ -4,7 +4,7 @@
  * Production-safe: timeouts and catch-all errors → return null (no server crash).
  */
 
-const fetch = require('node-fetch');
+const { dependencyFetch, DEPS } = require('./dependencyFetch');
 
 const FETCH_TIMEOUT_MS = 10000;
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0';
@@ -23,7 +23,7 @@ async function resolveVmTiktokToVideoId(url) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const res = await fetch(trimmed, {
+    const res = await dependencyFetch(DEPS.tiktok, trimmed, {
       redirect: 'follow',
       signal: controller.signal,
       headers: { 'User-Agent': USER_AGENT },
@@ -56,7 +56,7 @@ async function fetchProfileVideoIds(username) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const res = await fetch(`https://www.tiktok.com/@${encodeURIComponent(clean)}`, {
+    const res = await dependencyFetch(DEPS.tiktok, `https://www.tiktok.com/@${encodeURIComponent(clean)}`, {
       signal: controller.signal,
       headers: { 'User-Agent': USER_AGENT },
     });

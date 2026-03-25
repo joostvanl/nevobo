@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const RSSParser = require('rss-parser');
-const fetch = require('node-fetch');
+const { dependencyFetch, DEPS } = require('../lib/dependencyFetch');
 const ical = require('node-ical');
 
 const parser = new RSSParser({
@@ -116,7 +116,8 @@ async function geocodeAddress(address) {
   // Normalise whitespace (Nevobo sometimes has double spaces)
   const cleaned = address.replace(/\s+/g, ' ').trim();
   try {
-    const resp = await fetch(
+    const resp = await dependencyFetch(
+      DEPS.nominatim,
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleaned)}&format=json&limit=1&countrycodes=nl`,
       { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } }
     );
@@ -127,7 +128,8 @@ async function geocodeAddress(address) {
     // Fallback: try without postcode (in case of formatting issues)
     const withoutPostcode = cleaned.replace(/\b\d{4}\s*[A-Z]{2}\b\s*/g, '').trim();
     if (withoutPostcode !== cleaned) {
-      const resp2 = await fetch(
+      const resp2 = await dependencyFetch(
+        DEPS.nominatim,
         `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(withoutPostcode)}&format=json&limit=1&countrycodes=nl`,
         { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } }
       );
@@ -152,7 +154,7 @@ async function travelTimeMinutes(fromAddress, toAddress) {
   }
   try {
     const url = `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
-    const resp = await fetch(url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
+    const resp = await dependencyFetch(DEPS.osrm, url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
     const data = await resp.json();
     if (data.code === 'Ok' && data.routes?.[0]) {
       const minutes = Math.round(data.routes[0].duration / 60);
@@ -170,7 +172,7 @@ async function travelTimeMinutes(fromAddress, toAddress) {
 // volleybal.nl has POST /api/search with {q, type:"content"}
 // Returns news + club pages. We filter for club/association pages.
 async function searchClubs(query) {
-  const resp = await fetch('https://www.volleybal.nl/api/search', {
+  const resp = await dependencyFetch(DEPS.volleybal_nl, 'https://www.volleybal.nl/api/search', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -193,7 +195,7 @@ async function searchClubs(query) {
 // ─── Validate a nevobo code by actually fetching the feed ─────────────────────
 async function validateCode(code) {
   const url = `${NEVOBO_BASE}/vereniging/${code}/programma.rss`;
-  const resp = await fetch(url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
+  const resp = await dependencyFetch(DEPS.nevobo_rss_export, url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
   return resp.ok;
 }
 
@@ -398,7 +400,7 @@ const ldHeaders = { 'User-Agent': 'VolleyballTeamApp/1.0', 'Accept': 'applicatio
 
 async function ldGet(path) {
   try {
-    const r = await fetch(`${NEVOBO_API}${path}`, { headers: ldHeaders });
+    const r = await dependencyFetch(DEPS.nevobo_ld_api, `${NEVOBO_API}${path}`, { headers: ldHeaders });
     if (!r.ok) return null;
     return await r.json();
   } catch (_) {
@@ -827,7 +829,7 @@ async function findStandRssUrl(afkorting) {
     for (const comp of NEVOBO_COMP_PATTERNS) {
       for (let n = 1; n <= MAX_POULE_N; n++) {
         const url = `${NEVOBO_API}/export/poule/${regio}/${comp}/${regio}-${afkorting}-${n}/stand.rss`;
-        const r = await fetch(url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
+        const r = await dependencyFetch(DEPS.nevobo_rss_probe, url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
         if (r.ok) return url;
       }
     }
@@ -1362,7 +1364,7 @@ router.get('/team/:code/:type/:number/calendar', async (req, res) => {
   try {
     const { code, type, number } = req.params;
     const url = `${NEVOBO_BASE}/team/${code}/${type}/${number}/programma.ics`;
-    const resp = await fetch(url);
+    const resp = await dependencyFetch(DEPS.nevobo_ics_export, url, { headers: { 'User-Agent': 'VolleyballTeamApp/1.0' } });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const icsText = await resp.text();
     const parsed = ical.parseICS(icsText);
@@ -1421,7 +1423,7 @@ router.get('/search', async (req, res) => {
 
   // Try to find news/results mentioning this club name that might contain the code
   try {
-    const resp = await fetch('https://www.volleybal.nl/api/search', {
+    const resp = await dependencyFetch(DEPS.volleybal_nl, 'https://www.volleybal.nl/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
       body: JSON.stringify({ q, type: 'content' }),

@@ -3,7 +3,6 @@ const router = express.Router();
 const db = require('../db/db');
 const { verifyToken, requireSuperAdmin } = require('../middleware/auth');
 const RSSParser = require('rss-parser');
-const fetch = require('node-fetch');
 
 const parser = new RSSParser({
   customFields: { item: [['description', 'description']] },

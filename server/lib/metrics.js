@@ -176,6 +176,22 @@ if (enabled) {
     labelNames: ['type'],
     registers: [register],
   });
+
+  /** Outbound HTTP (Nevobo, OSM, N8N, …): outcome = success | client_error | server_error | network_error | timeout */
+  new client.Counter({
+    name: 'volleyapp_dependency_requests_total',
+    help: 'Outbound dependency HTTP calls',
+    labelNames: ['dependency', 'outcome'],
+    registers: [register],
+  });
+
+  new client.Histogram({
+    name: 'volleyapp_dependency_request_duration_seconds',
+    help: 'Outbound dependency request duration',
+    labelNames: ['dependency'],
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120],
+    registers: [register],
+  });
 }
 
 function getMetric(name) {
@@ -279,6 +295,14 @@ function recordProcessEvent(type) {
   if (m) m.inc({ type });
 }
 
+function recordDependencyRequest(dependency, outcome, durationSec) {
+  if (!enabled) return;
+  const c = getMetric('volleyapp_dependency_requests_total');
+  const h = getMetric('volleyapp_dependency_request_duration_seconds');
+  if (c) c.inc({ dependency, outcome });
+  if (h) h.observe({ dependency }, durationSec);
+}
+
 module.exports = {
   enabled,
   register,
@@ -289,4 +313,5 @@ module.exports = {
   recordMediaUpload,
   recordFaceBlur,
   recordProcessEvent,
+  recordDependencyRequest,
 };
