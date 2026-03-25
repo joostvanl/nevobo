@@ -230,6 +230,19 @@ function renderExerciseRows(exercises, isCoach) {
 
     const rating = ex.performance_rating;
     const note = ex.performance_note || '';
+    const canEditPrivate = ex.exercise_scope === 'private'
+      && state.user
+      && Number(ex.created_by_user_id) === Number(state.user.id);
+    const editPayload = canEditPrivate
+      ? escHtml(JSON.stringify({
+        id: ex.exercise_id,
+        name: ex.name,
+        description: ex.description || '',
+        default_duration_minutes: ex.default_duration_minutes,
+        difficulty: ex.difficulty,
+        tag_ids: (ex.tags || []).map((t) => t.id),
+      }))
+      : '';
     return `
       <div class="ts-ex-block ts-ex-row ts-ex-row-coach" data-link-id="${ex.id}" data-exercise-id="${ex.exercise_id}" data-sort-order="${ex.sort_order ?? 0}">
         <div class="ts-ex-main">
@@ -237,6 +250,7 @@ function renderExerciseRows(exercises, isCoach) {
             <div class="ts-ex-title-row">
               <strong class="ts-ex-name">${escHtml(ex.name)}</strong>
               <div class="ts-ex-order">
+                ${canEditPrivate ? `<button type="button" class="btn btn-xs btn-ghost ts-ex-edit-private" title="Naam, beschrijving, standaardduur, moeilijkheid en tags aanpassen" data-ex-edit="${editPayload}">Bewerken</button>` : ''}
                 <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="up" title="Omhoog">↑</button>
                 <button type="button" class="btn btn-xs btn-ghost ts-ex-move" data-dir="down" title="Omlaag">↓</button>
                 <button type="button" class="btn btn-xs btn-ghost ts-ex-remove" title="Verwijderen">✕</button>
@@ -380,6 +394,23 @@ function setupSessionExercises(container, session, routeParams) {
       showSharePitchModal(eid, reloadList);
     });
 
+    row.querySelector('.ts-ex-edit-private')?.addEventListener('click', () => {
+      const btn = row.querySelector('.ts-ex-edit-private');
+      const raw = btn?.dataset.exEdit;
+      if (!raw) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_) {
+        showToast('Oefeninggegevens laden mislukt', 'error');
+        return;
+      }
+      showPrivateExerciseModal({
+        onDone: reloadList,
+        edit: parsed,
+      });
+    });
+
     row.querySelector('.ts-ex-remove')?.addEventListener('click', async () => {
       if (!confirm('Oefening uit programma halen?')) return;
       try {
@@ -477,42 +508,51 @@ function setupSessionExercises(container, session, routeParams) {
   });
 
   container.querySelector('#ts-ex-new-private')?.addEventListener('click', () => {
-    showNewPrivateExerciseModal(
+    showPrivateExerciseModal({
       sessionId,
-      async () => {
-        await reloadList();
-      }
-    );
+      onDone: reloadList,
+    });
   });
 }
 
-/** @param {number} sessionId — na opslag wordt de oefening direct aan deze training gekoppeld */
-function showNewPrivateExerciseModal(sessionId, onDone) {
+/**
+ * Nieuwe privé-oefening of bestaande bewerken (alleen jouw privé-oefeningen).
+ * @param {{ sessionId?: number, onDone?: () => void, edit?: { id: number, name: string, description?: string, default_duration_minutes: number, difficulty: string, tag_ids?: number[] } }} opts
+ */
+function showPrivateExerciseModal(opts) {
+  const { sessionId, onDone, edit } = opts || {};
+  const isEdit = edit && Number.isFinite(Number(edit.id));
   const overlay = document.createElement('div');
   overlay.className = 'ts-modal-overlay';
+  const initialName = isEdit ? (edit.name || '') : '';
+  const initialDesc = isEdit ? (edit.description || '') : '';
+  const initialDur = isEdit ? edit.default_duration_minutes : 20;
+  const initialDiff = isEdit && ['easy', 'medium', 'hard'].includes(edit.difficulty) ? edit.difficulty : 'medium';
+  const initialTagIds = isEdit ? new Set((edit.tag_ids || []).map((id) => Number(id))) : new Set();
+
   overlay.innerHTML = `
     <div class="card ts-modal-card">
-      <h3 class="mb-2">Nieuwe privé-oefening</h3>
+      <h3 class="mb-2">${isEdit ? 'Privé-oefening bewerken' : 'Nieuwe privé-oefening'}</h3>
       <label class="mb-2" style="display:block">Naam *
-        <input type="text" id="tsp-name" class="form-input" required />
+        <input type="text" id="tsp-name" class="form-input" required value="${escHtml(initialName)}" />
       </label>
       <label class="mb-2" style="display:block">Beschrijving
-        <textarea id="tsp-desc" class="form-input" rows="3"></textarea>
+        <textarea id="tsp-desc" class="form-input" rows="3">${escHtml(initialDesc)}</textarea>
       </label>
-      <label class="mb-2" style="display:block">Duur (min) *
-        <input type="number" id="tsp-dur" class="form-input" value="20" min="1" max="480" />
+      <label class="mb-2" style="display:block">${isEdit ? 'Standaardduur (min) *' : 'Duur (min) *'}
+        <input type="number" id="tsp-dur" class="form-input" value="${escHtml(String(initialDur))}" min="1" max="480" />
       </label>
       <label class="mb-2" style="display:block">Moeilijkheid
         <select id="tsp-diff" class="form-input">
-          <option value="easy">Makkelijk</option>
-          <option value="medium" selected>Gemiddeld</option>
-          <option value="hard">Moeilijk</option>
+          <option value="easy"${initialDiff === 'easy' ? ' selected' : ''}>Makkelijk</option>
+          <option value="medium"${initialDiff === 'medium' ? ' selected' : ''}>Gemiddeld</option>
+          <option value="hard"${initialDiff === 'hard' ? ' selected' : ''}>Moeilijk</option>
         </select>
       </label>
       <div class="mb-2" id="tsp-tags-wrap"><span class="text-small text-muted">Tags laden…</span></div>
       <div class="flex gap-2 justify-end mt-2">
         <button type="button" class="btn btn-ghost" id="tsp-cancel">Annuleren</button>
-        <button type="button" class="btn btn-primary" id="tsp-save">Opslaan</button>
+        <button type="button" class="btn btn-primary" id="tsp-save">${isEdit ? 'Bijwerken' : 'Opslaan'}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -525,9 +565,11 @@ function showNewPrivateExerciseModal(sessionId, onDone) {
       if (!tags.length) {
         wrap.innerHTML = '<span class="text-small text-muted">Geen tags — vraag een beheerder om vaardigheidstags aan te maken.</span>';
       } else {
-        wrap.innerHTML = '<div class="text-small mb-1">Vaardigheden</div>' + tags.map((t) => `
-          <label class="ts-tag-chk"><input type="checkbox" value="${t.id}" /> ${escHtml(t.name)}</label>
-        `).join('');
+        wrap.innerHTML = '<div class="text-small mb-1">Vaardigheden</div>' + tags.map((t) => {
+          const checked = initialTagIds.has(Number(t.id)) ? ' checked' : '';
+          return `
+          <label class="ts-tag-chk"><input type="checkbox" value="${t.id}"${checked} /> ${escHtml(t.name)}</label>`;
+        }).join('');
       }
     } catch (_) {
       overlay.querySelector('#tsp-tags-wrap').innerHTML = '<span class="text-small text-danger">Tags laden mislukt</span>';
@@ -548,26 +590,40 @@ function showNewPrivateExerciseModal(sessionId, onDone) {
     }
     const tagIds = [...overlay.querySelectorAll('#tsp-tags-wrap input[type=checkbox]:checked')].map((c) => parseInt(c.value, 10));
     try {
-      const created = await api('/api/training/exercises', {
-        method: 'POST',
-        body: {
-          name,
-          description,
-          default_duration_minutes: dur,
-          difficulty,
-          scope: 'private',
-          tag_ids: tagIds,
-        },
-      });
-      const newId = created.exercise?.id;
-      if (sessionId && newId) {
-        await api(`/api/training/session/${sessionId}/exercises`, {
-          method: 'POST',
-          body: { exercise_id: newId },
+      if (isEdit) {
+        await api(`/api/training/exercises/${edit.id}`, {
+          method: 'PATCH',
+          body: {
+            name,
+            description,
+            default_duration_minutes: dur,
+            difficulty,
+            tag_ids: tagIds,
+          },
         });
-        showToast('Privé-oefening toegevoegd aan dit programma', 'success');
+        showToast('Privé-oefening bijgewerkt', 'success');
       } else {
-        showToast('Privé-oefening opgeslagen', 'success');
+        const created = await api('/api/training/exercises', {
+          method: 'POST',
+          body: {
+            name,
+            description,
+            default_duration_minutes: dur,
+            difficulty,
+            scope: 'private',
+            tag_ids: tagIds,
+          },
+        });
+        const newId = created.exercise?.id;
+        if (sessionId && newId) {
+          await api(`/api/training/session/${sessionId}/exercises`, {
+            method: 'POST',
+            body: { exercise_id: newId },
+          });
+          showToast('Privé-oefening toegevoegd aan dit programma', 'success');
+        } else {
+          showToast('Privé-oefening opgeslagen', 'success');
+        }
       }
       close();
       if (onDone) await onDone();
