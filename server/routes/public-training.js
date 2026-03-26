@@ -7,45 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/db');
-
-function resolveWeekForClub(clubId, isoWeek) {
-  const exWeek = db.prepare(
-    'SELECT * FROM training_exception_weeks WHERE club_id = ? AND iso_week = ?'
-  ).get(clubId, isoWeek);
-
-  let trainings;
-  if (exWeek) {
-    trainings = db.prepare(`
-      SELECT e.*, t.display_name AS team_name, v.name AS venue_name,
-             l.name AS location_name, l.nevobo_venue_name
-      FROM training_exceptions e
-      JOIN teams t ON t.id = e.team_id
-      JOIN training_venues v ON v.id = e.venue_id
-      JOIN training_locations l ON l.id = v.location_id
-      WHERE e.club_id = ? AND e.iso_week = ?
-      ORDER BY e.day_of_week, e.start_time
-    `).all(clubId, isoWeek);
-  } else {
-    trainings = db.prepare(`
-      SELECT d.*, t.display_name AS team_name, v.name AS venue_name,
-             l.name AS location_name, l.nevobo_venue_name
-      FROM training_defaults d
-      JOIN teams t ON t.id = d.team_id
-      JOIN training_venues v ON v.id = d.venue_id
-      JOIN training_locations l ON l.id = v.location_id
-      WHERE d.club_id = ?
-      ORDER BY d.day_of_week, d.start_time
-    `).all(clubId);
-  }
-
-  return {
-    iso_week: isoWeek,
-    is_exception: !!exWeek,
-    exception_label: exWeek?.label || null,
-    trainings,
-    source: exWeek ? 'exception' : 'default',
-  };
-}
+const { resolveTrainingWeekForClub } = require('../lib/training-week-resolve');
 
 function publicTrainingKeyOk(req) {
   const expected = process.env.PUBLIC_TRAINING_API_KEY;
@@ -86,7 +48,7 @@ router.get('/week/:isoWeek', (req, res) => {
     return res.status(404).json({ ok: false, error: 'Club niet gevonden' });
   }
 
-  const data = resolveWeekForClub(club.id, isoWeek);
+  const data = resolveTrainingWeekForClub(db, club.id, isoWeek);
   res.json({
     ok: true,
     club: { id: club.id, name: club.name, nevobo_code: club.nevobo_code },

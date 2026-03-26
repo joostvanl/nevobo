@@ -4,6 +4,7 @@ const db = require('../db/db');
 const { verifyToken, hasClubAdmin, hasSuperAdmin, requireSuperAdmin } = require('../middleware/auth');
 const trainingAiPrompts = require('../lib/training-ai-prompts');
 const { dependencyFetch, DEPS } = require('../lib/dependencyFetch');
+const { resolveTrainingWeekForClub, normalizeIsoWeek } = require('../lib/training-week-resolve');
 
 function getClubId(userId) {
   const row = db.prepare('SELECT club_id FROM users WHERE id = ?').get(userId);
@@ -339,43 +340,8 @@ router.get('/week/:isoWeek', verifyToken, (req, res) => {
   if (!clubId) return res.status(400).json({ ok: false, error: 'Geen club gekoppeld' });
 
   const isoWeek = req.params.isoWeek;
-  const exWeek = db.prepare(
-    'SELECT * FROM training_exception_weeks WHERE club_id = ? AND iso_week = ?'
-  ).get(clubId, isoWeek);
-
-  let trainings;
-  if (exWeek) {
-    trainings = db.prepare(`
-      SELECT e.*, t.display_name AS team_name, v.name AS venue_name,
-             l.name AS location_name, l.nevobo_venue_name
-      FROM training_exceptions e
-      JOIN teams t ON t.id = e.team_id
-      JOIN training_venues v ON v.id = e.venue_id
-      JOIN training_locations l ON l.id = v.location_id
-      WHERE e.club_id = ? AND e.iso_week = ?
-      ORDER BY e.day_of_week, e.start_time
-    `).all(clubId, isoWeek);
-  } else {
-    trainings = db.prepare(`
-      SELECT d.*, t.display_name AS team_name, v.name AS venue_name,
-             l.name AS location_name, l.nevobo_venue_name
-      FROM training_defaults d
-      JOIN teams t ON t.id = d.team_id
-      JOIN training_venues v ON v.id = d.venue_id
-      JOIN training_locations l ON l.id = v.location_id
-      WHERE d.club_id = ?
-      ORDER BY d.day_of_week, d.start_time
-    `).all(clubId);
-  }
-
-  res.json({
-    ok: true,
-    iso_week: isoWeek,
-    is_exception: !!exWeek,
-    exception_label: exWeek?.label || null,
-    trainings,
-    source: exWeek ? 'exception' : 'default',
-  });
+  const data = resolveTrainingWeekForClub(db, clubId, isoWeek);
+  res.json({ ok: true, ...data });
 });
 
 // ─── Exception week management ──────────────────────────────────────────────
@@ -535,15 +501,17 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
   const isoWeek = dateStr ? dateToIsoWeek(new Date(dateStr)) : dateToIsoWeek(new Date());
 
   const clubId = team.club_id;
-  const exWeek = db.prepare(
-    'SELECT * FROM training_exception_weeks WHERE club_id = ? AND iso_week = ?'
-  ).get(clubId, isoWeek);
+  const canonicalWeek = normalizeIsoWeek(isoWeek);
+  const exWeek = db.prepare(`
+    SELECT * FROM training_exception_weeks
+    WHERE club_id = ? AND lower(trim(iso_week)) = lower(trim(?))
+  `).get(clubId, canonicalWeek || isoWeek);
 
   const defaults = db.prepare(`
     SELECT d.*, v.name AS venue_name, l.name AS location_name
     FROM training_defaults d
-    JOIN training_venues v ON v.id = d.venue_id
-    JOIN training_locations l ON l.id = v.location_id
+    LEFT JOIN training_venues v ON v.id = d.venue_id
+    LEFT JOIN training_locations l ON l.id = v.location_id
     WHERE d.club_id = ? AND d.team_id = ?
     ORDER BY d.day_of_week, d.start_time
   `).all(clubId, teamId);
@@ -555,11 +523,11 @@ router.get('/team/:teamId/schedule', verifyToken, (req, res) => {
     const exceptions = db.prepare(`
       SELECT e.*, v.name AS venue_name, l.name AS location_name
       FROM training_exceptions e
-      JOIN training_venues v ON v.id = e.venue_id
-      JOIN training_locations l ON l.id = v.location_id
-      WHERE e.club_id = ? AND e.iso_week = ? AND e.team_id = ?
+      LEFT JOIN training_venues v ON v.id = e.venue_id
+      LEFT JOIN training_locations l ON l.id = v.location_id
+      WHERE e.club_id = ? AND lower(trim(e.iso_week)) = lower(trim(?)) AND e.team_id = ?
       ORDER BY e.day_of_week, e.start_time
-    `).all(clubId, isoWeek, teamId);
+    `).all(clubId, exWeek.iso_week, teamId);
 
     const toKey = (rows) => rows.map(r => `${r.day_of_week}|${r.start_time}|${r.end_time}|${r.venue_id}`).join(';');
     if (toKey(exceptions) !== toKey(defaults)) {
