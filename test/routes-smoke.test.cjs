@@ -183,6 +183,9 @@ const ROUTES = [
   ['POST', '/api/scout/match/1', 'auth'],
   ['POST', '/api/scout/match/1/complete', 'auth'],
 
+  // ── /api/public/training ───────────────────────────────────────────────────
+  ['GET', '/api/public/training/week/2025-W01?nevobo=zzzzzzzznotreal', 'public_loose'],
+
   // ── /api/training ──────────────────────────────────────────────────────────
   ['GET', '/api/training/ai-webhook-status', 'auth'],
   ['GET', '/api/training/ai-prompts-config/bundled', 'auth'],

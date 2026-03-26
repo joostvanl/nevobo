@@ -1053,3 +1053,151 @@ tr.tp-tov-skip { opacity: 0.5; }
   line-height: 1.5;
   font-family: inherit;
 }
+
+/* ─── Niet-geplande teamslots (overlay / dock) ───────────────────────────── */
+
+.tp-wrapper.tp-has-unplanned-dock {
+  padding-bottom: 7.5rem;
+}
+
+.tp-unplanned-dock {
+  position: fixed;
+  z-index: 90;
+  left: 1rem;
+  bottom: 1rem;
+  right: auto;
+  max-width: min(520px, calc(100vw - 2rem));
+  pointer-events: auto;
+}
+
+.tp-unplanned-inner {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.tp-unplanned-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.06), transparent);
+  border-bottom: 1px solid var(--border, #e8e8e8);
+}
+
+.tp-unplanned-title {
+  flex: 1;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.tp-unplanned-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-color, #6366f1);
+  color: #fff;
+}
+
+.tp-unplanned-minimize {
+  border: none;
+  background: var(--bg, #f3f4f6);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.tp-unplanned-minimize:hover {
+  background: var(--border, #e5e7eb);
+  color: var(--text);
+}
+
+.tp-unplanned-hint {
+  margin: 0;
+  padding: 8px 12px 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.tp-unplanned-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 14px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tp-unplanned-chip {
+  border: none;
+  cursor: grab;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  touch-action: none;
+  user-select: none;
+}
+
+.tp-unplanned-chip:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+}
+
+.tp-unplanned-chip:active {
+  cursor: grabbing;
+}
+
+.tp-unplanned-dock--minimized .tp-unplanned-expand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 12px;
+  background: var(--bg-card, #fff);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tp-unplanned-count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-color, #6366f1);
+  color: #fff;
+}
+
+.tp-unplanned-expand-icon {
+  margin-left: auto;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.tp-venue-track.tp-drop-hover {
+  outline: 2px dashed var(--primary-color, #6366f1);
+  outline-offset: -2px;
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.tp-unplanned-ghost {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}

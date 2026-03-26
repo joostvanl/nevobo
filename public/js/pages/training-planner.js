@@ -28,6 +28,8 @@ const TEAM_COLORS = [
 let _ctx = null;
 let _activeSnapshotName = null;
 let _teamOverviewOpen = false;
+/** Zwevend paneel met niet-geplande teamslots — ingeklapt of uitgeklapt */
+let _unplannedDockMinimized = false;
 let _editMode = false;
 const _undoStack = [];
 const _redoStack = [];
@@ -226,6 +228,25 @@ function teamColorClass(teamId) {
   if (!_ctx) return 'tp-team-0';
   const idx = _ctx.teamIds.indexOf(teamId);
   return `tp-team-${(idx >= 0 ? idx : teamId) % TEAM_COLORS.length}`;
+}
+
+/** Eén entry per ontbrekende training t.o.v. trainings_per_week (zelfde logica als teamoverzicht). */
+function buildUnplannedSlots(trainings, teams) {
+  const countByTeam = {};
+  for (const t of trainings) {
+    countByTeam[t.team_id] = (countByTeam[t.team_id] || 0) + 1;
+  }
+  const slots = [];
+  for (const team of teams) {
+    const need = team.trainings_per_week || 0;
+    if (need === 0) continue;
+    const have = countByTeam[team.id] || 0;
+    const missing = need - have;
+    for (let i = 0; i < missing; i++) {
+      slots.push({ team_id: team.id, display_name: team.display_name });
+    }
+  }
+  return slots;
 }
 
 // ─── Render ─────────────────────────────────────────────────────────────────
@@ -613,8 +634,40 @@ function renderPlanner() {
       </table>
     </details>`;
 
+  const unplannedSlots = editable ? buildUnplannedSlots(trainings, c.teams) : [];
+  const hasUnplannedDock = editable && unplannedSlots.length > 0;
+  let unplannedDockHtml = '';
+  if (hasUnplannedDock) {
+    if (_unplannedDockMinimized) {
+      unplannedDockHtml = `
+        <aside class="tp-unplanned-dock tp-unplanned-dock--minimized" id="tp-unplanned-dock" aria-label="Niet-geplande trainingen">
+          <button type="button" class="tp-unplanned-expand" id="tp-unplanned-expand">
+            <span>Niet gepland</span><span class="tp-unplanned-count">${unplannedSlots.length}</span>
+            <span class="tp-unplanned-expand-icon" aria-hidden="true">▲</span>
+          </button>
+        </aside>`;
+    } else {
+      const chips = unplannedSlots.map((s, idx) => {
+        const colorCls = teamColorClass(s.team_id);
+        return `<button type="button" class="tp-unplanned-chip ${colorCls}" data-team-id="${s.team_id}" data-slot-idx="${idx}" title="Sleep naar een veld in het rooster">${escHtml(s.display_name)}</button>`;
+      }).join('');
+      unplannedDockHtml = `
+        <aside class="tp-unplanned-dock" id="tp-unplanned-dock" aria-label="Niet-geplande trainingen">
+          <div class="tp-unplanned-inner">
+            <div class="tp-unplanned-head">
+              <span class="tp-unplanned-title">Niet gepland — sleep naar het rooster</span>
+              <span class="tp-unplanned-badge">${unplannedSlots.length}</span>
+              <button type="button" class="tp-unplanned-minimize" id="tp-unplanned-minimize" aria-label="Paneel inklappen">▼</button>
+            </div>
+            <p class="tp-unplanned-hint">Ontbrekende trainingen t.o.v. het ingestelde aantal per week per team.</p>
+            <div class="tp-unplanned-chips">${chips}</div>
+          </div>
+        </aside>`;
+    }
+  }
+
   c.container.innerHTML = `
-    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${mobileReadOnly || (isBlueprint && !_editMode) ? ' tp-locked' : ''}${mobileReadOnly ? ' tp-mobile-readonly' : ''}">
+    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${mobileReadOnly || (isBlueprint && !_editMode) ? ' tp-locked' : ''}${mobileReadOnly ? ' tp-mobile-readonly' : ''}${hasUnplannedDock ? ' tp-has-unplanned-dock' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
         ${modeTabs}
@@ -628,6 +681,7 @@ function renderPlanner() {
         ${teamOverviewHtml}
       </div>
       ${daysHtml}
+      ${unplannedDockHtml}
     </div>`;
 
   wireEvents();
@@ -768,6 +822,16 @@ function wireEvents() {
     el.querySelectorAll('.tp-block.match').forEach(block => {
       setupMatchResize(block);
     });
+
+    el.querySelector('#tp-unplanned-minimize')?.addEventListener('click', () => {
+      _unplannedDockMinimized = true;
+      renderPlanner();
+    });
+    el.querySelector('#tp-unplanned-expand')?.addEventListener('click', () => {
+      _unplannedDockMinimized = false;
+      renderPlanner();
+    });
+    el.querySelectorAll('.tp-unplanned-chip').forEach((chip) => setupUnplannedChipDrag(chip));
   }
 
   // Zoom: Ctrl+wheel (desktop) + +/- knoppen (mobiel, zie CSS)
@@ -895,6 +959,100 @@ function setupDrag(block) {
         } });
       } catch (err) { showToast(err.message, 'error'); }
       loadAndRender();
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  });
+}
+
+/**
+ * Sleep een virtuele teamslot vanuit het dock naar een veld; maakt default of exception aan (zelfde API als snel toevoegen).
+ */
+function setupUnplannedChipDrag(chip) {
+  chip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const teamId = parseInt(chip.dataset.teamId, 10);
+    const team = _ctx.teams.find((t) => t.id === teamId);
+    if (!team) return;
+
+    const durMin = team.max_training_minutes || DEFAULT_DURATION;
+    const wPx = Math.min(380, Math.max(96, Math.round(durMin * 2.2)));
+
+    const ghost = document.createElement('div');
+    ghost.className = `tp-block ${teamColorClass(teamId)} tp-unplanned-ghost`;
+    ghost.style.cssText = `position:fixed;width:${wPx}px;height:30px;z-index:300;pointer-events:none;opacity:0.95;left:0;top:0;`;
+    ghost.innerHTML = `<span class="tp-block-label">${escHtml(team.display_name)}</span>`;
+    document.body.appendChild(ghost);
+
+    const placeGhost = (clientX, clientY) => {
+      ghost.style.left = `${clientX - wPx / 2}px`;
+      ghost.style.top = `${clientY - 15}px`;
+    };
+    placeGhost(e.clientX, e.clientY);
+
+    _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.add('tp-dragging-active'));
+
+    let moved = false;
+    const onMove = (ev) => {
+      moved = true;
+      placeGhost(ev.clientX, ev.clientY);
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const track = el?.closest?.('.tp-venue-track');
+      _ctx.container.querySelectorAll('.tp-venue-track').forEach((t) => t.classList.remove('tp-drop-hover'));
+      if (track) track.classList.add('tp-drop-hover');
+    };
+
+    const cleanupHover = () => {
+      _ctx.container.querySelectorAll('.tp-venue-track').forEach((t) => t.classList.remove('tp-drop-hover'));
+    };
+
+    const onUp = async (ev) => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      ghost.remove();
+      _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.remove('tp-dragging-active'));
+      cleanupHover();
+
+      if (!moved) return;
+
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const track = el?.closest?.('.tp-venue-track');
+      if (!track) {
+        showToast('Sleep naar een tijdbalk op een veld', 'info');
+        return;
+      }
+
+      const row = track.closest('.tp-venue-row');
+      if (!row) return;
+      const venueId = parseInt(row.dataset.venueId, 10);
+      const dow = parseInt(row.dataset.dow, 10);
+      const rect = track.getBoundingClientRect();
+      const xPct = (ev.clientX - rect.left) / rect.width;
+      const rawMin = Math.round(xPct * TOTAL_MINUTES / SNAP) * SNAP;
+      const startMin = HOUR_START * 60 + rawMin;
+      const endMin = Math.min(startMin + durMin, HOUR_END * 60);
+
+      snapshotBeforeMutation();
+      try {
+        const body = {
+          team_id: teamId,
+          venue_id: venueId,
+          day_of_week: dow,
+          start_time: minutesToTime(startMin),
+          end_time: minutesToTime(endMin),
+        };
+        if (_ctx.mode === 'blueprint') {
+          await api('/api/training/defaults', { method: 'POST', body });
+        } else {
+          await api('/api/training/exceptions', { method: 'POST', body: { ...body, iso_week: _ctx.isoWeek } });
+        }
+        showToast('Training toegevoegd', 'success');
+        loadAndRender();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     };
 
     document.addEventListener('pointermove', onMove);

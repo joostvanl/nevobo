@@ -182,6 +182,16 @@
 
 ---
 
+## `/api/public/training` — `routes/public-training.js`
+
+Openbare read-only weekplanning (blauwdruk of afwijkende week). Club via query `nevobo` (Nevobo-code, verplicht). Optioneel: als `PUBLIC_TRAINING_API_KEY` in `.env` staat, is een sleutel verplicht (`X-API-Key`, `?key=` of `Authorization: Bearer`).
+
+| Methode | Pad | Middleware |
+|---------|-----|------------|
+| GET | `/week/:isoWeek` | — |
+
+---
+
 ## `/api/training` — `routes/training.js`
 
 **Middleware:** vrijwel alle routes `verifyToken` (JWT). Autorisatie (clubbeheer, coach, teamlid) per endpoint in de route-logica. Functioneel overzicht: [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md).
