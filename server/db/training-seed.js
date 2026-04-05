@@ -13,16 +13,27 @@ module.exports = function seedTraining(db) {
 
   console.log('[seed] Seeding training schedule...');
 
-  const insertLoc = db.prepare('INSERT INTO training_locations (club_id, name, nevobo_venue_name) VALUES (?, ?, ?)');
+  let bpId = db.prepare('SELECT active_training_blueprint_id FROM clubs WHERE id = ?').get(C)?.active_training_blueprint_id;
+  if (!bpId) {
+    const r = db.prepare('INSERT INTO training_blueprints (club_id, name) VALUES (?, ?)').run(C, 'Standaard');
+    bpId = r.lastInsertRowid;
+    db.prepare('UPDATE clubs SET active_training_blueprint_id = ? WHERE id = ?').run(bpId, C);
+  }
+
+  const insertLoc = db.prepare(
+    'INSERT INTO training_locations (club_id, name, nevobo_venue_name, blueprint_id) VALUES (?, ?, ?, ?)'
+  );
   const insertVenue = db.prepare('INSERT INTO training_venues (club_id, location_id, name, type, nevobo_field_slug) VALUES (?, ?, ?, ?, ?)');
-  const insertDefault = db.prepare('INSERT INTO training_defaults (club_id, team_id, venue_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)');
+  const insertDefault = db.prepare(
+    'INSERT INTO training_defaults (club_id, blueprint_id, team_id, venue_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
   const insertExWeek = db.prepare('INSERT OR IGNORE INTO training_exception_weeks (club_id, iso_week, label) VALUES (?, ?, ?)');
   const insertException = db.prepare('INSERT INTO training_exceptions (club_id, team_id, venue_id, iso_week, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
   const seed = db.transaction(() => {
     // ── Locations ──────────────────────────────────────────────────────────
-    const locThijs = insertLoc.run(C, 'Thijs van der Polshal', 'Thijs van der Polshal').lastInsertRowid;
-    const locEssen = insertLoc.run(C, 'Essenlaan', null).lastInsertRowid;
+    const locThijs = insertLoc.run(C, 'Thijs van der Polshal', 'Thijs van der Polshal', bpId).lastInsertRowid;
+    const locEssen = insertLoc.run(C, 'Essenlaan', null, bpId).lastInsertRowid;
 
     // ── Venues ─────────────────────────────────────────────────────────────
     const v = {};
@@ -130,8 +141,14 @@ module.exports = function seedTraining(db) {
     ];
 
     for (const [teamId, venueId, dow, start, end] of defaults) {
-      if (teamId) insertDefault.run(C, teamId, venueId, dow, start, end);
+      if (teamId) insertDefault.run(C, bpId, teamId, venueId, dow, start, end);
     }
+
+    db.prepare(`
+      INSERT INTO training_defaults_published (club_id, blueprint_id, team_id, venue_id, day_of_week, start_time, end_time)
+      SELECT club_id, blueprint_id, team_id, venue_id, day_of_week, start_time, end_time
+      FROM training_defaults WHERE club_id = ? AND blueprint_id = ?
+    `).run(C, bpId);
 
     // ── Exception weeks ────────────────────────────────────────────────────
     insertExWeek.run(C, '2026-W12', '');

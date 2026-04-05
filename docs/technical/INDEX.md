@@ -28,6 +28,7 @@
 | `.env`, secrets, JWT, publiek vs. beschermd, risico’s | [13-environment-security-and-secrets.md](./13-environment-security-and-secrets.md) |
 | Volledige API-route-inventory (`/api/*`) | [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) |
 | Training: module, planner, sessies, oefeningen, DB | [21-training-module-planner-and-exercises.md](./21-training-module-planner-and-exercises.md) |
+| **Teamplanner: blauwdruk vs week, draft/published, API-stroom (agent)** | [22-teamplanner-architecture-and-data-flows.md](./22-teamplanner-architecture-and-data-flows.md) |
 | `match_id`, media, tegenstander (datamodel) | [../datamodel-match-media-opponent.md](../datamodel-match-media-opponent.md) |
 | NeVoBo RSS-parse, caches, merge | [15-nevobo-rss-parse-and-merge.md](./15-nevobo-rss-parse-and-merge.md) |
 | Admin-autorisatie (profile, delete, rollen) | [16-admin-authorization-detailed.md](./16-admin-authorization-detailed.md) |

@@ -32,6 +32,8 @@ Enkele bestanden concentreren veel verantwoordelijkheid (regels bij benadering, 
 | `public/js/pages/matches.js` | ~1360 | Wedstrijd-UI, kaart, gallery, carpool — opponent-lookup uitgelicht naar `matches-opponent-lookup.js` |
 | `public/js/reel-viewer.js` | 980+ | Fullscreen reel + interacties in één module |
 | `public/js/pages/team.js` | ~910 | Compacte wedstrijdregels uitgelicht naar `team-schedule-helpers.js` |
+| `server/routes/training.js` | ~2370 | Trainingsplanner + oefeningen + sessies + AI in één router — zie §6 |
+| `public/js/pages/training-planner.js` | ~2970 | Volledige planner-UI in één module — zie §6 |
 
 **Mogelijke richting:** `mount-routes.js` verder knippen (feed / media / follow), `matches.js` en `reel-viewer.js` verder modulair maken.
 
@@ -78,14 +80,31 @@ De homepagina start meerdere **niet-geawait** loaders (`loadNextMatch`, `loadMed
 
 ---
 
-## 6. Dependencies en runtime
+## 6. Trainingsplanner (teamplanner)
+
+**Locatie:** o.a. [`server/routes/training.js`](../../server/routes/training.js), [`server/lib/training-week-resolve.js`](../../server/lib/training-week-resolve.js), [`public/js/pages/training-planner.js`](../../public/js/pages/training-planner.js). Uitgebreide architectuur: [22-teamplanner-architecture-and-data-flows.md](./22-teamplanner-architecture-and-data-flows.md).
+
+| Thema | Schuld / risico | Suggestie |
+|-------|-----------------|-----------|
+| **Modulegrootte** | `training.js` en `training-planner.js` zijn elk **~2300–3000 regels** (snapshot 2026); veel verantwoordelijkheid in één bestand. | Splitsen: blauwdrukken, defaults/publish, week/exceptions, snapshots/AI, sessies/oefeningen in aparte routers of partials. |
+| **Automatische tests** | Alleen **smoke** (`routes-smoke.test.cjs`) op `/api/training/*`; geen gerichte tests op `resolveBlueprintIdForWeek`, draft/publish, teampagina-schedule. | Unit/integration tests voor resolve + published/draft-fallback + `GET /team/:id/schedule`. |
+| **Inconsistente consumers** | **`/api/export/training`** gebruikt **`ensureActiveBlueprint`**, niet **`resolveBlueprintIdForWeek`** — export kan afwijken van “effectieve week”-logica. | Export laten hangen aan dezelfde resolve + weekparameter, of documenteren als bewuste “club-actieve set export”. |
+| **Dubbele fallback-logica** | Published→draft-fallback voor export staat **inline** in `export.js`; dezelfde semantiek zit in **`training-week-resolve.js`**. | Helper uit `training-week-resolve` hergebruiken in export. |
+| **Concept vs live buiten defaults** | Alleen **`training_defaults` / `_published`** zijn gesplitst; **locaties, velden, inhuur** zijn niet “concept-first” — wijzigingen daar zijn direct “structureel” per blauwdruk. | Productkeuze; bij uitbreiding expliciet ontwerp (of accepteren). |
+| **Publish API-scope** | **`POST .../defaults/publish`** werkt alleen voor **club-actieve** blauwdruk (`ensureActiveBlueprint`). | Optioneel `blueprint_id` voor admins die zonder dropdown-switch willen publiceren. |
+| **Deels gepubliceerd** | Als `training_defaults_published` **niet leeg** is maar **per team** geen rijen heeft terwijl draft wél heeft, gebruikt de team-route **geen** fallback (published “wint” op setniveau in `getDefaultTrainingsPublishedOrDraft`). | Zeldzaam; bij problemen: fallback per team of “lege published = fallback” aanscherpen. |
+| **UX-split week vs blauwdruk** | In **weekmodus** toont de kaart de **effectieve** blauwdruk; in **blauwdrukmodus** bewerk je de **club-actieve** set — kan tegelijk verschillen. | UI-waarschuwing of editor-BP koppelen aan context (bekend patroon; zie doc 22). |
+
+---
+
+## 7. Dependencies en runtime
 
 - **`node-fetch` v2** staat nog in `package.json`; Node ≥18 heeft ingebouwde `fetch`. Migratie kan afhankelijkheden vereenvoudigen (geen haast zolang v2 onderhouden blijft).
 - **TensorFlow.js / face-api in dezelfde Node-process** als de API — zwaar; fouten worden gelogd maar het proces blijft draaien. Dat is een bewuste trade-off ([01](./01-architecture-overview.md)), geen “verborgen” debt, wel een **capaciteits- en observability**-aandachtspunt.
 
 ---
 
-## 7. Geen `TODO` / `FIXME` in de hoofd-tree
+## 8. Geen `TODO` / `FIXME` in de hoofd-tree
 
 Een zoekactie op `TODO`/`FIXME` in de app-code leverde **geen treffers** in `Team/` (los van subproject `volleyball-scout`). Dat kan betekenen: nette codebase, of **onzichtbare** schuld (werk zonder traceerbare comments). Deze inventaris en code-review blijven nodig.
 
@@ -100,4 +119,5 @@ Een zoekactie op `TODO`/`FIXME` in de app-code leverde **geen treffers** in `Tea
 
 - [11-cross-cutting-decisions.md](./11-cross-cutting-decisions.md)  
 - [12-expectations-expert-vs-documentation.md](./12-expectations-expert-vs-documentation.md)  
+- [22-teamplanner-architecture-and-data-flows.md](./22-teamplanner-architecture-and-data-flows.md)  
 - [INDEX.md](./INDEX.md)

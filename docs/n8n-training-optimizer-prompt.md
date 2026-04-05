@@ -36,6 +36,23 @@ De app stuurt het volgende mee:
 | `teams` | Teamroosters met spelers en coaches (backup; agent haalt dit ook op via tool) |
 | `training` | Huidige planning, locaties, venues, teamnamen |
 
+### Optioneel: twee-staps pipeline (`pipeline: "multi"`)
+
+Als de app **`"pipeline": "multi"`** meestuurt (checkbox *Mini-LLM (2 stappen)* in de UI), doet de server **twee opeenvolgende POSTs** naar **dezelfde** `N8N_TRAINING_WEBHOOK_URL`. De agent blijft “leeg”: alle teksten komen uit de app.
+
+Extra velden op de body:
+
+| Veld | Alleen bij multi | Inhoud |
+|------|------------------|--------|
+| `pipeline` | ja | `{ "multiStep": true, "phase": 1 \| 2, "totalPhases": 2 }` |
+| `previousStepResult` | stap 2 | JSON-object uit stap 1 (compact dagplan) |
+
+**Stap 1:** `systemPrompt` is een korte vaste instructie (compact dagplan); het model moet JSON teruggeven met o.a. `team_plans` en `evening_character` (geen volledige `schedule`).
+
+**Stap 2:** `systemPrompt` = dezelfde modus-prompt als bij de enkele aanroep, plus een vaste appendix met het stap‑1‑resultaat; `userMessage` zoals bij de klassieke flow. Verwachte response: zelfde als hieronder (`name`, `advice`, `schedule`).
+
+In N8N kun je `{{ $json.body.pipeline?.phase }}` gebruiken om te routeren (bijv. ander parse-pad voor stap 1), of één AI Agent laten die altijd `systemPrompt` / `userMessage` uit de body volgt — dat werkt ook.
+
 ## Vereiste webhook response
 
 ```json
@@ -113,6 +130,8 @@ return {
 - Response mode: "Last node"
 - De Code node output wordt als JSON teruggestuurd naar de app
 - De app slaat het op als nieuwe snapshot, activeert deze, en herlaadt de planner
+
+**Als de app ineens geen planning meer krijgt:** controleer in N8N de **execution** van de laatste succesvolle run wat **Respond to Webhook** / de laatste node echt terugstuurt. N8N wikkelt output soms in als `[{ "json": { "name", "schedule", "advice" } }]` — de server probeert dat automatisch uit te pakken. Een **AI Agent**-update kan het modelantwoord in een ander veld zetten (`output` vs `text` vs `message`); pas dan de Code node aan zodat daar wél geldig JSON met `schedule[]` uitkomt. In de **Node-serverlog** staan regels `[ai-optimize] Raw webhook response` en `Parsed result keys` om te zien wat er binnenkomt.
 
 ---
 

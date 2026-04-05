@@ -496,6 +496,17 @@ async function fetchClubCompetitionTeams(nevoboCode) {
   return allTeams;
 }
 
+/** Parse `/competitie/teams/{code}/{type}/{n}` from LD+json `@id` (see docs/nevobo-api.md §2.2). */
+function parseCompetitieTeamPath(teamPath) {
+  const m = String(teamPath || '').match(/\/competitie\/teams\/([^/]+)\/([^/]+)\/(\d+)\/?$/);
+  if (!m) return null;
+  return {
+    nevobo_code: m[1].toLowerCase(),
+    nevobo_team_type: m[2],
+    nevobo_number: parseInt(m[3], 10),
+  };
+}
+
 // Cache: nevoboCode → { clubs: Map, teamCodes: Map, fetchedAt }
 const opponentClubsCache = new Map();
 
@@ -1530,6 +1541,8 @@ router.delete('/cache/:code', async (req, res) => {
 
 module.exports = router;
 module.exports.parseMatchItem = parseMatchItem;
+module.exports.fetchClubCompetitionTeams = fetchClubCompetitionTeams;
+module.exports.parseCompetitieTeamPath = parseCompetitieTeamPath;
 
 /**
  * Proactively fetch and cache both RSS feeds for a club.

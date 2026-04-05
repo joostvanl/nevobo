@@ -5,6 +5,8 @@ import { escHtml } from '../escape-html.js';
 const DAY_NAMES = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 const HOUR_START = 8;
 const HOUR_END = 23;
+/** Voorkeurseinde trainingen (visuele markering); harde grens blijft HOUR_END. */
+const PREFERRED_END_ABS_MIN = 22 * 60 + 30;
 const TOTAL_MINUTES = (HOUR_END - HOUR_START) * 60;
 const SNAP = 15;
 const DEFAULT_DURATION = 90;
@@ -31,6 +33,12 @@ let _teamOverviewOpen = false;
 /** Zwevend paneel met niet-geplande teamslots — ingeklapt of uitgeklapt */
 let _unplannedDockMinimized = false;
 let _editMode = false;
+/** Alleen velden + niet-beschikbaar intekenen; teams/wedstrijden verborgen */
+let _inhuurMode = false;
+/** In weekweergave: 'this_week' = iso_week meesturen, 'recurring' = elke week */
+let _inhuurWeekScope = 'this_week';
+/** Meerdere trainingsblokken (data-training-id) geselecteerd met Ctrl/Cmd — tegelijk horizontaal slepen */
+const _selectedTrainingIds = new Set();
 const _undoStack = [];
 const _redoStack = [];
 const MAX_UNDO = 50;
@@ -45,6 +53,13 @@ const TP_VENUE_LABEL_W = 120;
 /** Zelfde breakpoint als zoom-knoppen in training-planner.css — planning nooit bewerkbaar op mobiel */
 function isPlannerMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+}
+
+/** Blauwdruk: alleen met Bewerken aan. Week: alleen bij afwijkende week. (Los van mobiel / canEditTraining.) */
+function tpPlannerScheduleEditable() {
+  const c = _ctx;
+  if (!c) return false;
+  return (c.mode === 'blueprint' && _editMode) || !!c.weekData?.isException;
 }
 
 let _plannerResizeBound = false;
@@ -191,6 +206,510 @@ function minutesToTime(m) {
   return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
 }
 
+/** Zelfde normalisatie als server (YYYY-Www). */
+function normalizeTpIsoWeek(input) {
+  const s = String(input ?? '').trim();
+  const m = s.match(/^(\d{4})[\-_][Ww]?(\d{1,2})$/);
+  if (!m) return s;
+  const w = parseInt(m[2], 10);
+  if (w < 1 || w > 53) return s;
+  return `${m[1]}-W${String(w).padStart(2, '0')}`;
+}
+
+/** ISO-jaar en weeknummer (1–53) voor een lokale kalenderdatum. */
+function tpIsoWeekPartsFromDate(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = (x.getDay() + 6) % 7;
+  x.setDate(x.getDate() - dow + 3);
+  const isoYear = x.getFullYear();
+  const jan4 = new Date(isoYear, 0, 4);
+  const jan4d = (jan4.getDay() + 6) % 7;
+  const w1Mon = new Date(isoYear, 0, 4 - jan4d);
+  const week = Math.round((x - w1Mon) / 604800000) + 1;
+  return { isoYear, week };
+}
+
+/** Hoogste ISO-weeknummer dat in dit ISO-jaar voorkomt (52 of 53). */
+function tpMaxIsoWeekForIsoYear(isoYear) {
+  let max = 1;
+  for (let month = 0; month < 12; month++) {
+    for (let day = 1; day <= 31; day++) {
+      const dt = new Date(isoYear, month, day);
+      if (dt.getMonth() !== month) break;
+      const p = tpIsoWeekPartsFromDate(dt);
+      if (p.isoYear === isoYear) max = Math.max(max, p.week);
+    }
+  }
+  return Math.min(Math.max(max, 1), 53);
+}
+
+function tpIsoWeekString(isoYear, weekNum) {
+  return `${isoYear}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+function tpDefaultGridYearForBlueprint(b) {
+  const weeks = b.weeks || [];
+  for (const w of weeks) {
+    const m = String(w).match(/^(\d{4})-W/i);
+    if (m) return parseInt(m[1], 10);
+  }
+  return new Date().getFullYear();
+}
+
+function tpYearSelectHtml(selectedY) {
+  const cy = new Date().getFullYear();
+  let opts = '';
+  for (let y = cy - 2; y <= cy + 5; y++) {
+    opts += `<option value="${y}"${y === selectedY ? ' selected' : ''}>${y}</option>`;
+  }
+  return opts;
+}
+
+/** Kalendergrid: één cel per ISO-week; ongeldige weken (buiten jaar) zijn uitgeschakeld. */
+function tpWeekCalendarGridHtml(isoYear, bpWeeksList) {
+  const maxW = tpMaxIsoWeekForIsoYear(isoYear);
+  const set = new Set(bpWeeksList || []);
+  const cells = [];
+  for (let w = 1; w <= 53; w++) {
+    const valid = w <= maxW;
+    const iso = tpIsoWeekString(isoYear, w);
+    const on = set.has(iso);
+    const cls = `tp-bp-cal-week${on ? ' is-on' : ''}${!valid ? ' is-void' : ''}`;
+    cells.push(
+      `<button type="button" class="${cls}" data-iso-week="${attrSafe(iso)}"${valid ? '' : ' disabled tabindex="-1"'} aria-pressed="${on ? 'true' : 'false'}" title="${valid ? (on ? 'Gekoppeld — klik om te verwijderen' : 'Klik om te koppelen') : `Geen week ${w} in ${isoYear}`}">${w}</button>`
+    );
+  }
+  return `<div class="tp-bp-cal-grid" role="group" aria-label="ISO-weken ${isoYear}">${cells.join('')}</div>`;
+}
+
+function tpOtherYearsWeeksHtml(weeks, gridYear, bpId) {
+  const other = [...(weeks || [])]
+    .filter((w) => !String(w).match(new RegExp(`^${gridYear}-W`, 'i')))
+    .sort();
+  if (!other.length) return '';
+  const lis = other
+    .map(
+      (w) =>
+        `<li class="tp-bp-week-item"><code>${escHtml(w)}</code> <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm tp-bp-week-rem" data-iso-week="${attrSafe(w)}" title="Koppeling verwijderen">×</button></li>`
+    )
+    .join('');
+  return `<div class="tp-bp-other-years" data-bp-id="${bpId}">
+    <span class="tp-bp-other-label">Ook gekoppeld in andere jaren</span>
+    <ul class="tp-bp-weeks-list">${lis}</ul>
+  </div>`;
+}
+
+/** Werkt `weeks` op de blauwdruk in `_ctx` bij (zelfde objectreferenties als elders). */
+function tpMutateBlueprintWeeks(bpId, iso, add) {
+  const bp = _ctx.blueprints?.find((x) => x.id === bpId);
+  if (!bp) return;
+  const cur = [...(bp.weeks || [])];
+  const isoStr = String(iso);
+  if (add) {
+    if (!cur.some((w) => String(w) === isoStr)) cur.push(isoStr);
+    cur.sort();
+    bp.weeks = cur;
+  } else {
+    bp.weeks = cur.filter((w) => String(w) !== isoStr);
+  }
+}
+
+function tpApplyCalWeekButtonState(btn, linked) {
+  btn.classList.toggle('is-on', linked);
+  btn.setAttribute('aria-pressed', linked ? 'true' : 'false');
+  const valid = !btn.disabled && !btn.classList.contains('is-void');
+  btn.title = valid ? (linked ? 'Gekoppeld — klik om te verwijderen' : 'Klik om te koppelen') : btn.title;
+}
+
+function tpRefreshOtherYearsHost(schedEl, bpId) {
+  const b = _ctx.blueprints?.find((x) => x.id === bpId);
+  if (!b) return;
+  const sel = schedEl.querySelector('.tp-bp-year-select');
+  const y = parseInt(sel?.value, 10);
+  const otherHost = schedEl.querySelector('.tp-bp-other-years-host');
+  if (otherHost) otherHost.innerHTML = tpOtherYearsWeeksHtml(b.weeks || [], y, bpId) || '';
+}
+
+function timeIntervalsOverlapMin(a0, a1, b0, b1) {
+  return a0 < b1 && b0 < a1;
+}
+
+/** Of een niet-beschikbaar-slot zichtbaar is in de huidige plannerweergave. */
+function unavailabilityAppliesToView(slot, ctx) {
+  const wk = slot.iso_week && String(slot.iso_week).trim();
+  if (ctx.mode === 'blueprint') {
+    return !wk;
+  }
+  if (!wk) return true;
+  return normalizeTpIsoWeek(slot.iso_week) === normalizeTpIsoWeek(ctx.isoWeek);
+}
+
+function trainingOverlapsUnavailability(training, unavailSlots, dow, ctx) {
+  const t0 = timeToMinutes(training.start_time);
+  const t1 = timeToMinutes(training.end_time);
+  for (const u of unavailSlots) {
+    if (u.venue_id !== training.venue_id || u.day_of_week !== dow) continue;
+    if (!unavailabilityAppliesToView(u, ctx)) continue;
+    const u0 = timeToMinutes(u.start_time);
+    const u1 = timeToMinutes(u.end_time);
+    if (timeIntervalsOverlapMin(t0, t1, u0, u1)) return true;
+  }
+  return false;
+}
+
+function attrSafe(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+/** Minuten vanaf HOUR_START binnen de track (0 … TOTAL_MINUTES), gesnapt op SNAP. */
+function clientXToTrackRelativeMinutes(track, clientX) {
+  const rect = track.getBoundingClientRect();
+  const xPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return Math.round(xPct * TOTAL_MINUTES / SNAP) * SNAP;
+}
+
+function buildVenueUnavailabilityBody(venueId, dow, leftMinRel, durMinRel) {
+  const startMinAbs = HOUR_START * 60 + leftMinRel;
+  let endMinAbs = startMinAbs + durMinRel;
+  const maxEnd = HOUR_END * 60;
+  if (endMinAbs > maxEnd) endMinAbs = maxEnd;
+  if (endMinAbs <= startMinAbs) return null;
+  const body = {
+    venue_id: venueId,
+    day_of_week: dow,
+    start_time: minutesToTime(startMinAbs),
+    end_time: minutesToTime(endMinAbs),
+    blueprint_id: _ctx.contextBlueprintId,
+  };
+  if (_ctx.mode === 'week' && _inhuurWeekScope === 'this_week') {
+    body.iso_week = normalizeTpIsoWeek(_ctx.isoWeek);
+  }
+  return body;
+}
+
+async function postVenueUnavailability(venueId, dow, leftMinRel, durMinRel) {
+  const body = buildVenueUnavailabilityBody(venueId, dow, leftMinRel, durMinRel);
+  if (!body) return;
+  await api('/api/training/venue-unavailability', { method: 'POST', body });
+}
+
+/** Alle veldrijen op dezelfde dag waarvan de verticale band [yLo,yHi] overlapt. */
+function getVenueRowsInVerticalBand(dayEl, dow, yLo, yHi) {
+  const lo = Math.min(yLo, yHi);
+  const hi = Math.max(yLo, yHi);
+  return [...dayEl.querySelectorAll('.tp-venue-row')].filter((row) => {
+    if (parseInt(row.dataset.dow, 10) !== dow) return false;
+    const rect = row.getBoundingClientRect();
+    return rect.top < hi && rect.bottom > lo;
+  });
+}
+
+async function commitInhuurUnavailabilityMulti(venueIds, dow, leftMinRel, durMinRel) {
+  const unique = [...new Set(venueIds)].filter((id) => Number.isFinite(id));
+  if (!unique.length) return;
+  try {
+    await Promise.all(unique.map((vid) => postVenueUnavailability(vid, dow, leftMinRel, durMinRel)));
+    showToast(
+      unique.length === 1
+        ? 'Niet-beschikbaar toegevoegd'
+        : `Niet-beschikbaar toegevoegd (${unique.length} velden)`,
+      'success'
+    );
+    loadAndRender();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function findUnavailabilitySlotById(id) {
+  const slots = _ctx?.venueUnavailability || [];
+  return slots.find((s) => String(s.id) === String(id));
+}
+
+function handleInhuurPointerDown(e) {
+  if (!_inhuurMode || e.button !== 0) return;
+  if (!tpPlannerScheduleEditable()) return;
+  const track = e.currentTarget;
+  if (e.target.closest('.tp-unavail-block')) return;
+  if (e.target.closest('.tp-resize-left') || e.target.closest('.tp-resize-right')) return;
+  if (e.target.closest('.tp-block')) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    track.setPointerCapture(e.pointerId);
+  } catch (_) {}
+
+  const row = track.closest('.tp-venue-row');
+  const dayEl = track.closest('.tp-day');
+  if (!dayEl) return;
+  const dow = parseInt(row.dataset.dow, 10);
+  const x0 = e.clientX;
+  let yMin = e.clientY;
+  let yMax = e.clientY;
+
+  /** Referentietrack voor tijd↔X (alle rijen op de dag delen dezelfde schaal). */
+  const refTrack = track;
+
+  const previews = new Map();
+  const minWpct = (SNAP / TOTAL_MINUTES) * 100;
+
+  function updatePreview(clientX, clientY) {
+    yMin = Math.min(yMin, clientY);
+    yMax = Math.max(yMax, clientY);
+
+    let a = clientXToTrackRelativeMinutes(refTrack, Math.min(x0, clientX));
+    let b = clientXToTrackRelativeMinutes(refTrack, Math.max(x0, clientX));
+    let widthRel = Math.max(SNAP, b - a);
+    const leftPct = (a / TOTAL_MINUTES) * 100;
+    const widthPct = (widthRel / TOTAL_MINUTES) * 100;
+
+    const targetRows = getVenueRowsInVerticalBand(dayEl, dow, yMin, yMax);
+
+    for (const r of [...previews.keys()]) {
+      if (targetRows.includes(r)) continue;
+      const el = previews.get(r);
+      const t = r.querySelector('.tp-venue-track');
+      t?.classList.remove('tp-inhuur-painting');
+      el?.remove();
+      previews.delete(r);
+    }
+
+    const startAbs = HOUR_START * 60 + a;
+    const endAbs = startAbs + widthRel;
+    const timeLabel = `${minutesToTime(startAbs)} – ${minutesToTime(endAbs)}`;
+    const n = targetRows.length;
+    const labelText = n > 1 ? `${timeLabel} · ${n} velden` : timeLabel;
+
+    for (const r of targetRows) {
+      const ttrack = r.querySelector('.tp-venue-track');
+      if (!ttrack) continue;
+      let pr = previews.get(r);
+      if (!pr) {
+        pr = document.createElement('div');
+        pr.className = 'tp-unavail-paint-preview';
+        pr.innerHTML = '<span class="tp-unavail-paint-preview-time"></span>';
+        ttrack.appendChild(pr);
+        previews.set(r, pr);
+        ttrack.classList.add('tp-inhuur-painting');
+      }
+      pr.style.left = `${leftPct}%`;
+      pr.style.width = `${Math.max(widthPct, minWpct)}%`;
+      const tel = pr.querySelector('.tp-unavail-paint-preview-time');
+      if (tel) tel.textContent = labelText;
+    }
+  }
+  updatePreview(x0, e.clientY);
+
+  const onMovePaint = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    updatePreview(ev.clientX, ev.clientY);
+  };
+
+  const onUpPaint = async (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    track.removeEventListener('pointermove', onMovePaint);
+    track.removeEventListener('pointerup', onUpPaint);
+    track.removeEventListener('pointercancel', onUpPaint);
+    try {
+      track.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+
+    for (const r of [...previews.keys()]) {
+      const el = previews.get(r);
+      r.querySelector('.tp-venue-track')?.classList.remove('tp-inhuur-painting');
+      el?.remove();
+    }
+    previews.clear();
+
+    yMin = Math.min(yMin, ev.clientY);
+    yMax = Math.max(yMax, ev.clientY);
+
+    const endX = ev.clientX;
+    const dragPx = Math.abs(endX - x0);
+    let a = clientXToTrackRelativeMinutes(refTrack, Math.min(x0, endX));
+    let b = clientXToTrackRelativeMinutes(refTrack, Math.max(x0, endX));
+    let widthRel = b - a;
+
+    if (dragPx < 10 && widthRel < SNAP) {
+      let center = clientXToTrackRelativeMinutes(refTrack, x0);
+      a = Math.round((center - SNAP / 2) / SNAP) * SNAP;
+      widthRel = SNAP;
+      if (a < 0) a = 0;
+      if (a + widthRel > TOTAL_MINUTES) a = TOTAL_MINUTES - widthRel;
+    } else {
+      widthRel = Math.max(SNAP, Math.round(widthRel / SNAP) * SNAP);
+      if (a + widthRel > TOTAL_MINUTES) widthRel = TOTAL_MINUTES - a;
+    }
+
+    const rows = getVenueRowsInVerticalBand(dayEl, dow, yMin, yMax);
+    const venueIds = rows
+      .map((r) => parseInt(r.dataset.venueId, 10))
+      .filter((id) => Number.isFinite(id));
+
+    if (!venueIds.length) return;
+
+    await commitInhuurUnavailabilityMulti(venueIds, dow, a, widthRel);
+  };
+
+  track.addEventListener('pointermove', onMovePaint);
+  track.addEventListener('pointerup', onUpPaint);
+  track.addEventListener('pointercancel', onUpPaint);
+}
+
+function setupInhuurPainting(container) {
+  container.querySelectorAll('.tp-venue-track').forEach((track) => {
+    track.addEventListener('pointerdown', handleInhuurPointerDown);
+  });
+}
+
+function setupUnavailInteractions(unavailEl) {
+  const id = unavailEl.dataset.unavailId;
+  if (!id) return;
+
+  unavailEl.addEventListener('dblclick', async (ev) => {
+    if (ev.target.classList.contains('tp-resize-left') || ev.target.classList.contains('tp-resize-right')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!confirm('Dit niet-beschikbaar-slot verwijderen?')) return;
+    try {
+      const bp = _ctx.contextBlueprintId;
+      const q = bp != null ? `?blueprint_id=${bp}` : '';
+      await api(`/api/training/venue-unavailability/${id}${q}`, { method: 'DELETE' });
+      showToast('Verwijderd', 'success');
+      loadAndRender();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+
+  function attachResize(handle, side) {
+    if (!handle) return;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pid = e.pointerId;
+      handle.setPointerCapture(pid);
+      const track = unavailEl.closest('.tp-venue-track');
+      const trackW = track.offsetWidth;
+      const origLeftPct = parseFloat(unavailEl.style.left);
+      const origWidthPct = parseFloat(unavailEl.style.width);
+      const startX = e.clientX;
+      let moved = false;
+
+      const onMove = (ev) => {
+        if (ev.pointerId !== pid) return;
+        moved = true;
+        const dx = ev.clientX - startX;
+        const dPct = (dx / trackW) * 100;
+        if (side === 'left') {
+          let newLeft = origLeftPct + dPct;
+          let newWidth = origWidthPct - dPct;
+          const minW = (SNAP / TOTAL_MINUTES) * 100;
+          if (newWidth < minW) { newWidth = minW; newLeft = origLeftPct + origWidthPct - minW; }
+          if (newLeft < 0) { newWidth += newLeft; newLeft = 0; }
+          unavailEl.style.left = `${newLeft}%`;
+          unavailEl.style.width = `${newWidth}%`;
+        } else {
+          let newWidth = origWidthPct + dPct;
+          const minW = (SNAP / TOTAL_MINUTES) * 100;
+          if (newWidth < minW) newWidth = minW;
+          if (origLeftPct + newWidth > 100) newWidth = 100 - origLeftPct;
+          unavailEl.style.width = `${newWidth}%`;
+        }
+      };
+
+      const onUp = async (ev) => {
+        if (ev.pointerId !== pid) return;
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(pid); } catch (_) {}
+        if (!moved) return;
+
+        const leftPct = parseFloat(unavailEl.style.left);
+        const widthPct = parseFloat(unavailEl.style.width);
+        const leftMin = Math.round(leftPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+        const durMin = Math.round(widthPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+        const startMinAbs = HOUR_START * 60 + leftMin;
+        const endMinAbs = startMinAbs + durMin;
+        try {
+          await api(`/api/training/venue-unavailability/${id}`, {
+            method: 'PATCH',
+            body: { start_time: minutesToTime(startMinAbs), end_time: minutesToTime(endMinAbs) },
+          });
+          showToast('Tijd aangepast', 'success');
+          loadAndRender();
+        } catch (err) { showToast(err.message, 'error'); }
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  }
+
+  attachResize(unavailEl.querySelector('.tp-resize-left'), 'left');
+  attachResize(unavailEl.querySelector('.tp-resize-right'), 'right');
+
+  unavailEl.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.classList.contains('tp-resize-left') || e.target.classList.contains('tp-resize-right')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pid = e.pointerId;
+    const track = unavailEl.closest('.tp-venue-track');
+    const trackRect = track.getBoundingClientRect();
+    const grabOffsetX = e.clientX - trackRect.left - unavailEl.offsetLeft;
+    const origWidthPct = parseFloat(unavailEl.style.width);
+    let moved = false;
+    unavailEl.classList.add('tp-unavail-dragging');
+    try { unavailEl.setPointerCapture(pid); } catch (_) {}
+
+    const onMove = (ev) => {
+      if (ev.pointerId !== pid) return;
+      moved = true;
+      const tr = track.getBoundingClientRect();
+      const trackW = track.offsetWidth;
+      const localX = ev.clientX - tr.left - grabOffsetX;
+      let leftMin = pxToMinutes(Math.max(0, Math.min(localX, trackW)), trackW);
+      const widthMin = Math.round(origWidthPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+      if (leftMin + widthMin > TOTAL_MINUTES) leftMin = TOTAL_MINUTES - widthMin;
+      unavailEl.style.left = `${(leftMin / TOTAL_MINUTES) * 100}%`;
+      unavailEl.style.width = `${(widthMin / TOTAL_MINUTES) * 100}%`;
+    };
+
+    const onUp = async (ev) => {
+      if (ev.pointerId !== pid) return;
+      unavailEl.removeEventListener('pointermove', onMove);
+      unavailEl.removeEventListener('pointerup', onUp);
+      unavailEl.removeEventListener('pointercancel', onUp);
+      try { unavailEl.releasePointerCapture(pid); } catch (_) {}
+      unavailEl.classList.remove('tp-unavail-dragging');
+
+      if (!moved) return;
+
+      const leftPct = parseFloat(unavailEl.style.left);
+      const widthPct = parseFloat(unavailEl.style.width);
+      const leftMin = Math.round(leftPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+      const durMin = Math.round(widthPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+      const startMinAbs = HOUR_START * 60 + leftMin;
+      const endMinAbs = startMinAbs + durMin;
+
+      try {
+        await api(`/api/training/venue-unavailability/${id}`, {
+          method: 'PATCH',
+          body: { start_time: minutesToTime(startMinAbs), end_time: minutesToTime(endMinAbs) },
+        });
+        showToast('Blok verplaatst', 'success');
+        loadAndRender();
+      } catch (err) { showToast(err.message, 'error'); }
+    };
+
+    unavailEl.addEventListener('pointermove', onMove);
+    unavailEl.addEventListener('pointerup', onUp);
+    unavailEl.addEventListener('pointercancel', onUp);
+  });
+}
+
 function getIsoWeek(d) {
   const dt = new Date(d);
   const dayNum = dt.getDay() || 7;
@@ -264,6 +783,10 @@ export async function render(container) {
 
   if (_keyHandler) document.removeEventListener('keydown', _keyHandler);
   _keyHandler = (e) => {
+    if (e.key === 'Escape' && _selectedTrainingIds.size && _ctx?.container) {
+      clearTrainingBlockSelection();
+      return;
+    }
     if (!_editMode || _ctx?.mode !== 'blueprint' || isPlannerMobileViewport()) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); performUndo(); }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); performRedo(); }
@@ -293,6 +816,9 @@ export async function render(container) {
       isoWeek: getIsoWeek(new Date()),
       weekData: null,
       homeMatches: [],
+      venueUnavailability: [],
+      canEditTraining: false,
+      draftDiffersFromPublished: false,
       container,
     };
 
@@ -306,25 +832,56 @@ export async function render(container) {
 async function loadAndRender() {
   const c = _ctx;
 
-  const [locData, venueData, snapActive] = await Promise.all([
-    api('/api/training/locations'),
-    api('/api/training/venues'),
+  const weekOrDefaultsUrl = c.mode === 'blueprint' ? '/api/training/defaults' : `/api/training/week/${c.isoWeek}`;
+
+  const [snapActive, bpData, weekData] = await Promise.all([
     api('/api/training/snapshots/active'),
+    api('/api/training/blueprints').catch(() => ({ blueprints: [], active_blueprint_id: null })),
+    api(weekOrDefaultsUrl),
   ]);
+
+  c.blueprints = bpData.blueprints || [];
+  c.activeBlueprintId = bpData.active_blueprint_id ?? null;
+
+  let effectiveBpId =
+    c.mode === 'week'
+      ? weekData.effective_blueprint?.id ?? c.activeBlueprintId
+      : c.activeBlueprintId;
+  if (effectiveBpId == null) effectiveBpId = c.activeBlueprintId;
+
+  const bpQ = effectiveBpId != null ? `?blueprint_id=${effectiveBpId}` : '';
+
+  const [locData, venueData, unavData, teamData] = await Promise.all([
+    api(`/api/training/locations${bpQ}`).catch(() => ({ locations: [] })),
+    api(`/api/training/venues${bpQ}`).catch(() => ({ venues: [] })),
+    api(`/api/training/venue-unavailability${bpQ}`).catch(() => ({ slots: [], can_edit: false })),
+    api(`/api/training/teams${bpQ}`).catch(() => ({ teams: [] })),
+  ]);
+
   c.locations = locData.locations || [];
   c.venues = venueData.venues || [];
+  c.venueUnavailability = unavData.slots || [];
+  if (teamData.teams && teamData.teams.length) {
+    c.teams = teamData.teams;
+    c.teamIds = teamData.teams.map(t => t.id);
+  }
+  c.effectiveBlueprintId = effectiveBpId;
+  c.contextBlueprintId = effectiveBpId ?? c.activeBlueprintId;
+
   _activeSnapshotName = snapActive.active?.name || null;
 
   let trainings, isException = false, exceptionLabel = null;
   if (c.mode === 'blueprint') {
-    const data = await api('/api/training/defaults');
-    trainings = data.defaults || [];
+    trainings = weekData.defaults || [];
+    c.draftDiffersFromPublished = !!weekData.draft_differs_from_published;
   } else {
-    const data = await api(`/api/training/week/${c.isoWeek}`);
-    trainings = data.trainings || [];
-    isException = data.is_exception;
-    exceptionLabel = data.exception_label;
+    trainings = weekData.trainings || [];
+    isException = weekData.is_exception;
+    exceptionLabel = weekData.exception_label;
+    c.draftDiffersFromPublished = false;
   }
+
+  c.canEditTraining = !!weekData.can_edit;
 
   c.weekData = { trainings, isException, exceptionLabel };
 
@@ -399,8 +956,22 @@ function renderPlanner() {
     });
   }
   const { trainings, isException } = c.weekData;
+  const weekBpId = c.mode === 'week' ? c.effectiveBlueprintId : c.activeBlueprintId;
+  const weekBpName = (c.blueprints || []).find((b) => String(b.id) === String(weekBpId))?.name || '';
   const mobileReadOnly = isPlannerMobileViewport();
-  const editable = !mobileReadOnly && ((c.mode === 'blueprint' && _editMode) || isException);
+  const editable = !mobileReadOnly && tpPlannerScheduleEditable();
+  const canUseInhuur = !mobileReadOnly && c.canEditTraining;
+  const inhuurInteractive = canUseInhuur && _inhuurMode && editable;
+  /** Segmented: teamrooster vs inhuur (zelfde gedrag als voorheen Inhuur-knop) */
+  const workmodeSegmentHtml = canUseInhuur
+    ? `<div class="tp-toolbar-group tp-toolbar-group--workmode" role="group" aria-label="Weergave op de tijdlijn">
+        <span class="tp-toolbar-group__label">Weergave</span>
+        <div class="tp-segmented" role="tablist">
+          <button type="button" role="tab" class="tp-seg${_inhuurMode ? '' : ' tp-seg--active'}" id="tp-workmode-teams" aria-selected="${_inhuurMode ? 'false' : 'true'}" title="Trainingen per team op de velden">Teamrooster</button>
+          <button type="button" role="tab" class="tp-seg${_inhuurMode ? ' tp-seg--active' : ''}" id="tp-workmode-inhuur" aria-selected="${_inhuurMode ? 'true' : 'false'}" title="Niet-beschikbare tijden intekenen per veld">Inhuur</button>
+        </div>
+      </div>`
+    : '';
 
   const isBlueprint = c.mode === 'blueprint';
 
@@ -415,9 +986,10 @@ function renderPlanner() {
   let contextBar = '';
   if (isBlueprint) {
     if (mobileReadOnly) {
+      const bpName = (c.blueprints || []).find((b) => String(b.id) === String(c.activeBlueprintId))?.name || 'Blauwdruk';
       const snapLabel = _activeSnapshotName
-        ? `<span class="tp-snap-name">${escHtml(_activeSnapshotName)}</span>`
-        : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
+        ? `<span class="tp-snap-name">${escHtml(bpName)} · ${escHtml(_activeSnapshotName)}</span>`
+        : `<span class="tp-snap-name">${escHtml(bpName)}</span>`;
       contextBar = `<div class="tp-context-bar tp-context-bar--mobile-readonly">
         <div class="tp-context-left">
           <span class="tp-mobile-readonly-hint" title="Gebruik een tablet of desktop om de planning te wijzigen">Alleen bekijken op mobiel</span>
@@ -426,30 +998,103 @@ function renderPlanner() {
         </div>
       </div>`;
     } else {
-      const snapLabel = _activeSnapshotName
-        ? `<span class="tp-snap-name" id="tp-rename-snapshot" title="Klik om naam te wijzigen">${escHtml(_activeSnapshotName)}</span>`
-        : '<span class="tp-snap-name-empty">Geen blauwdruk actief</span>';
+      const bpOpts = (c.blueprints || []).map((b) => {
+        const sel = String(b.id) === String(c.activeBlueprintId) ? ' selected' : '';
+        return `<option value="${b.id}"${sel}>${escHtml(b.name)}</option>`;
+      }).join('');
+      const bpSelect = c.canEditTraining
+        ? `<div class="tp-toolbar-group tp-toolbar-group--blueprint" role="group" aria-label="Actieve blauwdruk">
+            <span class="tp-toolbar-group__label">Blauwdruk-set</span>
+            <div class="tp-bp-controls">
+              <select id="tp-blueprint-select" class="tp-bp-select" title="Locaties, velden en standaardrooster voor deze set">${bpOpts}</select>
+              <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-new-blueprint" title="Nieuwe set: leeg of gekopieerd van huidige">Nieuwe set</button>
+              <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" id="tp-manage-blueprints" title="Naam wijzigen of set verwijderen">Beheren…</button>
+            </div>
+          </div>`
+        : `<div class="tp-toolbar-group tp-toolbar-group--readonly"><span class="tp-toolbar-group__label">Blauwdruk</span><span class="tp-bp-readonly">${escHtml((c.blueprints || []).find((b) => String(b.id) === String(c.activeBlueprintId))?.name || '—')}</span></div>`;
+      const archiefStatus = _activeSnapshotName
+        ? `<button type="button" class="tp-archief-chip tp-archief-chip--named" id="tp-rename-snapshot" title="Actief archief — klik om de naam te wijzigen"><span class="tp-archief-chip__k">Archief</span><span class="tp-archief-chip__v">${escHtml(_activeSnapshotName)}</span></button>`
+        : '<span class="tp-archief-chip tp-archief-chip--empty" title="Nog geen rooster uit archief geactiveerd"><span class="tp-archief-chip__k">Archief</span><span class="tp-archief-chip__v">—</span></span>';
       const lockBtn = _editMode
-        ? '<button class="tp-ctx-btn tp-ctx-edit-active" id="tp-toggle-edit" title="Bewerken uitschakelen">✏️ Bewerken</button>'
-        : '<button class="tp-ctx-btn" id="tp-toggle-edit" title="Bewerken inschakelen">🔒 Vergrendeld</button>';
+        ? '<button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-btn--edit-on" id="tp-toggle-edit" title="Schakel terug naar alleen bekijken">Bewerken aan</button>'
+        : '<button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-toggle-edit" title="Blauwdruk en rooster kunnen wijzigen">Alleen bekijken</button>';
       const undoDisabled = _undoStack.length === 0 ? ' disabled' : '';
       const redoDisabled = _redoStack.length === 0 ? ' disabled' : '';
-      const editActions = _editMode ? `
-        <button class="tp-ctx-btn" id="tp-undo" title="Ongedaan maken"${undoDisabled}>↩ Undo</button>
-        <button class="tp-ctx-btn" id="tp-redo" title="Opnieuw"${redoDisabled}>↪ Redo</button>
-        <span class="tp-ctx-sep"></span>
-        <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
-        <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>
-        <span class="tp-ctx-sep"></span>
-        <button class="tp-ctx-btn tp-ctx-accent" id="tp-ai-optimize">🤖 AI assistent</button>
-        ${isTpSuperAdmin() ? '<button type="button" class="tp-ctx-btn" id="tp-ai-prompts" title="Systeemprompts voor de AI bewerken">📝 AI-prompts</button>' : ''}
-        <span class="tp-ctx-sep"></span>
-        <button class="tp-ctx-btn tp-ctx-danger" id="tp-clear-defaults">Leegmaken</button>` : `
-        <button class="tp-ctx-btn" id="tp-save-snapshot" title="Opslaan als">💾 Opslaan</button>
-        <button class="tp-ctx-btn" id="tp-load-snapshot" title="Blauwdruk laden">📂 Laden</button>`;
-      contextBar = `<div class="tp-context-bar">
-        <div class="tp-context-left">${lockBtn}<span class="tp-ctx-sep"></span>${snapLabel}</div>
-        <div class="tp-context-actions">${editActions}
+      let actionsRow = _editMode ? `
+        <div class="tp-toolbar-group" role="group" aria-label="Stappen terugdraaien">
+          <span class="tp-toolbar-group__label">Geschiedenis</span>
+          <div class="tp-btn-row">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-undo"${undoDisabled} title="Laatste wijziging ongedaan">Ongedaan</button>
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-redo"${redoDisabled} title="Ongedaan maken terugdraaien">Opnieuw</button>
+          </div>
+        </div>
+        <div class="tp-toolbar-divider" aria-hidden="true"></div>
+        <div class="tp-toolbar-group" role="group" aria-label="Rooster kopiëren">
+          <span class="tp-toolbar-group__label">Rooster-archief</span>
+          <div class="tp-btn-row">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-save-snapshot" title="Huidige standaardtrainingen bewaren onder een naam">Bewaren</button>
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-load-snapshot" title="Eerder bewaard rooster terugzetten">Laden</button>
+          </div>
+        </div>
+        <div class="tp-toolbar-divider" aria-hidden="true"></div>
+        <div class="tp-toolbar-group tp-toolbar-group--ai" role="group" aria-label="AI-hulp">
+          <span class="tp-toolbar-group__label">Assistent</span>
+          <div class="tp-btn-row">
+            <button type="button" class="tp-btn tp-btn--primary tp-btn--sm" id="tp-ai-optimize" title="Rooster voorstel via AI">AI-assistent</button>
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-auto-schedule" title="Lokaal rooster invullen (geen AI)">Automatisch</button>
+            ${isTpSuperAdmin() ? '<button type="button" class="tp-btn tp-btn--ghost tp-btn--sm" id="tp-ai-prompts" title="Systeemprompts (opperbeheerder)">AI-prompts</button>' : ''}
+          </div>
+        </div>
+        <div class="tp-toolbar-spacer" aria-hidden="true"></div>
+        <div class="tp-toolbar-group tp-toolbar-group--danger" role="group" aria-label="Blauwdruk leegmaken">
+          <button type="button" class="tp-btn tp-btn--danger-ghost tp-btn--sm" id="tp-clear-defaults" title="Alle standaardtrainingen in deze blauwdruk verwijderen">Alles wissen</button>
+        </div>` : `
+        <div class="tp-toolbar-group" role="group" aria-label="Rooster-archief">
+          <span class="tp-toolbar-group__label">Rooster-archief</span>
+          <div class="tp-btn-row">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-save-snapshot" title="Huidige roosterstaat bewaren">Bewaren</button>
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-load-snapshot" title="Archief laden of activeren">Laden</button>
+          </div>
+        </div>`;
+      if (_inhuurMode) {
+        actionsRow = '';
+      }
+      const inhuurNotice = _inhuurMode
+        ? editable
+          ? '<p class="tp-toolbar__notice" role="status">Je ziet <strong>inhuur</strong>. Schakel naar <strong>Teamrooster</strong> om trainingen te verplaatsen.</p>'
+          : '<p class="tp-toolbar__notice" role="status">Je ziet <strong>inhuur</strong> (alleen bekijken). Zet <strong>Bewerken aan</strong> om niet-beschikbare tijden te tekenen of te wijzigen. Schakel naar <strong>Teamrooster</strong> voor het teamrooster.</p>'
+        : '';
+      const draftBanner =
+        c.canEditTraining && c.draftDiffersFromPublished
+          ? `<div class="tp-draft-banner" role="region" aria-label="Concept rooster">
+            <p class="tp-draft-banner__text"><strong>Concept.</strong> Dit wijkt af van wat teams nu zien. Publiceer om live te zetten, of verwerp om de gepubliceerde versie in je concept te laden.</p>
+            <div class="tp-draft-banner__actions">
+              <button type="button" class="tp-btn tp-btn--primary tp-btn--sm" id="tp-publish-defaults">Publiceren voor teams</button>
+              <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-discard-draft">Concept verwerpen</button>
+            </div>
+          </div>`
+          : '';
+      const actionsRowClass = _inhuurMode ? ' tp-toolbar__row--hidden' : '';
+      contextBar = `<div class="tp-toolbar tp-toolbar--blueprint" role="region" aria-label="Blauwdrukwerkbalk">
+        <div class="tp-toolbar__row tp-toolbar__row--primary">
+          ${workmodeSegmentHtml}
+          ${workmodeSegmentHtml ? '<div class="tp-toolbar-divider" aria-hidden="true"></div>' : ''}
+          <div class="tp-toolbar-group" role="group" aria-label="Bewerkmodus">
+            <span class="tp-toolbar-group__label">Wijzigen</span>
+            ${lockBtn}
+          </div>
+          <div class="tp-toolbar-divider" aria-hidden="true"></div>
+          ${bpSelect}
+          <div class="tp-toolbar-spacer" aria-hidden="true"></div>
+          <div class="tp-toolbar-group tp-toolbar-group--archief-status" role="group" aria-label="Actief archief">
+            <span class="tp-toolbar-group__label">Actief</span>
+            ${archiefStatus}
+          </div>
+        </div>
+        ${draftBanner}
+        ${inhuurNotice}
+        <div class="tp-toolbar__row tp-toolbar__row--secondary${actionsRowClass}">
+          ${actionsRow}
         </div>
       </div>`;
     }
@@ -471,22 +1116,47 @@ function renderPlanner() {
     let weekStatus = '';
     if (isException) {
       weekStatus = `<span class="tp-badge tp-badge-exception">Afwijkend${c.weekData.exceptionLabel ? ': ' + escHtml(c.weekData.exceptionLabel) : ''}</span>
-        <button class="tp-ctx-btn tp-ctx-danger" id="tp-del-override">Afwijking verwijderen</button>`;
+        <button type="button" class="tp-btn tp-btn--danger-ghost tp-btn--sm" id="tp-del-override">Afwijking verwijderen</button>`;
     } else {
       weekStatus = `<span class="tp-badge tp-badge-readonly">Standaard schema</span>
-        <button class="tp-ctx-btn" id="tp-make-override">Afwijkende week maken</button>`;
+        <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm" id="tp-make-override">Afwijkende week maken</button>`;
     }
-    contextBar = `<div class="tp-context-bar">
-      <div class="tp-context-left">
-        <div class="tp-week-nav">
-          <button id="tp-prev-week">◀</button>
-          <span>${formatWeekLabel(c.isoWeek)}</span>
-          <button id="tp-next-week">▶</button>
+    contextBar = `<div class="tp-toolbar tp-toolbar--week" role="region" aria-label="Weekwerkbalk">
+      <div class="tp-toolbar__row tp-toolbar__row--primary">
+        ${workmodeSegmentHtml}
+        ${workmodeSegmentHtml ? '<div class="tp-toolbar-divider" aria-hidden="true"></div>' : ''}
+        <div class="tp-toolbar-group tp-toolbar-group--weeknav" role="group" aria-label="Week">
+          <span class="tp-toolbar-group__label">Week</span>
+          <div class="tp-week-nav">
+            <button type="button" id="tp-prev-week" aria-label="Vorige week">◀</button>
+            <span>${formatWeekLabel(c.isoWeek)}</span>
+            <button type="button" id="tp-next-week" aria-label="Volgende week">▶</button>
+          </div>
         </div>
+        ${weekBpName ? `<span class="tp-week-bp-hint" title="Voor deze week is dit het actieve schema (prioriteit / standaard of afwijkende set)">Blauwdruk: <strong>${escHtml(weekBpName)}</strong></span>` : ''}
+        <div class="tp-toolbar-spacer" aria-hidden="true"></div>
+        <div class="tp-toolbar-group tp-toolbar-group--week-status" role="group" aria-label="Deze week">${weekStatus}</div>
       </div>
-      <div class="tp-context-actions">${weekStatus}</div>
+      ${_inhuurMode && canUseInhuur && !editable ? '<p class="tp-toolbar__notice" role="status">Je ziet <strong>inhuur</strong> (alleen bekijken). Maak een <strong>afwijkende week</strong> om niet-beschikbare tijden te tekenen of te wijzigen.</p>' : ''}
     </div>`;
   }
+
+  const inhuurScopeDisabled = c.mode === 'week' && !editable ? ' disabled' : '';
+  const inhuurReadonlyHint =
+    _inhuurMode && canUseInhuur && !editable
+      ? c.mode === 'blueprint'
+        ? '<p class="tp-inhuur-banner-sub text-small text-muted" role="status">Zet <strong>Bewerken aan</strong> in de werkbalk om hier te kunnen tekenen of blokken te wijzigen.</p>'
+        : '<p class="tp-inhuur-banner-sub text-small text-muted" role="status">Maak een <strong>afwijkende week</strong> om hier te kunnen tekenen of blokken te wijzigen.</p>'
+      : '';
+  const inhuurBanner = _inhuurMode ? `<div class="tp-inhuur-banner" role="region" aria-label="Inhuurmodus">
+    <p class="tp-inhuur-banner-text"><strong>Inhuurmodus.</strong>${editable ? ' Sleep op een leeg stuk tijdlijn om <em>niet-beschikbaar</em> te intekenen (tijden zie je tijdens het slepen). Sleep <strong>ook verticaal over meerdere velden</strong> om die velden in één keer dezelfde periode te blokkeren. Tik kort voor één kwartier op één veld. Bestaande blokken: <strong>verslepen</strong> op het midden, <strong>linker- en rechterrand</strong> voor de duur, <strong>dubbelklik</strong> verwijdert.' : ' Je bekijkt welke tijden als niet-beschikbaar zijn gemarkeerd. Zet bewerken aan (blauwdruk) of werk in een afwijkende week om te wijzigen.'}</p>
+    ${inhuurReadonlyHint}
+    ${c.mode === 'week' ? `<div class="tp-inhuur-scope">
+      <span class="tp-inhuur-scope-label">Nieuwe blokken gelden:</span>
+      <label class="tp-inhuur-radio"><input type="radio" name="tp-inhuur-scope" value="this_week"${_inhuurWeekScope === 'this_week' ? ' checked' : ''}${inhuurScopeDisabled} /> Alleen week ${escHtml(normalizeTpIsoWeek(c.isoWeek))}</label>
+      <label class="tp-inhuur-radio"><input type="radio" name="tp-inhuur-scope" value="recurring"${_inhuurWeekScope === 'recurring' ? ' checked' : ''}${inhuurScopeDisabled} /> Elke week (zoals blauwdruk)</label>
+    </div>` : '<p class="tp-inhuur-banner-sub text-small text-muted">In de blauwdruk gelden intekeningen voor elke week.</p>'}
+  </div>` : '';
 
   // Location + venue management panel
   let mgmtBarHtml = '';
@@ -543,6 +1213,25 @@ function renderPlanner() {
           ? dayMatches.filter(m => m.venue_id === null) : [];
 
         let blocksHtml = '';
+        const unavForRow = (c.venueUnavailability || []).filter(
+          (u) => u.venue_id === venue.id && u.day_of_week === dow && unavailabilityAppliesToView(u, c)
+        );
+        for (const u of unavForRow) {
+          const uStart = timeToMinutes(u.start_time) - HOUR_START * 60;
+          const uDur = timeToMinutes(u.end_time) - timeToMinutes(u.start_time);
+          if (uStart + uDur <= 0 || uStart >= TOTAL_MINUTES) continue;
+          const clipStart = Math.max(0, uStart);
+          const clipEnd = Math.min(TOTAL_MINUTES, uStart + uDur);
+          const leftPct = (clipStart / TOTAL_MINUTES) * 100;
+          const widthPct = ((clipEnd - clipStart) / TOTAL_MINUTES) * 100;
+          const unavTitle = u.note ? `Niet beschikbaar: ${u.note}` : 'Veld niet beschikbaar (geen huur)';
+          const unavInter = inhuurInteractive ? ' tp-unavail-block--interactive' : '';
+          const unavHint = inhuurInteractive ? `${unavTitle} — verslepen; linker/rechter rand voor duur; dubbelklik verwijdert` : unavTitle;
+          const unavChrome = inhuurInteractive
+            ? '<span class="tp-resize-left"></span><span class="tp-resize-right"></span>'
+            : '';
+          blocksHtml += `<div class="tp-unavail-block${unavInter}" data-unavail-id="${u.id}" title="${attrSafe(unavHint)}" style="left:${leftPct}%;width:${widthPct}%"${ inhuurInteractive ? '' : ' aria-hidden="true"'}>${unavChrome}</div>`;
+        }
         for (const t of vTrainings) {
           const startMin = timeToMinutes(t.start_time) - HOUR_START * 60;
           const dur = timeToMinutes(t.end_time) - timeToMinutes(t.start_time);
@@ -550,7 +1239,10 @@ function renderPlanner() {
           const widthPct = (dur / TOTAL_MINUTES) * 100;
           const colorCls = teamColorClass(t.team_id);
           const tName = t.team_name || `Team ${t.team_id}`;
-          blocksHtml += `<div class="tp-block ${colorCls}${editable ? '' : ' readonly'}" title="${escHtml(tName)}" data-training-id="${t.id}" data-team-id="${t.team_id}" data-source="${c.mode === 'blueprint' ? 'default' : 'exception'}" style="left:${leftPct}%;width:${widthPct}%">${editable ? '<span class="tp-resize-left"></span>' : ''}<span class="tp-block-label">${escHtml(tName)}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
+          const hasConflict = trainingOverlapsUnavailability(t, c.venueUnavailability || [], dow, c);
+          const conflictCls = hasConflict ? ' tp-block-unavailable-conflict' : '';
+          const titleBase = hasConflict ? `${tName} — conflict: training valt in niet-beschikbaar tijdslot` : tName;
+          blocksHtml += `<div class="tp-block tp-schedule-block ${colorCls}${conflictCls}${editable ? '' : ' readonly'}" title="${attrSafe(titleBase)}" data-training-id="${t.id}" data-team-id="${t.team_id}" data-source="${c.mode === 'blueprint' ? 'default' : 'exception'}" style="left:${leftPct}%;width:${widthPct}%">${hasConflict ? '<span class="tp-conflict-badge" aria-hidden="true">!</span>' : ''}${editable ? '<span class="tp-resize-left"></span>' : ''}<span class="tp-block-label">${escHtml(tName)}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
         }
 
         for (const m of [...vMatches, ...unmatchedOnFirst]) {
@@ -559,7 +1251,7 @@ function renderPlanner() {
           if (startMin < 0 || startMin + dur > TOTAL_MINUTES) continue;
           const leftPct = (startMin / TOTAL_MINUTES) * 100;
           const widthPct = (dur / TOTAL_MINUTES) * 100;
-          blocksHtml += `<div class="tp-block match${editable ? '' : ' readonly'}" title="${m.label}" data-match-key="${escHtml(m.key)}" style="left:${leftPct}%;width:${widthPct}%"><span class="tp-block-label">${m.label}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
+          blocksHtml += `<div class="tp-block tp-schedule-block match${editable ? '' : ' readonly'}" title="${m.label}" data-match-key="${escHtml(m.key)}" style="left:${leftPct}%;width:${widthPct}%"><span class="tp-block-label">${m.label}</span>${editable ? '<span class="tp-resize-right"></span>' : ''}</div>`;
         }
 
         const rowLabel = locVenues.length > 1 || c.locations.length > 1
@@ -667,24 +1359,26 @@ function renderPlanner() {
   }
 
   c.container.innerHTML = `
-    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${mobileReadOnly || (isBlueprint && !_editMode) ? ' tp-locked' : ''}${mobileReadOnly ? ' tp-mobile-readonly' : ''}${hasUnplannedDock ? ' tp-has-unplanned-dock' : ''}">
+    <div class="tp-wrapper${isBlueprint ? ' tp-mode-blueprint' : ''}${mobileReadOnly || (isBlueprint && !_editMode) ? ' tp-locked' : ''}${mobileReadOnly ? ' tp-mobile-readonly' : ''}${hasUnplannedDock ? ' tp-has-unplanned-dock' : ''}${_inhuurMode ? ' tp-inhuur-mode' : ''}${inhuurInteractive ? ' tp-inhuur-interactive' : ''}">
       <div class="tp-header">
         <h1>Trainingsplanner</h1>
         ${modeTabs}
       </div>
+      ${inhuurBanner}
       ${contextBar}
       <div class="tp-panels">
-        <details class="tp-panel">
+        ${_inhuurMode ? `<details class="tp-panel tp-panel--locations">
           <summary>Locaties & velden</summary>
           <div class="tp-venue-bar">${mgmtBarHtml}</div>
-        </details>
-        ${teamOverviewHtml}
+        </details>` : ''}
+        ${_inhuurMode ? '' : teamOverviewHtml}
       </div>
       ${daysHtml}
       ${unplannedDockHtml}
     </div>`;
 
   wireEvents();
+  syncTrainingBlockSelectionClasses();
 
   // Restore scroll positions after DOM rebuild
   c.container.querySelectorAll('.tp-day').forEach(dayEl => {
@@ -714,6 +1408,10 @@ function buildHourLines() {
     const halfPct = (((h - HOUR_START) * 60 + 30) / TOTAL_MINUTES) * 100;
     html += `<span class="tp-hour-line half" style="left:${halfPct}%"></span>`;
   }
+  if (PREFERRED_END_ABS_MIN > HOUR_START * 60 && PREFERRED_END_ABS_MIN < HOUR_END * 60) {
+    const prefLeft = ((PREFERRED_END_ABS_MIN - HOUR_START * 60) / TOTAL_MINUTES) * 100;
+    html += `<span class="tp-hour-line tp-preferred-end" style="left:${prefLeft}%" title="Voorkeur: voor 22:30 eindigen (uiterlijk ${HOUR_END}:00)"></span>`;
+  }
   return html;
 }
 
@@ -723,8 +1421,58 @@ function wireEvents() {
   const c = _ctx;
   const el = c.container;
 
-  el.querySelector('#tp-to-week')?.addEventListener('click', () => { if (c.mode !== 'week') { c.mode = 'week'; _editMode = false; _undoStack.length = 0; _redoStack.length = 0; loadAndRender(); } });
-  el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => { if (c.mode !== 'blueprint') { c.mode = 'blueprint'; loadAndRender(); } });
+  el.querySelector('#tp-to-week')?.addEventListener('click', () => {
+    if (c.mode !== 'week') {
+      c.mode = 'week';
+      _editMode = false;
+      _undoStack.length = 0;
+      _redoStack.length = 0;
+      _inhuurMode = false;
+      _selectedTrainingIds.clear();
+      loadAndRender();
+    }
+  });
+  el.querySelector('#tp-to-blueprint')?.addEventListener('click', () => {
+    if (c.mode !== 'blueprint') {
+      c.mode = 'blueprint';
+      _inhuurMode = false;
+      _selectedTrainingIds.clear();
+      loadAndRender();
+    }
+  });
+
+  el.querySelector('#tp-workmode-teams')?.addEventListener('click', () => {
+    if (!_inhuurMode) return;
+    _inhuurMode = false;
+    renderPlanner();
+  });
+  el.querySelector('#tp-workmode-inhuur')?.addEventListener('click', () => {
+    if (_inhuurMode) return;
+    _inhuurMode = true;
+    clearTrainingBlockSelection();
+    if (c.mode === 'week') _inhuurWeekScope = 'this_week';
+    renderPlanner();
+  });
+
+  const bpSel = el.querySelector('#tp-blueprint-select');
+  if (bpSel) {
+    bpSel.addEventListener('change', async (e) => {
+      const id = e.target.value;
+      if (!id || String(id) === String(c.activeBlueprintId)) return;
+      try {
+        await api(`/api/training/blueprints/${id}/activate`, { method: 'POST' });
+        showToast('Blauwdruk geactiveerd', 'success');
+        _undoStack.length = 0;
+        _redoStack.length = 0;
+        loadAndRender();
+      } catch (err) {
+        showToast(err.message, 'error');
+        bpSel.value = String(c.activeBlueprintId ?? '');
+      }
+    });
+  }
+  el.querySelector('#tp-new-blueprint')?.addEventListener('click', () => showNewBlueprintModal());
+  el.querySelector('#tp-manage-blueprints')?.addEventListener('click', () => showManageBlueprintsModal());
 
   el.querySelector('#tp-toggle-edit')?.addEventListener('click', () => { _editMode = !_editMode; renderPlanner(); });
   el.querySelector('#tp-undo')?.addEventListener('click', () => performUndo());
@@ -732,9 +1480,33 @@ function wireEvents() {
   el.querySelector('#tp-save-snapshot')?.addEventListener('click', () => showSaveSnapshotModal());
   el.querySelector('#tp-load-snapshot')?.addEventListener('click', () => showLoadSnapshotModal());
   el.querySelector('#tp-ai-optimize')?.addEventListener('click', () => triggerAiOptimize());
+  el.querySelector('#tp-auto-schedule')?.addEventListener('click', () => triggerAutoSchedule());
   el.querySelector('#tp-ai-prompts')?.addEventListener('click', () => openTrainingAiPromptsModal());
   el.querySelector('#tp-rename-snapshot')?.addEventListener('click', () => showRenameSnapshotModal());
   el.querySelector('#tp-clear-defaults')?.addEventListener('click', () => clearAllDefaults());
+  el.querySelector('#tp-publish-defaults')?.addEventListener('click', async () => {
+    try {
+      await api('/api/training/defaults/publish', { method: 'POST', body: {} });
+      showToast('Rooster gepubliceerd voor teams', 'success');
+      _undoStack.length = 0;
+      _redoStack.length = 0;
+      loadAndRender();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+  el.querySelector('#tp-discard-draft')?.addEventListener('click', async () => {
+    if (!confirm('Concept verwerpen? Ongepubliceerde wijzigingen gaan verloren; het concept wordt gelijk aan de live versie.')) return;
+    try {
+      await api('/api/training/defaults/discard-draft', { method: 'POST', body: {} });
+      showToast('Concept teruggezet naar gepubliceerde versie', 'info');
+      _undoStack.length = 0;
+      _redoStack.length = 0;
+      loadAndRender();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
   el.querySelector('#tp-prev-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, -1); loadAndRender(); });
   el.querySelector('#tp-next-week')?.addEventListener('click', () => { c.isoWeek = shiftWeek(c.isoWeek, 1); loadAndRender(); });
 
@@ -772,7 +1544,8 @@ function wireEvents() {
       e.stopPropagation();
       if (!confirm('Locatie en alle velden verwijderen?')) return;
       try {
-        await api(`/api/training/locations/${btn.dataset.id}`, { method: 'DELETE' });
+        const bpQ = c.contextBlueprintId != null ? `?blueprint_id=${c.contextBlueprintId}` : '';
+        await api(`/api/training/locations/${btn.dataset.id}${bpQ}`, { method: 'DELETE' });
         c.locations = c.locations.filter(l => String(l.id) !== btn.dataset.id);
         c.venues = c.venues.filter(v => String(v.location_id) !== btn.dataset.id);
         loadAndRender();
@@ -785,7 +1558,8 @@ function wireEvents() {
       e.stopPropagation();
       if (!confirm('Veld verwijderen?')) return;
       try {
-        await api(`/api/training/venues/${btn.dataset.id}`, { method: 'DELETE' });
+        const bpQ = c.contextBlueprintId != null ? `?blueprint_id=${c.contextBlueprintId}` : '';
+        await api(`/api/training/venues/${btn.dataset.id}${bpQ}`, { method: 'DELETE' });
         c.venues = c.venues.filter(v => String(v.id) !== btn.dataset.id);
         loadAndRender();
       } catch (err) { showToast(err.message, 'error'); }
@@ -793,12 +1567,14 @@ function wireEvents() {
   });
 
   const mobileReadOnly = isPlannerMobileViewport();
-  const editable = !mobileReadOnly && ((c.mode === 'blueprint' && _editMode) || c.weekData?.isException);
+  const editable = !mobileReadOnly && tpPlannerScheduleEditable();
+  const canUseInhuur = !mobileReadOnly && c.canEditTraining;
 
-  if (editable) {
+  if (editable && !_inhuurMode) {
     el.querySelectorAll('.tp-venue-track').forEach(track => {
       track.addEventListener('click', (e) => {
         if (e.target.closest('.tp-block')) return;
+        clearTrainingBlockSelection();
         const row = track.closest('.tp-venue-row');
         const venueId = parseInt(row.dataset.venueId, 10);
         const dow = parseInt(row.dataset.dow, 10);
@@ -813,6 +1589,13 @@ function wireEvents() {
     el.querySelectorAll('.tp-block:not(.match):not(.readonly)').forEach(block => {
       block.addEventListener('click', (e) => {
         if (e.target.classList.contains('tp-resize-left') || e.target.classList.contains('tp-resize-right')) return;
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleTrainingBlockSelection(block);
+          return;
+        }
+        clearTrainingBlockSelection();
         showBlockPopover(block, e);
       });
       setupDrag(block);
@@ -832,6 +1615,16 @@ function wireEvents() {
       renderPlanner();
     });
     el.querySelectorAll('.tp-unplanned-chip').forEach((chip) => setupUnplannedChipDrag(chip));
+  }
+
+  if (_inhuurMode && canUseInhuur) {
+    if (editable) {
+      setupInhuurPainting(el);
+      el.querySelectorAll('input[name="tp-inhuur-scope"]').forEach((r) => {
+        r.addEventListener('change', () => { _inhuurWeekScope = r.value; });
+      });
+    }
+    el.querySelectorAll('.tp-unavail-block--interactive').forEach((ub) => setupUnavailInteractions(ub));
   }
 
   // Zoom: Ctrl+wheel (desktop) + +/- knoppen (mobiel, zie CSS)
@@ -892,12 +1685,137 @@ function wireEvents() {
 
 // ─── Drag ───────────────────────────────────────────────────────────────────
 
+function clearTrainingBlockSelection() {
+  _selectedTrainingIds.clear();
+  const c = _ctx?.container;
+  if (!c) return;
+  c.querySelectorAll('.tp-block--selected').forEach((el) => el.classList.remove('tp-block--selected'));
+}
+
+function toggleTrainingBlockSelection(block) {
+  const id = block?.dataset?.trainingId;
+  if (!id) return;
+  if (_selectedTrainingIds.has(id)) {
+    _selectedTrainingIds.delete(id);
+    block.classList.remove('tp-block--selected');
+  } else {
+    _selectedTrainingIds.add(id);
+    block.classList.add('tp-block--selected');
+  }
+}
+
+function syncTrainingBlockSelectionClasses() {
+  const c = _ctx?.container;
+  if (!c) return;
+  c.querySelectorAll('.tp-block--selected').forEach((el) => el.classList.remove('tp-block--selected'));
+  const stale = [];
+  for (const id of _selectedTrainingIds) {
+    const b = c.querySelector(`.tp-block[data-training-id="${id}"]`);
+    if (b && !b.classList.contains('match') && !b.classList.contains('readonly')) {
+      b.classList.add('tp-block--selected');
+    } else {
+      stale.push(id);
+    }
+  }
+  stale.forEach((rid) => _selectedTrainingIds.delete(rid));
+}
+
 function setupDrag(block) {
   block.addEventListener('pointerdown', (e) => {
     if (e.target.classList.contains('tp-resize-left') || e.target.classList.contains('tp-resize-right')) return;
+    if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
+
+    const selectedEls = [..._ctx.container.querySelectorAll('.tp-block--selected')].filter(
+      (b) => b.dataset.trainingId && b.dataset.source && !b.classList.contains('match')
+    );
+    const isGroup = selectedEls.length >= 2 && selectedEls.includes(block);
+
+    if (!isGroup) {
+      clearTrainingBlockSelection();
+    }
+
+    if (isGroup) {
+      const groupState = selectedEls.map((el) => {
+        const row = el.closest('.tp-venue-row');
+        const track = el.closest('.tp-venue-track');
+        const trackW = track.offsetWidth;
+        const initLeftMin = pxToMinutes(el.offsetLeft, trackW);
+        const widthPct = parseFloat(el.style.width);
+        const durMin = Math.round((widthPct / 100) * TOTAL_MINUTES / SNAP) * SNAP;
+        return {
+          el, row, track, initLeftMin, durMin, id: el.dataset.trainingId, source: el.dataset.source,
+        };
+      });
+      const primary = groupState.find((s) => s.el === block);
+      if (!primary) return;
+
+      groupState.forEach((s) => s.el.classList.add('dragging'));
+      _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.add('tp-dragging-active'));
+
+      const grabOffsetX = e.clientX - primary.track.getBoundingClientRect().left - primary.el.offsetLeft;
+      let moved = false;
+
+      const onMove = (ev) => {
+        moved = true;
+        const tr = primary.track.getBoundingClientRect();
+        const tw = primary.track.offsetWidth;
+        const localX = ev.clientX - tr.left - grabOffsetX;
+        const newPrimaryLeftMin = pxToMinutes(Math.max(0, Math.min(localX, tw)), tw);
+        let delta = newPrimaryLeftMin - primary.initLeftMin;
+        let minDelta = -Infinity;
+        let maxDelta = Infinity;
+        for (const s of groupState) {
+          minDelta = Math.max(minDelta, -s.initLeftMin);
+          maxDelta = Math.min(maxDelta, TOTAL_MINUTES - s.durMin - s.initLeftMin);
+        }
+        delta = Math.max(minDelta, Math.min(maxDelta, delta));
+
+        for (const s of groupState) {
+          const lm = s.initLeftMin + delta;
+          s.el.style.left = `${(lm / TOTAL_MINUTES) * 100}%`;
+        }
+      };
+
+      const onUp = async () => {
+        groupState.forEach((s) => s.el.classList.remove('dragging'));
+        _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.remove('tp-dragging-active'));
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        if (!moved) return;
+
+        snapshotBeforeMutation();
+        const updates = groupState.map((s) => {
+          const trackW = s.track.offsetWidth;
+          const leftMin = pxToMinutes(s.el.offsetLeft, trackW);
+          const startMin = HOUR_START * 60 + leftMin;
+          const endMin = startMin + s.durMin;
+          const row = s.el.closest('.tp-venue-row');
+          return {
+            endpoint: s.source === 'default' ? `/api/training/defaults/${s.id}` : `/api/training/exceptions/${s.id}`,
+            body: {
+              venue_id: parseInt(row.dataset.venueId, 10),
+              day_of_week: parseInt(row.dataset.dow, 10),
+              start_time: minutesToTime(startMin),
+              end_time: minutesToTime(Math.min(endMin, HOUR_END * 60)),
+            },
+          };
+        });
+        try {
+          await Promise.all(updates.map((u) => api(u.endpoint, { method: 'PATCH', body: u.body })));
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+        loadAndRender();
+      };
+
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      return;
+    }
+
     block.classList.add('dragging');
-    _ctx.container.querySelectorAll('.tp-day').forEach(d => d.classList.add('tp-dragging-active'));
+    _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.add('tp-dragging-active'));
 
     const initTrack = block.closest('.tp-venue-track');
     const initTrackRect = initTrack.getBoundingClientRect();
@@ -909,7 +1827,6 @@ function setupDrag(block) {
     const onMove = (ev) => {
       moved = true;
 
-      // Move to whichever row the mouse is over
       const mouseY = ev.clientY;
       for (const row of allRows) {
         const r = row.getBoundingClientRect();
@@ -920,7 +1837,6 @@ function setupDrag(block) {
         }
       }
 
-      // Position relative to the current track
       const currentTrack = block.closest('.tp-venue-track');
       const trackRect = currentTrack.getBoundingClientRect();
       const trackW = currentTrack.offsetWidth;
@@ -931,7 +1847,7 @@ function setupDrag(block) {
 
     const onUp = async () => {
       block.classList.remove('dragging');
-      _ctx.container.querySelectorAll('.tp-day').forEach(d => d.classList.remove('tp-dragging-active'));
+      _ctx.container.querySelectorAll('.tp-day').forEach((d) => d.classList.remove('tp-dragging-active'));
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       if (!moved) return;
@@ -943,7 +1859,7 @@ function setupDrag(block) {
       const leftMin = pxToMinutes(block.offsetLeft, trackW);
       const startMin = HOUR_START * 60 + leftMin;
       const widthPct = parseFloat(block.style.width);
-      const durMin = Math.round(widthPct / 100 * TOTAL_MINUTES / SNAP) * SNAP;
+      const durMin = Math.round((widthPct / 100) * TOTAL_MINUTES / SNAP) * SNAP;
       const endMin = startMin + durMin;
 
       const id = block.dataset.trainingId;
@@ -1044,7 +1960,7 @@ function setupUnplannedChipDrag(chip) {
           end_time: minutesToTime(endMin),
         };
         if (_ctx.mode === 'blueprint') {
-          await api('/api/training/defaults', { method: 'POST', body });
+          await api('/api/training/defaults', { method: 'POST', body: { ...body } });
         } else {
           await api('/api/training/exceptions', { method: 'POST', body: { ...body, iso_week: _ctx.isoWeek } });
         }
@@ -1068,6 +1984,7 @@ function setupResize(block) {
     handle.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      clearTrainingBlockSelection();
       handle.setPointerCapture(e.pointerId);
 
       const track = block.closest('.tp-venue-track');
@@ -1214,6 +2131,11 @@ function showTeamSettingsModal(teamId) {
   const team = _ctx.teams.find(t => t.id === teamId);
   if (!team) return;
 
+  const bpId = _ctx.contextBlueprintId;
+  const bpName = (_ctx.blueprints || []).find(b => String(b.id) === String(bpId))?.name || 'deze blauwdruk';
+  const clubDef = team.trainings_per_week_club_default != null ? team.trainings_per_week_club_default : team.trainings_per_week;
+  const hasBpOverride = !!team.has_blueprint_trainings_per_week_override;
+
   let overlay = document.querySelector('.tp-modal-overlay');
   if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
 
@@ -1226,6 +2148,7 @@ function showTeamSettingsModal(teamId) {
   overlay.innerHTML = `<div class="tp-modal" style="max-width:420px">
     <h3 style="margin:0 0 4px">${escHtml(team.display_name)}</h3>
     <p style="margin:0 0 16px;font-size:.82rem;color:var(--text-muted)">Trainingsvoorkeuren voor dit team</p>
+    ${bpId != null ? `<p class="text-small text-muted" style="margin:-8px 0 12px;line-height:1.35">Trainingen per week geldt voor blauwdruk <strong>${escHtml(bpName)}</strong>. Clubstandaard: <strong>${clubDef}×</strong>${hasBpOverride ? ' (nu afgeweken)' : ''}.</p>` : ''}
     <div class="tp-team-settings-grid">
       <label for="tp-ts-freq">Trainingen per week</label>
       <select id="tp-ts-freq" class="form-control">
@@ -1241,6 +2164,7 @@ function showTeamSettingsModal(teamId) {
       <label for="tp-ts-max">Maximale duur</label>
       <select id="tp-ts-max" class="form-control">${durOpts}</select>
     </div>
+    ${bpId != null && hasBpOverride ? `<p style="margin:12px 0 0"><button type="button" class="btn btn-sm btn-ghost tp-ts-reset-bp-freq">Clubstandaard voor deze blauwdruk (${clubDef}×)</button></p>` : ''}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
       <button class="btn btn-sm btn-secondary tp-ts-cancel">Annuleren</button>
       <button class="btn btn-sm btn-primary tp-ts-save">Opslaan</button>
@@ -1252,23 +2176,489 @@ function showTeamSettingsModal(teamId) {
   overlay.querySelector('#tp-ts-max').value = team.max_training_minutes || 90;
 
   overlay.querySelector('.tp-ts-cancel').onclick = () => { overlay.style.display = 'none'; };
+  overlay.querySelector('.tp-ts-reset-bp-freq')?.addEventListener('click', async () => {
+    if (!bpId) return;
+    try {
+      await api(`/api/training/teams/${teamId}`, {
+        method: 'PATCH',
+        body: { blueprint_id: bpId, use_club_default_trainings_per_week: true },
+      });
+      team.trainings_per_week = clubDef;
+      team.has_blueprint_trainings_per_week_override = false;
+      team.trainings_per_week_club_default = clubDef;
+      overlay.style.display = 'none';
+      showToast && showToast('Frequentie terug naar clubstandaard voor deze blauwdruk');
+      loadAndRender();
+    } catch (err) { showToast && showToast(err.message, 'error'); }
+  });
   overlay.querySelector('.tp-ts-save').onclick = async () => {
     const freq = parseInt(overlay.querySelector('#tp-ts-freq').value, 10);
     const minM = parseInt(overlay.querySelector('#tp-ts-min').value, 10);
     const maxM = parseInt(overlay.querySelector('#tp-ts-max').value, 10);
     if (minM > maxM) { showToast && showToast('Minimum mag niet hoger zijn dan maximum', 'error'); return; }
     try {
-      await api(`/api/training/teams/${teamId}`, {
-        method: 'PATCH',
-        body: { trainings_per_week: freq, min_training_minutes: minM, max_training_minutes: maxM },
-      });
+      const body = { min_training_minutes: minM, max_training_minutes: maxM };
+      if (bpId != null) {
+        body.blueprint_id = bpId;
+        body.trainings_per_week = freq;
+      } else {
+        body.trainings_per_week = freq;
+      }
+      await api(`/api/training/teams/${teamId}`, { method: 'PATCH', body });
       team.trainings_per_week = freq;
       team.min_training_minutes = minM;
       team.max_training_minutes = maxM;
+      if (bpId != null) {
+        team.has_blueprint_trainings_per_week_override = true;
+        if (team.trainings_per_week_club_default == null) team.trainings_per_week_club_default = clubDef;
+      }
       overlay.style.display = 'none';
       showToast && showToast(`${team.display_name} bijgewerkt`);
+      loadAndRender();
     } catch (err) { showToast && showToast(err.message, 'error'); }
   };
+}
+
+// ─── Blueprint modals ───────────────────────────────────────────────────────
+
+function showNewBlueprintModal() {
+  const c = _ctx;
+  if (!c.canEditTraining) return;
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
+  overlay.innerHTML = `<div class="tp-modal" style="max-width:420px">
+    <h3 style="margin:0 0 12px">Nieuwe blauwdruk</h3>
+    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">Per blauwdruk: eigen locaties en velden, eigen inhuur-slots en eigen teamrooster. Teams blijven voor de hele club hetzelfde.</p>
+    <input id="tp-bp-new-name" class="form-control" placeholder="Naam, bijv. Zomeraccommodatie" style="margin-bottom:10px" />
+    <fieldset style="border:none;margin:0 0 12px;padding:0">
+      <legend class="tp-sr-only">Soort blauwdruk</legend>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:.86rem">
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;line-height:1.35">
+          <input type="radio" name="tp-bp-new-kind" value="standard" checked style="margin-top:3px" />
+          <span><strong>Basisrooster</strong> — geldt voor alle weken (tenzij een uitwijk wint op prioriteit).</span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;line-height:1.35">
+          <input type="radio" name="tp-bp-new-kind" value="exceptional" style="margin-top:3px" />
+          <span><strong>Uitwijkrooster</strong> — daarna kies je in <em>Beheren</em> per jaar de actieve ISO-weken.</span>
+        </label>
+      </div>
+    </fieldset>
+    <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;font-size:.88rem;cursor:pointer;line-height:1.35">
+      <input type="checkbox" id="tp-bp-copy" checked style="margin-top:3px" />
+      <span>Kopieer locaties, velden, inhuur en rooster van de <strong>huidige</strong> blauwdruk</span>
+    </label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" class="btn btn-sm btn-secondary tp-bp-new-cancel">Annuleren</button>
+      <button type="button" class="btn btn-sm btn-primary tp-bp-new-save">Aanmaken</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  const nameInput = overlay.querySelector('#tp-bp-new-name');
+  nameInput?.focus();
+  overlay.querySelector('.tp-bp-new-cancel')?.addEventListener('click', () => { overlay.style.display = 'none'; });
+  overlay.querySelector('.tp-bp-new-save')?.addEventListener('click', async () => {
+    const name = nameInput?.value?.trim();
+    if (!name) { nameInput?.focus(); return; }
+    const copy = overlay.querySelector('#tp-bp-copy')?.checked;
+    const kind = overlay.querySelector('input[name="tp-bp-new-kind"]:checked')?.value === 'exceptional' ? 'exceptional' : 'standard';
+    const body = { name, activate: true, scope: kind };
+    if (copy && c.activeBlueprintId) body.copy_from_blueprint_id = c.activeBlueprintId;
+    try {
+      await api('/api/training/blueprints', { method: 'POST', body });
+      overlay.style.display = 'none';
+      showToast(`Blauwdruk "${name}" is nu actief`, 'success');
+      _undoStack.length = 0;
+      _redoStack.length = 0;
+      loadAndRender();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
+  nameInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') overlay.querySelector('.tp-bp-new-save')?.click();
+  });
+}
+
+function showManageBlueprintsModal() {
+  const c = _ctx;
+  if (!c.canEditTraining) return;
+  const bps = [...(c.blueprints || [])].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'nl', { sensitivity: 'base' })
+  );
+  const onlyOne = bps.length <= 1;
+  const basisBps = bps.filter((b) => b.scope !== 'exceptional');
+  const uitwijkBps = bps.filter((b) => b.scope === 'exceptional');
+  const basisCount = basisBps.length;
+
+  function rowDelMeta(b) {
+    const active = String(b.id) === String(c.activeBlueprintId);
+    const delDisabled = onlyOne || active;
+    let delTitle = '';
+    if (onlyOne) delTitle = 'Er moet minstens één blauwdruk blijven bestaan';
+    else if (active) delTitle = 'Kies eerst een andere set in de kiezer boven het rooster; daarna kun je deze verwijderen';
+    return { active, delDisabled, delTitle };
+  }
+
+  function renderBasisRow(b) {
+    const { active, delDisabled, delTitle } = rowDelMeta(b);
+    const prio = Number.isFinite(b.priority) ? b.priority : 0;
+    const canToUitwijk = basisCount > 1;
+    return `<li class="tp-bp-manage-row tp-bp-manage-row--basis" data-bp-id="${b.id}">
+        <div class="tp-bp-manage-view">
+          <div class="tp-bp-manage-namecol">
+            <span class="tp-bp-badge-basis">Basisrooster</span>
+            <span class="tp-bp-manage-name">${escHtml(b.name)}</span>
+            ${active ? '<span class="tp-badge tp-badge-readonly tp-bp-manage-actief">In kiezer</span>' : ''}
+            <span class="tp-bp-manage-meta">Prioriteit <strong>${prio}</strong> — geldt voor elke week waarin geen uitwijkrooster met hogere prioriteit wint.</span>
+          </div>
+          <div class="tp-bp-manage-actions">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-manage-rename">Hernoemen</button>
+            <button type="button" class="tp-btn tp-btn--danger-ghost tp-btn--sm tp-bp-manage-del"${delDisabled ? ' disabled' : ''} title="${attrSafe(delTitle)}">Verwijderen</button>
+          </div>
+        </div>
+        <div class="tp-bp-manage-edit" hidden>
+          <label class="tp-bp-manage-edit-label"><span class="tp-sr-only">Nieuwe naam</span><input type="text" class="form-control tp-bp-manage-input" value="${attrSafe(b.name)}" autocomplete="off" /></label>
+          <div class="tp-bp-manage-edit-actions">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-manage-cancel">Annuleren</button>
+            <button type="button" class="tp-btn tp-btn--primary tp-btn--sm tp-bp-manage-save">Opslaan</button>
+          </div>
+        </div>
+        <div class="tp-bp-manage-schedule" data-bp-id="${b.id}" data-row-kind="basis">
+          <div class="tp-bp-manage-schedule-row">
+            <label class="tp-bp-sched-label">Prioriteit</label>
+            <input type="number" class="form-control tp-bp-priority-input" value="${prio}" title="Hoger dan een uitwijkrooster in dezelfde week = dit basisrooster wint alsnog" />
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-schedule-save">Prioriteit opslaan</button>
+            <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm tp-bp-to-uitwijk"${canToUitwijk ? '' : ' disabled'} title="${canToUitwijk ? '' : 'Er moet minstens één andere basis blijven'}">Maak uitwijkrooster…</button>
+          </div>
+        </div>
+      </li>`;
+  }
+
+  function renderUitwijkRow(b) {
+    const { delDisabled, delTitle } = rowDelMeta(b);
+    const prio = Number.isFinite(b.priority) ? b.priority : 0;
+    const gridY = tpDefaultGridYearForBlueprint(b);
+    const weeks = [...(b.weeks || [])].sort();
+    const otherHtml = tpOtherYearsWeeksHtml(weeks, gridY, b.id);
+    return `<li class="tp-bp-manage-row tp-bp-manage-row--uitwijk" data-bp-id="${b.id}">
+        <div class="tp-bp-manage-view">
+          <div class="tp-bp-manage-namecol">
+            <span class="tp-bp-badge-uitwijk">Uitwijkrooster</span>
+            <span class="tp-bp-manage-name">${escHtml(b.name)}</span>
+            <span class="tp-bp-manage-meta">Prioriteit <strong>${prio}</strong> — geldt automatisch in elke gekoppelde week; geen aparte &ldquo;activatie&rdquo; nodig.</span>
+          </div>
+          <div class="tp-bp-manage-actions">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-manage-rename">Hernoemen</button>
+            <button type="button" class="tp-btn tp-btn--danger-ghost tp-btn--sm tp-bp-manage-del"${delDisabled ? ' disabled' : ''} title="${attrSafe(delTitle)}">Verwijderen</button>
+          </div>
+        </div>
+        <div class="tp-bp-manage-edit" hidden>
+          <label class="tp-bp-manage-edit-label"><span class="tp-sr-only">Nieuwe naam</span><input type="text" class="form-control tp-bp-manage-input" value="${attrSafe(b.name)}" autocomplete="off" /></label>
+          <div class="tp-bp-manage-edit-actions">
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-manage-cancel">Annuleren</button>
+            <button type="button" class="tp-btn tp-btn--primary tp-btn--sm tp-bp-manage-save">Opslaan</button>
+          </div>
+        </div>
+        <div class="tp-bp-manage-schedule" data-bp-id="${b.id}" data-row-kind="uitwijk">
+          <div class="tp-bp-manage-schedule-row tp-bp-manage-schedule-row--uitwijk-head">
+            <label class="tp-bp-sched-label">Prioriteit</label>
+            <input type="number" class="form-control tp-bp-priority-input" value="${prio}" title="Hoger = wint bij meerdere roosters in dezelfde week" />
+            <button type="button" class="tp-btn tp-btn--secondary tp-btn--sm tp-bp-schedule-save">Prioriteit opslaan</button>
+            <button type="button" class="tp-btn tp-btn--ghost tp-btn--sm tp-bp-to-basis">Maak basisrooster…</button>
+          </div>
+          <div class="tp-bp-cal-panel">
+            <div class="tp-bp-cal-head">
+              <label class="tp-bp-cal-year-label">Jaar
+                <select class="form-control tp-bp-year-select" aria-label="Jaar voor weekkeuze">${tpYearSelectHtml(gridY)}</select>
+              </label>
+              <div class="tp-bp-cal-legend" aria-hidden="true">
+                <span class="tp-bp-leg"><span class="tp-bp-leg-swatch is-on"></span> gekoppeld</span>
+                <span class="tp-bp-leg"><span class="tp-bp-leg-swatch"></span> niet gekoppeld</span>
+                <span class="tp-bp-leg"><span class="tp-bp-leg-swatch is-void"></span> —</span>
+              </div>
+            </div>
+            <p class="tp-bp-cal-tip">Klik weken aan of uit. Nummers zijn <strong>ISO-weken</strong> (week 1 bevat 4 januari).</p>
+            <div class="tp-bp-cal-grid-host">${tpWeekCalendarGridHtml(gridY, weeks)}</div>
+            <div class="tp-bp-other-years-host">${otherHtml}</div>
+          </div>
+        </div>
+      </li>`;
+  }
+
+  const basisHtml = basisBps.map(renderBasisRow).join('');
+  const uitwijkHtml = uitwijkBps.map(renderUitwijkRow).join('');
+
+  let overlay = document.querySelector('.tp-modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'tp-modal-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `<div class="tp-modal tp-modal--bp-manage">
+    <h3 class="tp-bp-modal-title">Blauwdrukken beheren</h3>
+    <p class="tp-bp-manage-intro">Je club heeft één <strong>basisrooster</strong> (of meerdere basissets met eigen prioriteit) dat voor alle weken geldt, tenzij een <strong>uitwijkrooster</strong> met hogere prioriteit voor die week van toepassing is. <strong>Uitwijkroosters</strong> hoef je niet apart te activeren: ze gelden impliciet in elke ISO-week die je hieronder koppelt.</p>
+    <div class="tp-bp-manage-scroll">
+      <section class="tp-bp-sec tp-bp-sec--basis" aria-labelledby="tp-bp-sec-basis-title">
+        <header class="tp-bp-sec-head">
+          <span class="tp-bp-sec-icon" aria-hidden="true">◉</span>
+          <div>
+            <h4 id="tp-bp-sec-basis-title" class="tp-bp-sec-title">Basisrooster</h4>
+            <p class="tp-bp-sec-desc">Standaard schema door het jaar heen. Geen weekkeuze nodig.</p>
+          </div>
+        </header>
+        <ul class="tp-bp-manage-list tp-bp-manage-list--basis">${basisHtml || '<li class="tp-bp-empty-sec">Geen basisrooster — voeg een blauwdruk toe of zet een uitwijk om tot basis.</li>'}</ul>
+      </section>
+      <section class="tp-bp-sec tp-bp-sec--uitwijk" aria-labelledby="tp-bp-sec-uitwijk-title">
+        <header class="tp-bp-sec-head">
+          <span class="tp-bp-sec-icon tp-bp-sec-icon--uitwijk" aria-hidden="true">◇</span>
+          <div>
+            <h4 id="tp-bp-sec-uitwijk-title" class="tp-bp-sec-title">Uitwijkroosters</h4>
+            <p class="tp-bp-sec-desc">Nul, één of meer alternatieve schema’s. Kies per jaar welke ISO-weken dit rooster geldt — dat is voldoende; geen aparte activatie.</p>
+          </div>
+        </header>
+        <ul class="tp-bp-manage-list tp-bp-manage-list--uitwijk">${uitwijkHtml || '<li class="tp-bp-empty-sec">Nog geen uitwijkroosters. Maak een nieuwe blauwdruk als uitwijk of zet een basisrooster om.</li>'}</ul>
+      </section>
+    </div>
+    <p class="tp-bp-manage-footnote">Verwijderen wist locaties, velden, inhuur en rooster voor die set. De set die in de <strong>blauwdruk-kiezer</strong> staat, kun je niet verwijderen. Minstens één basisrooster moet blijven bestaan.</p>
+    <div class="tp-bp-manage-footer">
+      <button type="button" class="btn btn-sm btn-secondary tp-bp-manage-close">Sluiten</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+
+  function closeAllEdits() {
+    overlay.querySelectorAll('.tp-bp-manage-row').forEach((row) => {
+      row.querySelector('.tp-bp-manage-view')?.removeAttribute('hidden');
+      row.querySelector('.tp-bp-manage-edit')?.setAttribute('hidden', '');
+    });
+  }
+
+  function refreshUitwijkGrid(schedEl, bpId, yearOverride) {
+    const b = bps.find((x) => x.id === bpId);
+    if (!b) return;
+    const sel = schedEl.querySelector('.tp-bp-year-select');
+    const y = yearOverride != null ? yearOverride : parseInt(sel?.value, 10);
+    const gridHost = schedEl.querySelector('.tp-bp-cal-grid-host');
+    const otherHost = schedEl.querySelector('.tp-bp-other-years-host');
+    if (gridHost) gridHost.innerHTML = tpWeekCalendarGridHtml(y, b.weeks || []);
+    if (otherHost) otherHost.innerHTML = tpOtherYearsWeeksHtml(b.weeks || [], y, bpId) || '';
+  }
+
+  overlay.querySelector('.tp-bp-manage-close')?.addEventListener('click', () => {
+    overlay.style.display = 'none';
+  });
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.style.display = 'none';
+  });
+
+  const scrollEl = overlay.querySelector('.tp-bp-manage-scroll');
+  scrollEl?.addEventListener('click', async (e) => {
+    if (e.target.closest('.tp-bp-schedule-save')) return;
+
+    const renameBtn = e.target.closest('.tp-bp-manage-rename');
+    const delBtn = e.target.closest('.tp-bp-manage-del');
+    const cancelBtn = e.target.closest('.tp-bp-manage-cancel');
+    const saveBtn = e.target.closest('.tp-bp-manage-save');
+    const toUitwijk = e.target.closest('.tp-bp-to-uitwijk');
+    const toBasis = e.target.closest('.tp-bp-to-basis');
+    const weekBtn = e.target.closest('.tp-bp-cal-week');
+    const weekRem = e.target.closest('.tp-bp-week-rem');
+
+    const row = e.target.closest('.tp-bp-manage-row');
+    const block = e.target.closest('.tp-bp-manage-schedule');
+
+    if (weekBtn && weekBtn.closest('.tp-bp-manage-row--uitwijk')) {
+      if (weekBtn.disabled || weekBtn.classList.contains('is-void')) return;
+      const sched = weekBtn.closest('.tp-bp-manage-schedule');
+      const id = parseInt(sched?.dataset.bpId, 10);
+      const iso = weekBtn.dataset.isoWeek;
+      if (!id || !iso) return;
+      const isOn = weekBtn.classList.contains('is-on');
+      try {
+        if (isOn) {
+          await api(`/api/training/blueprints/${id}/weeks?iso_week=${encodeURIComponent(iso)}`, { method: 'DELETE' });
+        } else {
+          await api(`/api/training/blueprints/${id}/weeks`, { method: 'POST', body: { iso_week: iso } });
+        }
+        tpMutateBlueprintWeeks(id, iso, !isOn);
+        tpApplyCalWeekButtonState(weekBtn, !isOn);
+        tpRefreshOtherYearsHost(sched, id);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    if (weekRem && weekRem.closest('.tp-bp-other-years')) {
+      const wrap = weekRem.closest('.tp-bp-other-years');
+      const sched = wrap?.closest('.tp-bp-manage-schedule');
+      const id = parseInt(wrap?.dataset.bpId, 10);
+      const iso = weekRem.dataset.isoWeek;
+      if (!id || !iso) return;
+      try {
+        await api(`/api/training/blueprints/${id}/weeks?iso_week=${encodeURIComponent(iso)}`, { method: 'DELETE' });
+        tpMutateBlueprintWeeks(id, iso, false);
+        if (sched) tpRefreshOtherYearsHost(sched, id);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    if (toUitwijk && block?.dataset.rowKind === 'basis') {
+      const id = parseInt(block.dataset.bpId, 10);
+      if (!id || toUitwijk.disabled) return;
+      if (
+        !confirm(
+          'Dit rooster omzetten naar een uitwijkrooster?\n\nHet geldt daarna alleen nog in weken die je in de kalender kiest. Koppel minstens één week om het te laten gelden.'
+        )
+      ) {
+        return;
+      }
+      try {
+        await api(`/api/training/blueprints/${id}`, { method: 'PATCH', body: { scope: 'exceptional' } });
+        showToast('Omgezet naar uitwijkrooster — kies nu weken', 'success');
+        _undoStack.length = 0;
+        _redoStack.length = 0;
+        await loadAndRender();
+        showManageBlueprintsModal();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    if (toBasis && block?.dataset.rowKind === 'uitwijk') {
+      const id = parseInt(block.dataset.bpId, 10);
+      if (!id) return;
+      if (
+        !confirm(
+          'Dit rooster omzetten naar een basisrooster?\n\nHet geldt daarna weer voor alle weken (tenzij een uitwijk met hogere prioriteit wint).'
+        )
+      ) {
+        return;
+      }
+      try {
+        await api(`/api/training/blueprints/${id}`, { method: 'PATCH', body: { scope: 'standard' } });
+        showToast('Omgezet naar basisrooster', 'success');
+        _undoStack.length = 0;
+        _redoStack.length = 0;
+        await loadAndRender();
+        showManageBlueprintsModal();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    if (!row) return;
+    const id = parseInt(row.dataset.bpId, 10);
+    if (!id) return;
+
+    if (renameBtn) {
+      closeAllEdits();
+      row.querySelector('.tp-bp-manage-view')?.setAttribute('hidden', '');
+      row.querySelector('.tp-bp-manage-edit')?.removeAttribute('hidden');
+      const inp = row.querySelector('.tp-bp-manage-input');
+      inp?.focus();
+      inp?.select();
+      return;
+    }
+
+    if (cancelBtn) {
+      const b = bps.find((x) => x.id === id);
+      const inp = row.querySelector('.tp-bp-manage-input');
+      if (inp && b) inp.value = b.name;
+      row.querySelector('.tp-bp-manage-view')?.removeAttribute('hidden');
+      row.querySelector('.tp-bp-manage-edit')?.setAttribute('hidden', '');
+      return;
+    }
+
+    if (saveBtn) {
+      const inp = row.querySelector('.tp-bp-manage-input');
+      const name = inp?.value?.trim();
+      if (!name) {
+        inp?.focus();
+        return;
+      }
+      try {
+        await api(`/api/training/blueprints/${id}`, { method: 'PATCH', body: { name } });
+        overlay.style.display = 'none';
+        showToast('Naam bijgewerkt', 'success');
+        _undoStack.length = 0;
+        _redoStack.length = 0;
+        loadAndRender();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+      return;
+    }
+
+    if (delBtn) {
+      if (delBtn.disabled) return;
+      const b = bps.find((x) => x.id === id);
+      const nm = b?.name || 'deze set';
+      if (
+        !confirm(
+          `Blauwdruk "${nm}" verwijderen?\n\nAlle locaties, velden, inhuur, standaardtrainingen en opgeslagen rooster-archieven voor deze set worden permanent gewist. Dit kan niet ongedaan worden gemaakt.`
+        )
+      ) {
+        return;
+      }
+      try {
+        await api(`/api/training/blueprints/${id}`, { method: 'DELETE' });
+        overlay.style.display = 'none';
+        showToast('Blauwdruk verwijderd', 'success');
+        _undoStack.length = 0;
+        _redoStack.length = 0;
+        loadAndRender();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+  });
+
+  scrollEl?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const inp = e.target.closest('.tp-bp-manage-input');
+    if (!inp) return;
+    e.preventDefault();
+    inp.closest('.tp-bp-manage-row')?.querySelector('.tp-bp-manage-save')?.click();
+  });
+
+  const modalEl = overlay.querySelector('.tp-modal--bp-manage');
+
+  modalEl?.addEventListener('click', async (e) => {
+    const schedSave = e.target.closest('.tp-bp-schedule-save');
+    const block = e.target.closest('.tp-bp-manage-schedule');
+    if (!schedSave || !block) return;
+    const id = parseInt(block.dataset.bpId, 10);
+    const kind = block.dataset.rowKind;
+    if (!id) return;
+    const pr = parseInt(block.querySelector('.tp-bp-priority-input')?.value, 10);
+    const priority = Number.isNaN(pr) ? 0 : pr;
+    const scope = kind === 'uitwijk' ? 'exceptional' : 'standard';
+    try {
+      await api(`/api/training/blueprints/${id}`, { method: 'PATCH', body: { scope, priority } });
+      showToast('Prioriteit opgeslagen', 'success');
+      _undoStack.length = 0;
+      _redoStack.length = 0;
+      await loadAndRender();
+      showManageBlueprintsModal();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  modalEl?.addEventListener('change', (e) => {
+    const sel = e.target.closest('.tp-bp-year-select');
+    if (!sel) return;
+    const sched = sel.closest('.tp-bp-manage-schedule');
+    const id = parseInt(sched?.dataset.bpId, 10);
+    if (!sched || !id) return;
+    const y = parseInt(sel.value, 10);
+    refreshUitwijkGrid(sched, id, y);
+  });
 }
 
 // ─── Snapshot modals ────────────────────────────────────────────────────────
@@ -1278,7 +2668,7 @@ function showSaveSnapshotModal() {
   if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
   overlay.innerHTML = `<div class="tp-modal">
     <h3 style="margin:0 0 12px">Blauwdruk opslaan als</h3>
-    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">Sla de huidige blauwdruk op onder een naam zodat je deze later weer kunt terugzetten.</p>
+    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">Sla het <strong>standaard teamrooster</strong> van de <strong>actieve blauwdruk</strong> op als archief (los van andere blauwdrukken). Later kun je dit rooster weer activeren binnen deze blauwdruk.</p>
     <input id="tp-snap-name" class="form-control" placeholder="Naam, bijv. Seizoen 2025-2026" style="margin-bottom:12px" />
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-sm btn-secondary tp-snap-cancel">Annuleren</button>
@@ -1350,7 +2740,7 @@ async function showLoadSnapshotModal() {
 
   overlay.innerHTML = `<div class="tp-modal" style="max-width:500px">
     <h3 style="margin:0 0 12px">Blauwdrukken beheren</h3>
-    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">De actieve blauwdruk bepaalt welke trainingsdata zichtbaar is op de teampagina's.</p>
+    <p style="margin:0 0 10px;font-size:.85rem;color:var(--text-muted)">Alleen archieven van de <strong>huidige blauwdruk</strong>. Activeren vervangt het standaardrooster van deze blauwdruk (locaties en velden wijzigen niet).</p>
     <div style="max-height:300px;overflow-y:auto">${rows}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
       <button class="btn btn-sm btn-secondary tp-snap-close">Sluiten</button>
@@ -1400,7 +2790,7 @@ async function clearAllDefaults() {
   if (!confirm('Weet je zeker dat je de hele blauwdruk wilt leegmaken? Alle trainingen worden verwijderd. Sla eventueel eerst op.')) return;
   snapshotBeforeMutation();
   try {
-    await api('/api/training/defaults/all', { method: 'DELETE' });
+    await api(`/api/training/defaults/all`, { method: 'DELETE' });
     showToast && showToast('Blauwdruk leeggemaakt');
     loadAndRender();
   } catch (err) { showToast && showToast('Leegmaken mislukt: ' + err.message, 'error'); }
@@ -1409,9 +2799,10 @@ async function clearAllDefaults() {
 // ─── Rename active snapshot ─────────────────────────────────────────────────
 
 async function showRenameSnapshotModal() {
-  let activeSnap;
-  try { activeSnap = await api('/api/training/snapshots/active'); } catch (_) { return; }
-  if (!activeSnap?.id) { showToast && showToast('Geen actieve blauwdruk om te hernoemen', 'error'); return; }
+  let snapRes;
+  try { snapRes = await api('/api/training/snapshots/active'); } catch (_) { return; }
+  const activeSnap = snapRes?.active;
+  if (!activeSnap?.id) { showToast && showToast('Geen actief archief om te hernoemen', 'error'); return; }
 
   let overlay = document.querySelector('.tp-modal-overlay');
   if (!overlay) { overlay = document.createElement('div'); overlay.className = 'tp-modal-overlay'; document.body.appendChild(overlay); }
@@ -1516,6 +2907,10 @@ async function triggerAiOptimize() {
           </div>
         </label>
       </div>
+      <label class="tp-ai-multistep" style="display:flex;align-items:flex-start;gap:0.5rem;margin:0.75rem 0 0;font-size:0.88rem;cursor:pointer">
+        <input type="checkbox" id="tp-ai-pipeline-multi" style="margin-top:0.2rem" />
+        <span><strong>Mini-LLM (2 stappen)</strong> — eerst een compact dagplan, daarna het volledige rooster. Zelfde N8N-webhook; langzamer (ca. 2–4 min), kan helpen bij complexe clubs.</span>
+      </label>
       <label for="tp-ai-message">Extra opdracht <span class="tp-ai-optional">optioneel</span></label>
       <textarea id="tp-ai-message" rows="2" placeholder="Bijv. 'Focus op coach-dubbelrollen' of 'Plan N5 op dinsdag en donderdag'"></textarea>
       <div id="tp-ai-status" class="tp-ai-status">Verbinding controleren...</div>
@@ -1558,13 +2953,18 @@ async function triggerAiOptimize() {
     startBtn.disabled = true;
     msgInput.disabled = true;
     overlay.querySelectorAll('input[name="tp-ai-mode"]').forEach(r => { r.disabled = true; });
+    overlay.querySelector('#tp-ai-pipeline-multi') && (overlay.querySelector('#tp-ai-pipeline-multi').disabled = true);
     const selectedMode = overlay.querySelector('input[name="tp-ai-mode"]:checked')?.value || 'complete';
+    const useMultiPipeline = !!overlay.querySelector('#tp-ai-pipeline-multi')?.checked;
     const modeLabels = { new: 'maakt een nieuwe planning', complete: 'vult de planning aan', optimize: 'optimaliseert de planning' };
-    statusEl.innerHTML = `<span class="tp-ai-status-loading"><span class="tp-spinner"></span> AI agent ${modeLabels[selectedMode]}... dit kan 1–2 min duren</span>`;
+    const durationHint = useMultiPipeline ? '2–4 min' : '1–2 min';
+    statusEl.innerHTML = `<span class="tp-ai-status-loading"><span class="tp-spinner"></span> AI agent ${modeLabels[selectedMode]}${useMultiPipeline ? ' (2-stappen pipeline)' : ''}... dit kan ${durationHint} duren</span>`;
 
     snapshotBeforeMutation();
     try {
-      const result = await api('/api/training/ai-optimize', { method: 'POST', body: { mode: selectedMode, message: msgInput.value.trim() } });
+      const body = { mode: selectedMode, message: msgInput.value.trim() };
+      if (useMultiPipeline) body.pipeline = 'multi';
+      const result = await api('/api/training/ai-optimize', { method: 'POST', body });
 
       if (result.snapshot) {
         statusEl.innerHTML = '<span class="tp-ai-status-loading"><span class="tp-spinner"></span> Planning ontvangen, wordt geactiveerd...</span>';
@@ -1597,7 +2997,133 @@ async function triggerAiOptimize() {
       statusEl.innerHTML = `<span class="tp-ai-status-err">❌ ${escHtml(err.message)}</span>`;
       startBtn.disabled = false;
       msgInput.disabled = false;
+      const multiCb = overlay.querySelector('#tp-ai-pipeline-multi');
+      if (multiCb) multiCb.disabled = false;
       startBtn.textContent = 'Opnieuw proberen';
+    }
+  };
+}
+
+async function triggerAutoSchedule() {
+  let overlay = document.querySelector('.tp-auto-schedule-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'tp-modal-overlay tp-auto-schedule-overlay';
+    document.body.appendChild(overlay);
+  }
+  const defaultIso = _ctx.mode === 'week' ? normalizeTpIsoWeek(_ctx.isoWeek) : '';
+  overlay.innerHTML = `<div class="tp-modal tp-ai-modal tp-auto-schedule-modal">
+    <div class="tp-ai-header">
+      <div class="tp-ai-icon" aria-hidden="true">⚙</div>
+      <div>
+        <h3>Automatisch rooster</h3>
+        <p>Lokaal invullen op basis van velden, blokkades en teamregels (geen AI).</p>
+      </div>
+    </div>
+    <div class="tp-ai-body">
+      <label>Modus</label>
+      <div class="tp-ai-modes">
+        <label class="tp-ai-mode">
+          <input type="radio" name="tp-auto-mode" value="new">
+          <div class="tp-ai-mode-content">
+            <strong>Nieuw</strong>
+            <span>Volledig rooster opnieuw; concept-standaardtrainingen worden genegeerd.</span>
+          </div>
+        </label>
+        <label class="tp-ai-mode">
+          <input type="radio" name="tp-auto-mode" value="complete" checked>
+          <div class="tp-ai-mode-content">
+            <strong>Aanvullen</strong>
+            <span>Huidige standaardtrainingen vasthouden en ontbrekende sessies bijplannen.</span>
+          </div>
+        </label>
+      </div>
+      <label class="tp-ai-multistep" style="display:flex;align-items:flex-start;gap:0.5rem;margin:0.75rem 0 0;font-size:0.88rem;cursor:pointer">
+        <input type="checkbox" id="tp-auto-snapshot" style="margin-top:0.2rem" />
+        <span><strong>Snapshot activeren</strong> — resultaat als archief-item aanmaken en direct actief zetten (zoals bij AI).</span>
+      </label>
+      <label for="tp-auto-iso-week" style="display:block;margin-top:0.75rem;font-size:0.88rem">ISO-week voor week-specifieke blokkades <span class="tp-ai-optional">optioneel</span></label>
+      <input type="text" id="tp-auto-iso-week" class="form-input" style="width:100%;max-width:12rem" placeholder="bijv. 2026-W13" value="${attrSafe(defaultIso)}" />
+      <p class="text-small text-muted" style="margin:0.35rem 0 0;line-height:1.35">Leeg laten = alleen terugkerende blokkades (blauwdruk). Vul een week in om ook blokkades met die ISO-week mee te nemen.</p>
+      <div id="tp-auto-status" class="tp-ai-status" style="margin-top:0.75rem">Kies modus en klik Starten.</div>
+    </div>
+    <div class="tp-ai-footer">
+      <button type="button" class="btn btn-sm btn-secondary tp-auto-cancel">Annuleren</button>
+      <button type="button" class="btn btn-sm btn-primary tp-auto-start">Starten</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+
+  const statusEl = overlay.querySelector('#tp-auto-status');
+  const close = () => { overlay.style.display = 'none'; };
+  overlay.querySelector('.tp-auto-cancel').onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('.tp-auto-start').onclick = async () => {
+    const mode = overlay.querySelector('input[name="tp-auto-mode"]:checked')?.value || 'complete';
+    const createSnapshot = !!overlay.querySelector('#tp-auto-snapshot')?.checked;
+    const isoRaw = overlay.querySelector('#tp-auto-iso-week')?.value?.trim() || '';
+    const startBtn = overlay.querySelector('.tp-auto-start');
+    startBtn.disabled = true;
+    statusEl.innerHTML = '<span class="tp-ai-status-loading"><span class="tp-spinner"></span> Bezig met plannen…</span>';
+    snapshotBeforeMutation();
+    try {
+      const body = {
+        mode,
+        blueprint_id: _ctx.contextBlueprintId,
+        create_snapshot: createSnapshot,
+      };
+      if (isoRaw) body.iso_week = isoRaw;
+      const result = await api('/api/training/auto-schedule', { method: 'POST', body });
+
+      if (createSnapshot && result.snapshot) {
+        statusEl.innerHTML = '<span class="tp-ai-status-loading"><span class="tp-spinner"></span> Snapshot activeren…</span>';
+        try {
+          await api(`/api/training/snapshots/${result.snapshot.id}/activate`, { method: 'POST' });
+          _activeSnapshotName = result.snapshot.name;
+        } catch (_) { /* activeren optioneel */ }
+      }
+
+      let html = '';
+      if (result.ok) {
+        html += `<div class="tp-ai-result-success"><strong>Klaar.</strong> ${escHtml(result.advice || '')}</div>`;
+      } else {
+        html += `<div class="tp-ai-result-warn"><strong>Niet volledig geldig.</strong> ${escHtml(result.advice || '')}</div>`;
+      }
+      if (result.validation?.hardErrors?.length) {
+        html += '<details open class="tp-ai-advice" style="margin-top:0.5rem"><summary>Harde fouten</summary><ul style="margin:0.25rem 0 0 1rem;padding:0">';
+        for (const e of result.validation.hardErrors) {
+          html += `<li>${escHtml(e.message || e.code || '')}</li>`;
+        }
+        html += '</ul></details>';
+      }
+      if (result.validation?.softWarnings?.length) {
+        html += '<details class="tp-ai-advice" style="margin-top:0.5rem"><summary>Zachte waarschuwingen</summary><ul style="margin:0.25rem 0 0 1rem;padding:0">';
+        for (const w of result.validation.softWarnings) {
+          html += `<li>${escHtml(w.message || w.code || '')}</li>`;
+        }
+        html += '</ul></details>';
+      }
+      if (result.failures?.length) {
+        html += '<details open class="tp-ai-advice" style="margin-top:0.5rem"><summary>Tekort per team</summary><ul style="margin:0.25rem 0 0 1rem;padding:0">';
+        for (const f of result.failures) {
+          const mins = result.shortfall && result.shortfall[f.team] != null ? ` (${result.shortfall[f.team]} min)` : '';
+          html += `<li>${escHtml(f.team)}: ${f.placed}/${f.need} sessies${mins}</li>`;
+        }
+        html += '</ul></details>';
+      }
+      if (result.snapshot_apply_errors?.length) {
+        html += `<div class="tp-ai-result-warn" style="margin-top:0.5rem">Snapshot-deels mislukt: ${result.snapshot_apply_errors.length} regels</div>`;
+      }
+      if (result.snapshot) {
+        html += `<p class="text-small" style="margin:0.5rem 0 0">Archief: <strong>${escHtml(result.snapshot.name)}</strong> (${result.snapshot.entries} trainingen)</p>`;
+      }
+      statusEl.innerHTML = html;
+      overlay.querySelector('.tp-auto-cancel').textContent = 'Sluiten';
+      loadAndRender();
+    } catch (err) {
+      statusEl.innerHTML = `<span class="tp-ai-status-err">❌ ${escHtml(err.message)}</span>`;
+      startBtn.disabled = false;
     }
   };
 }
@@ -1649,20 +3175,31 @@ async function showLocationModal() {
       try {
         const locRes = await api('/api/training/locations', {
           method: 'POST',
-          body: { name: v.name, nevobo_venue_name: v.name },
+          body: { name: v.name, nevobo_venue_name: v.name, blueprint_id: _ctx.contextBlueprintId },
         });
         _ctx.locations.push(locRes.location);
         for (const field of v.fields) {
           const venueRes = await api('/api/training/venues', {
             method: 'POST',
-            body: { location_id: locRes.location.id, name: field.name, type: 'hall', nevobo_field_slug: field.slug },
+            body: {
+              location_id: locRes.location.id,
+              name: field.name,
+              type: 'hall',
+              nevobo_field_slug: field.slug,
+              blueprint_id: _ctx.contextBlueprintId,
+            },
           });
           _ctx.venues.push(venueRes.venue);
         }
         if (v.fields.length === 0) {
           const venueRes = await api('/api/training/venues', {
             method: 'POST',
-            body: { location_id: locRes.location.id, name: 'Veld 1', type: 'hall' },
+            body: {
+              location_id: locRes.location.id,
+              name: 'Veld 1',
+              type: 'hall',
+              blueprint_id: _ctx.contextBlueprintId,
+            },
           });
           _ctx.venues.push(venueRes.venue);
         }
@@ -1679,7 +3216,7 @@ async function showLocationModal() {
     try {
       const res = await api('/api/training/locations', {
         method: 'POST',
-        body: { name: document.getElementById('tp-l-name').value },
+        body: { name: document.getElementById('tp-l-name').value, blueprint_id: _ctx.contextBlueprintId },
       });
       _ctx.locations.push(res.location);
       overlay.remove();
@@ -1716,6 +3253,7 @@ function showVenueModal(locationId) {
           location_id: locationId,
           name: document.getElementById('tp-v-name').value,
           type: document.getElementById('tp-v-type').value,
+          blueprint_id: _ctx.contextBlueprintId,
         },
       });
       _ctx.venues.push(res.venue);
@@ -1800,7 +3338,7 @@ function showQuickAddPicker(e, venueId, dow, startMin) {
         snapshotBeforeMutation();
         try {
           if (c.mode === 'blueprint') {
-            await api('/api/training/defaults', { method: 'POST', body });
+            await api('/api/training/defaults', { method: 'POST', body: { ...body } });
           } else {
             await api('/api/training/exceptions', { method: 'POST', body: { ...body, iso_week: c.isoWeek } });
           }
@@ -1853,7 +3391,7 @@ function showAddTrainingModal(venueId, dow, startTime, endTime) {
     snapshotBeforeMutation();
     try {
       if (c.mode === 'blueprint') {
-        await api('/api/training/defaults', { method: 'POST', body });
+        await api('/api/training/defaults', { method: 'POST', body: { ...body } });
       } else {
         await api('/api/training/exceptions', { method: 'POST', body: { ...body, iso_week: c.isoWeek } });
       }
@@ -1907,3 +3445,4 @@ function showEditTrainingModal(training, source) {
     } catch (err) { showToast(err.message, 'error'); }
   });
 }
+

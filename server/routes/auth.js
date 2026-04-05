@@ -198,6 +198,9 @@ router.post('/memberships', verifyToken, (req, res) => {
 
   const team = db.prepare('SELECT t.*, c.name AS club_name FROM teams t JOIN clubs c ON c.id=t.club_id WHERE t.id = ?').get(team_id);
   if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+  if (Number(team.is_active) === 0) {
+    return res.status(403).json({ ok: false, error: 'Dit team is gedeactiveerd; lid worden is niet mogelijk.' });
+  }
 
   const user = db.prepare('SELECT team_id, club_id FROM users WHERE id = ?').get(req.user.id);
   if (user.club_id != null && team.club_id !== user.club_id) {

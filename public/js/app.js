@@ -405,6 +405,7 @@ const PAGE_TITLES = {
   'training-planner': 'Trainingsplanner',
   'training-module': 'Trainingsmodule',
   'training-session': 'Training',
+  'team-management': 'Teams beheren',
 };
 
 /** Zet document-scroll bovenaan (SPA: nieuwe route of volledige inhoudswissel). */
@@ -457,6 +458,7 @@ function bindHeaderMoreMenu() {
     if (
       r === 'settings' ||
       r === 'admin' ||
+      r === 'team-management' ||
       r === 'training-module' ||
       r === 'training-planner'
     ) {
@@ -511,6 +513,7 @@ export function syncAppHeaderChrome() {
   profileBtn.innerHTML = renderAvatar(user.name, user.avatar_url, 'sm');
 
   const isSuperAdmin = user.roles?.some(r => r.role === 'super_admin');
+  const isClubAdmin = user.roles?.some(r => r.role === 'club_admin');
   const hasAdminRole = (user.roles?.length ?? 0) > 0;
   const showMoreMenu = isSuperAdmin || hasAdminRole;
 
@@ -531,6 +534,10 @@ export function syncAppHeaderChrome() {
   if (isSuperAdmin) {
     items +=
       '<button type="button" class="header-gear-item" data-nav="settings" role="menuitem">🎛️ Platform</button>';
+  }
+  if (isClubAdmin || isSuperAdmin) {
+    items +=
+      '<button type="button" class="header-gear-item" data-nav="team-management" role="menuitem">🏐 Teams beheren</button>';
   }
   if (hasAdminRole) {
     items +=
@@ -690,6 +697,7 @@ async function boot() {
     import('./pages/training-planner.js'),
     import('./pages/training-module.js'),
     import('./pages/training-session.js'),
+    import('./pages/team-management.js'),
   ]);
 
   if (token && user) {
@@ -713,7 +721,7 @@ async function boot() {
     }
   }
 
-  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage, trainingModulePage, trainingSessionPage] = await pagesPromise;
+  const [homePage, matchesPage, carpoolPage, badgesPage, socialPage, profilePage, teamPage, adminPage, settingsPage, helpPage, privacyPage, scoutSetupPage, scoutMatchPage, trainingPlannerPage, trainingModulePage, trainingSessionPage, teamManagementPage] = await pagesPromise;
 
   registerRoute('home',         homePage.render);
   registerRoute('matches',      matchesPage.render);
@@ -731,6 +739,7 @@ async function boot() {
   registerRoute('training-planner', trainingPlannerPage.render);
   registerRoute('training-module', trainingModulePage.render);
   registerRoute('training-session', trainingSessionPage.render);
+  registerRoute('team-management', teamManagementPage.render);
 
   // Bottom nav clicks
   document.querySelectorAll('.nav-item[data-route]').forEach(btn => {

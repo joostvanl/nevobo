@@ -264,6 +264,22 @@ const migrations = [
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `ALTER TABLE training_exercises ADD COLUMN private_in_library INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS training_venue_unavailability (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    venue_id INTEGER NOT NULL REFERENCES training_venues(id) ON DELETE CASCADE,
+    day_of_week INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    iso_week TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (day_of_week >= 0 AND day_of_week <= 6)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_training_venue_unavail_club ON training_venue_unavailability(club_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_training_venue_unavail_venue_dow ON training_venue_unavailability(venue_id, day_of_week)`,
+  // Team lifecycle: inactive teams blijven in DB maar vallen uit club-/lidmaatschapslijsten
+  `ALTER TABLE teams ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
 ];
 for (const migration of migrations) {
   try { db.exec(migration); } catch (_) { /* column already exists */ }
@@ -280,6 +296,169 @@ try {
   }
 } catch (e) {
   console.warn('[db] training_private_in_library migration:', e.message);
+}
+
+// Meerdere trainingsblauwdrukken per club (locaties, velden, inhuur, default-rooster per blueprint)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS _app_migrations (id TEXT PRIMARY KEY)`);
+  const done = db.prepare('SELECT 1 FROM _app_migrations WHERE id = ?').get('training_blueprints_v1');
+  if (!done) {
+    db.exec(`CREATE TABLE IF NOT EXISTS training_blueprints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_training_blueprints_club ON training_blueprints(club_id)`);
+    try {
+      db.exec(`ALTER TABLE clubs ADD COLUMN active_training_blueprint_id INTEGER REFERENCES training_blueprints(id)`);
+    } catch (_) { /* exists */ }
+    try {
+      db.exec(`ALTER TABLE training_locations ADD COLUMN blueprint_id INTEGER REFERENCES training_blueprints(id)`);
+    } catch (_) { /* exists */ }
+    try {
+      db.exec(`ALTER TABLE training_defaults ADD COLUMN blueprint_id INTEGER REFERENCES training_blueprints(id)`);
+    } catch (_) { /* exists */ }
+    try {
+      db.exec(`ALTER TABLE training_venue_unavailability ADD COLUMN blueprint_id INTEGER REFERENCES training_blueprints(id)`);
+    } catch (_) { /* exists */ }
+    try {
+      db.exec(`ALTER TABLE training_snapshots ADD COLUMN blueprint_id INTEGER REFERENCES training_blueprints(id)`);
+    } catch (_) { /* exists */ }
+
+    const clubs = db.prepare('SELECT id FROM clubs').all();
+    const insBp = db.prepare('INSERT INTO training_blueprints (club_id, name) VALUES (?, ?)');
+    const updClub = db.prepare('UPDATE clubs SET active_training_blueprint_id = ? WHERE id = ?');
+    for (const c of clubs) {
+      const r = insBp.run(c.id, 'Standaard');
+      updClub.run(r.lastInsertRowid, c.id);
+    }
+
+    db.prepare(`
+      UPDATE training_locations SET blueprint_id = (
+        SELECT active_training_blueprint_id FROM clubs WHERE clubs.id = training_locations.club_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare(`
+      UPDATE training_defaults SET blueprint_id = (
+        SELECT l.blueprint_id FROM training_venues v
+        JOIN training_locations l ON l.id = v.location_id
+        WHERE v.id = training_defaults.venue_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare(`
+      UPDATE training_defaults SET blueprint_id = (
+        SELECT active_training_blueprint_id FROM clubs WHERE id = training_defaults.club_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare(`
+      UPDATE training_venue_unavailability SET blueprint_id = (
+        SELECT l.blueprint_id FROM training_venues v
+        JOIN training_locations l ON l.id = v.location_id
+        WHERE v.id = training_venue_unavailability.venue_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare(`
+      UPDATE training_venue_unavailability SET blueprint_id = (
+        SELECT active_training_blueprint_id FROM clubs WHERE id = training_venue_unavailability.club_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare(`
+      UPDATE training_snapshots SET blueprint_id = (
+        SELECT active_training_blueprint_id FROM clubs WHERE clubs.id = training_snapshots.club_id
+      ) WHERE blueprint_id IS NULL
+    `).run();
+
+    db.prepare('INSERT INTO _app_migrations (id) VALUES (?)').run('training_blueprints_v1');
+    console.log('[db] training_blueprints_v1: meerdere blauwdrukken per club');
+  }
+} catch (e) {
+  console.warn('[db] training_blueprints_v1 migration:', e.message);
+}
+
+// Blauwdruk: prioriteit, standaard vs afwijkend, ISO-weken voor afwijkende sets
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS _app_migrations (id TEXT PRIMARY KEY)`);
+  const done = db.prepare('SELECT 1 FROM _app_migrations WHERE id = ?').get('training_blueprint_schedule_v1');
+  if (!done) {
+    try {
+      db.exec(`ALTER TABLE training_blueprints ADD COLUMN scope TEXT NOT NULL DEFAULT 'standard'`);
+    } catch (_) { /* column exists */ }
+    try {
+      db.exec(`ALTER TABLE training_blueprints ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`);
+    } catch (_) { /* column exists */ }
+    db.exec(`CREATE TABLE IF NOT EXISTS training_blueprint_weeks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      blueprint_id INTEGER NOT NULL REFERENCES training_blueprints(id) ON DELETE CASCADE,
+      iso_week TEXT NOT NULL,
+      UNIQUE(blueprint_id, iso_week)
+    )`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_training_blueprint_weeks_bp ON training_blueprint_weeks(blueprint_id)`);
+    db.prepare('INSERT INTO _app_migrations (id) VALUES (?)').run('training_blueprint_schedule_v1');
+    console.log('[db] training_blueprint_schedule_v1: scope, priority, gekoppelde weken');
+  }
+} catch (e) {
+  console.warn('[db] training_blueprint_schedule_v1 migration:', e.message);
+}
+
+// Draft vs gepubliceerd standaardrooster: teams lezen published; planner muteert draft
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS _app_migrations (id TEXT PRIMARY KEY)`);
+  const done = db.prepare('SELECT 1 FROM _app_migrations WHERE id = ?').get('training_defaults_published_v1');
+  if (!done) {
+    db.exec(`CREATE TABLE IF NOT EXISTS training_defaults_published (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      club_id INTEGER NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+      blueprint_id INTEGER NOT NULL REFERENCES training_blueprints(id) ON DELETE CASCADE,
+      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      venue_id INTEGER NOT NULL REFERENCES training_venues(id) ON DELETE CASCADE,
+      day_of_week INTEGER NOT NULL,
+      start_time TEXT NOT NULL,
+      end_time TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_training_defaults_published_club_bp ON training_defaults_published(club_id, blueprint_id)`
+    );
+    db.prepare(`
+      INSERT INTO training_defaults_published (club_id, blueprint_id, team_id, venue_id, day_of_week, start_time, end_time, created_at)
+      SELECT club_id, blueprint_id, team_id, venue_id, day_of_week, start_time, end_time, created_at
+      FROM training_defaults
+      WHERE blueprint_id IS NOT NULL
+    `).run();
+    db.prepare('INSERT INTO _app_migrations (id) VALUES (?)').run('training_defaults_published_v1');
+    console.log('[db] training_defaults_published_v1: published mirror of training_defaults');
+  }
+} catch (e) {
+  console.warn('[db] training_defaults_published_v1 migration:', e.message);
+}
+
+// trainings_per_week per team per blauwdruk (fallback: teams.trainings_per_week)
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS _app_migrations (id TEXT PRIMARY KEY)`);
+  const done = db
+    .prepare('SELECT 1 FROM _app_migrations WHERE id = ?')
+    .get('training_blueprint_team_settings_v1');
+  if (!done) {
+    db.exec(`CREATE TABLE IF NOT EXISTS training_blueprint_team_settings (
+      blueprint_id INTEGER NOT NULL REFERENCES training_blueprints(id) ON DELETE CASCADE,
+      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      trainings_per_week INTEGER NOT NULL,
+      PRIMARY KEY (blueprint_id, team_id)
+    )`);
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_training_blueprint_team_settings_team ON training_blueprint_team_settings(team_id)`,
+    );
+    db.prepare('INSERT INTO _app_migrations (id) VALUES (?)').run('training_blueprint_team_settings_v1');
+    console.log('[db] training_blueprint_team_settings_v1: frequentie per blauwdruk');
+  }
+} catch (e) {
+  console.warn('[db] training_blueprint_team_settings_v1 migration:', e.message);
 }
 
 // Eenmalig: placeholder-e-mails die op NPC wijzen, zonder handmatige vink

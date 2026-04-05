@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/db');
+const { ensureActiveBlueprint } = require('../lib/training-blueprint');
+const { applyBlueprintTrainingsPerWeek } = require('../lib/training-blueprint-team-settings');
 
 const EXPORT_API_KEY = process.env.EXPORT_API_KEY;
 
@@ -70,36 +72,56 @@ router.get('/training', requireApiKey, (req, res) => {
   const club = db.prepare('SELECT id, name, nevobo_code FROM clubs WHERE nevobo_code = ?').get(clubCode);
   if (!club) return res.status(404).json({ ok: false, error: 'Club not found' });
 
+  const bpId = ensureActiveBlueprint(db, club.id);
+
   const locations = db.prepare(`
     SELECT id, name, nevobo_venue_name
-    FROM training_locations WHERE club_id = ?
+    FROM training_locations WHERE club_id = ? AND blueprint_id = ?
     ORDER BY name
-  `).all(club.id);
+  `).all(club.id, bpId);
 
   const venues = db.prepare(`
     SELECT v.id, v.name, v.type, v.nevobo_field_slug, l.name AS location_name
     FROM training_venues v
     JOIN training_locations l ON l.id = v.location_id
-    WHERE v.club_id = ?
+    WHERE v.club_id = ? AND l.blueprint_id = ?
     ORDER BY l.name, v.name
-  `).all(club.id);
+  `).all(club.id, bpId);
 
-  const teams = db.prepare(`
-    SELECT id, display_name, trainings_per_week, min_training_minutes, max_training_minutes FROM teams WHERE club_id = ? ORDER BY display_name
-  `).all(club.id);
+  const teamsRaw = db
+    .prepare(
+      `SELECT id, display_name, trainings_per_week, min_training_minutes, max_training_minutes FROM teams WHERE club_id = ? ORDER BY display_name`,
+    )
+    .all(club.id);
+  const teams = applyBlueprintTrainingsPerWeek(db, bpId, teamsRaw);
 
-  const defaults = db.prepare(`
+  const scheduleFromPublished = db.prepare(`
     SELECT d.day_of_week, d.start_time, d.end_time,
            t.display_name AS team_name,
            v.name AS venue_name,
            l.name AS location_name
-    FROM training_defaults d
+    FROM training_defaults_published d
     JOIN teams t ON t.id = d.team_id
     JOIN training_venues v ON v.id = d.venue_id
     JOIN training_locations l ON l.id = v.location_id
-    WHERE d.club_id = ?
+    WHERE d.club_id = ? AND d.blueprint_id = ?
     ORDER BY d.day_of_week, d.start_time
-  `).all(club.id);
+  `);
+  let defaults = scheduleFromPublished.all(club.id, bpId);
+  if (defaults.length === 0) {
+    defaults = db.prepare(`
+      SELECT d.day_of_week, d.start_time, d.end_time,
+             t.display_name AS team_name,
+             v.name AS venue_name,
+             l.name AS location_name
+      FROM training_defaults d
+      JOIN teams t ON t.id = d.team_id
+      JOIN training_venues v ON v.id = d.venue_id
+      JOIN training_locations l ON l.id = v.location_id
+      WHERE d.club_id = ? AND d.blueprint_id = ?
+      ORDER BY d.day_of_week, d.start_time
+    `).all(club.id, bpId);
+  }
 
   const dayNames = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
 
@@ -135,6 +157,8 @@ router.post('/training', requireApiKey, (req, res) => {
   const club = db.prepare('SELECT id, name, nevobo_code FROM clubs WHERE nevobo_code = ?').get(clubCode);
   if (!club) return res.status(404).json({ ok: false, error: 'Club not found' });
 
+  const bpId = ensureActiveBlueprint(db, club.id);
+
   const { name, schedule } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Missing "name" field (snapshot name)' });
   if (!Array.isArray(schedule) || !schedule.length) {
@@ -147,7 +171,7 @@ router.post('/training', requireApiKey, (req, res) => {
   const venueStmt = db.prepare(`
     SELECT v.id FROM training_venues v
     JOIN training_locations l ON l.id = v.location_id
-    WHERE v.club_id = ? AND v.name = ? AND l.name = ?
+    WHERE v.club_id = ? AND v.name = ? AND l.name = ? AND l.blueprint_id = ?
   `);
 
   const errors = [];
@@ -174,7 +198,7 @@ router.post('/training', requireApiKey, (req, res) => {
       continue;
     }
 
-    const venue = venueStmt.get(club.id, entry.venue, entry.location);
+    const venue = venueStmt.get(club.id, entry.venue, entry.location, bpId);
     if (!venue) {
       errors.push({ index: i, error: `Venue not found: "${entry.venue}" at "${entry.location}"` });
       continue;
@@ -195,8 +219,8 @@ router.post('/training', requireApiKey, (req, res) => {
 
   const data = JSON.stringify(resolved);
   const result = db.prepare(
-    'INSERT INTO training_snapshots (club_id, name, data, is_active) VALUES (?, ?, ?, 0)'
-  ).run(club.id, name.trim(), data);
+    'INSERT INTO training_snapshots (club_id, name, data, is_active, blueprint_id) VALUES (?, ?, ?, 0, ?)'
+  ).run(club.id, name.trim(), data, bpId);
 
   res.status(201).json({
     ok: true,

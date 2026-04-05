@@ -120,6 +120,21 @@ router.get('/clubs/:clubId/admins', requireClubAdmin('clubId'), (req, res) => {
   res.json({ ok: true, club_admins: clubAdmins, team_admins: teamAdmins, teams });
 });
 
+// GET /api/admin/clubs/:clubId/teams-manage — alle teams (incl. inactief) voor clubbeheer
+router.get('/clubs/:clubId/teams-manage', requireClubAdmin('clubId'), (req, res) => {
+  const clubId = parseInt(req.params.clubId, 10);
+  const club = db.prepare('SELECT id, name, nevobo_code FROM clubs WHERE id = ?').get(clubId);
+  if (!club) return res.status(404).json({ ok: false, error: 'Club niet gevonden' });
+  const teams = db.prepare(`
+    SELECT t.*,
+      (SELECT COUNT(*) FROM team_memberships tm WHERE tm.team_id = t.id) AS member_count
+    FROM teams t
+    WHERE t.club_id = ?
+    ORDER BY t.is_active DESC, t.display_name ASC
+  `).all(clubId);
+  res.json({ ok: true, club, teams });
+});
+
 // GET /api/admin/clubs/:clubId/users — list/search users associated with a club
 router.get('/clubs/:clubId/users', requireClubAdmin('clubId'), (req, res) => {
   const clubId = parseInt(req.params.clubId);
@@ -182,7 +197,7 @@ router.post('/teams/:teamId/members', requireTeamAdmin('teamId'), (req, res) => 
   const teamId = parseInt(req.params.teamId);
   const { email, userId, membership_type = 'player' } = req.body;
   if (!email && !userId) return res.status(400).json({ ok: false, error: 'userId of e-mailadres is verplicht' });
-  if (!['player', 'coach', 'staff', 'parent'].includes(membership_type)) {
+  if (!['player', 'coach', 'trainer', 'staff', 'parent'].includes(membership_type)) {
     return res.status(400).json({ ok: false, error: 'Ongeldig lidmaatschapstype' });
   }
 
@@ -214,7 +229,7 @@ router.patch('/teams/:teamId/members/:userId', requireTeamAdmin('teamId'), (req,
   const vals   = [];
 
   if (membership_type !== undefined) {
-    if (!['player', 'coach', 'staff', 'parent'].includes(membership_type)) {
+    if (!['player', 'coach', 'trainer', 'staff', 'parent'].includes(membership_type)) {
       return res.status(400).json({ ok: false, error: 'Ongeldig roltype' });
     }
     fields.push('membership_type = ?');

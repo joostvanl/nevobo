@@ -4,7 +4,7 @@ import { escHtml } from '../escape-html.js';
 /** Same as escHtml — data-* and quoted attribute values */
 const escAttr = escHtml;
 
-export async function render(container) {
+export async function render(container, params = {}) {
   container.innerHTML = '<div class="spinner"></div>';
 
   if (!state.user) {
@@ -43,6 +43,41 @@ export async function render(container) {
       }
     });
 
+    let initialTabId = tabs[0]?.id ?? null;
+
+    const wishTeamId = params.teamId != null && params.teamId !== '' ? parseInt(String(params.teamId), 10) : NaN;
+    const wishClubId = params.clubId != null && params.clubId !== '' ? parseInt(String(params.clubId), 10) : NaN;
+
+    if (!Number.isNaN(wishTeamId)) {
+      const existing = tabs.find(t => t.id === `team_${wishTeamId}` || t.id === `coach_${wishTeamId}`);
+      if (existing) {
+        initialTabId = existing.id;
+      } else if (!Number.isNaN(wishClubId)) {
+        const canOpenTeam =
+          isSuperAdmin || clubAdminRoles.some(r => Number(r.club_id) === wishClubId);
+        if (canOpenTeam) {
+          let label = '👥 Team leden';
+          try {
+            const d = await api(`/api/clubs/${wishClubId}/teams/${wishTeamId}`);
+            if (d.team?.display_name) label = `👥 ${d.team.display_name}`;
+          } catch (_) {}
+          const newTab = { id: `team_${wishTeamId}`, label };
+          const clubIdx = tabs.findIndex(t => t.id === `club_${wishClubId}`);
+          if (clubIdx >= 0) tabs.splice(clubIdx + 1, 0, newTab);
+          else if (isSuperAdmin) {
+            const sIdx = tabs.findIndex(t => t.id === 'super');
+            tabs.splice(sIdx >= 0 ? sIdx + 1 : 0, 0, newTab);
+          } else {
+            tabs.unshift(newTab);
+          }
+          initialTabId = `team_${wishTeamId}`;
+        }
+      }
+    } else if (!Number.isNaN(wishClubId)) {
+      const clubTab = tabs.find(t => t.id === `club_${wishClubId}`);
+      if (clubTab) initialTabId = clubTab.id;
+    }
+
     container.innerHTML = `
       <div class="page-hero">
         <div class="container">
@@ -52,8 +87,8 @@ export async function render(container) {
       </div>
       <div class="container">
         <div class="filter-pills mb-3" id="admin-tabs">
-          ${tabs.map((t, i) => `
-            <button class="filter-pill${i === 0 ? ' active' : ''}" data-tab="${t.id}">${t.label}</button>
+          ${tabs.map(t => `
+            <button class="filter-pill${t.id === initialTabId ? ' active' : ''}" data-tab="${t.id}">${t.label}</button>
           `).join('')}
         </div>
         <div id="admin-panel"></div>
@@ -74,8 +109,9 @@ export async function render(container) {
       });
     });
 
-    // Render first tab
-    if (tabs.length) renderTab(tabs[0].id, panel, roles, coachTeams);
+    if (tabs.length && initialTabId) {
+      renderTab(initialTabId, panel, roles, coachTeams);
+    }
 
   } catch (err) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><p>${err.message}</p></div>`;
@@ -288,7 +324,7 @@ async function renderTeamAdminTab(panel, teamId, opts = {}) {
 
     const groups = [
       { key: 'player', label: '🏐 Spelers',         list: members.filter(m => m.membership_type === 'player') },
-      { key: 'coach',  label: '📋 Trainer / Coach',  list: members.filter(m => m.membership_type === 'coach') },
+      { key: 'coach',  label: '📋 Trainer / Coach',  list: members.filter(m => m.membership_type === 'coach' || m.membership_type === 'trainer') },
       { key: 'staff',  label: '🎽 Begeleiding',       list: members.filter(m => m.membership_type === 'staff') },
       { key: 'parent', label: '👨‍👩‍👧 Ouders / Contacten', list: members.filter(m => m.membership_type === 'parent') },
     ];
@@ -297,7 +333,9 @@ async function renderTeamAdminTab(panel, teamId, opts = {}) {
 
     panel.innerHTML = `
       <p class="text-muted text-small" style="margin-bottom:0.75rem">
-        NPC = team-placeholder zonder echte login. Koppel aan een geregistreerde speler om data te overzetten.
+        ${canManageMembers
+          ? 'Tik op <strong>Bewerken</strong> voor e-mail, rol, rugnummer, positie, NPC en verwijderen.'
+          : 'Tik op <strong>Bewerken</strong> om naam en contact te wijzigen.'}
       </p>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.5rem">
         <span class="text-muted text-small">${team?.club_name || ''} · ${members.length} leden</span>
@@ -324,57 +362,17 @@ async function renderTeamAdminTab(panel, teamId, opts = {}) {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         showEditPlayerModal({
-          userId:    btn.dataset.userid,
-          teamId:    teamId,
-          name:      btn.dataset.name,
-          email:     btn.dataset.email,
-          shirt:     btn.dataset.shirt,
-          position:  btn.dataset.position,
-          birthDate: btn.dataset.birthdate,
+          userId:           btn.dataset.userid,
+          teamId,
+          name:             btn.dataset.name,
+          email:            btn.dataset.email,
+          shirt:            btn.dataset.shirt,
+          position:         btn.dataset.position,
+          birthDate:        btn.dataset.birthdate,
+          membershipType:   btn.dataset.role,
+          isNpc:            btn.dataset.npc === '1',
+          canManageMembers,
         }, refresh);
-      });
-    });
-
-    panel.querySelectorAll('.change-role-btn').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        showChangeRoleModal(teamId, btn.dataset.userid, btn.dataset.name, btn.dataset.role, refresh);
-      });
-    });
-
-    panel.querySelectorAll('.remove-member-btn').forEach(btn => {
-      btn.addEventListener('click', async e => {
-        e.stopPropagation();
-        if (!confirm('Lid verwijderen uit team?')) return;
-        try {
-          await api(`/api/admin/teams/${teamId}/members/${btn.dataset.userid}`, { method: 'DELETE' });
-          showToast('Lid verwijderd', 'info');
-          refresh();
-        } catch (err) { showToast(err.message, 'error'); }
-      });
-    });
-
-    panel.querySelectorAll('.npc-merge-btn').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        showNpcMergeModal(teamId, +btn.dataset.userid, btn.dataset.name, refresh);
-      });
-    });
-
-    panel.querySelectorAll('.member-npc-cb').forEach(cb => {
-      cb.addEventListener('change', async () => {
-        const want = cb.checked;
-        try {
-          await api(`/api/admin/users/${cb.dataset.userid}/npc`, {
-            method: 'PATCH',
-            body: { is_npc: want },
-          });
-          showToast(want ? 'Opgeslagen als NPC (geen login)' : 'NPC uitgezet', 'success');
-          refresh();
-        } catch (err) {
-          cb.checked = !want;
-          showToast(err.message || 'Opslaan mislukt', 'error');
-        }
       });
     });
   } catch (err) {
@@ -400,66 +398,39 @@ function adminRoleRow(r, currentClubId) {
 }
 
 const ROLE_LABELS = {
-  player: 'Speler',
-  coach:  'Trainer/Coach',
-  staff:  'Begeleiding',
-  parent: 'Ouder',
+  player:  'Speler',
+  coach:   'Trainer/Coach',
+  trainer: 'Trainer',
+  staff:   'Begeleiding',
+  parent:  'Ouder',
 };
 
 function memberRow(m, teamId, canManageMembers = true) {
-  const posLabel   = m.position     ? `<span class="chip chip-neutral" style="font-size:0.62rem">${escHtml(m.position)}</span>` : '';
-  const shirtLabel = m.shirt_number != null ? `<span class="chip chip-neutral" style="font-size:0.62rem">#${m.shirt_number}</span>` : '';
-  const roleLabel  = ROLE_LABELS[m.membership_type] || m.membership_type;
-  const npcChip = m.is_npc ? `<span class="chip" style="font-size:0.62rem;background:var(--bg-subtle,#eee)">NPC</span>` : '';
-  const mergeBtn = m.is_npc
-    ? `<button type="button" class="btn btn-primary btn-sm npc-merge-btn" data-userid="${m.user_id}" data-name="${escAttr(m.name)}" title="Data overzetten naar echt account">Koppel</button>`
-    : '';
-  const npcToggle = `
-    <label style="display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;font-size:0.72rem;margin-right:0.35rem;white-space:nowrap;color:var(--text-muted)"
-      title="Placeholder: geen login, wel zichtbaar op teampagina als NPC">
-      <input type="checkbox" class="member-npc-cb" data-userid="${m.user_id}" ${Number(m.is_npc) === 1 ? 'checked' : ''} />
-      NPC
-    </label>`;
-  const manageBtns = canManageMembers
-    ? `<button class="btn btn-ghost btn-sm change-role-btn"
-          data-userid="${m.user_id}"
-          data-name="${escAttr(m.name)}"
-          data-role="${m.membership_type}"
-          style="font-size:0.72rem;color:var(--accent);padding:0.2rem 0.45rem;border:1px solid var(--border);border-radius:999px"
-          title="Rol wijzigen">${roleLabel} ▾</button>
-        <button class="btn btn-ghost btn-sm edit-member-btn"
-          data-userid="${m.user_id}"
-          data-name="${escAttr(m.name)}"
-          data-email="${escAttr(m.email)}"
-          data-shirt="${m.shirt_number ?? ''}"
-          data-position="${escAttr(m.position || '')}"
-          data-birthdate="${escAttr(m.birth_date || '')}"
-          data-team="${teamId}"
-          style="color:var(--primary)">✏️</button>
-        <button class="btn btn-secondary btn-sm remove-member-btn" data-userid="${m.user_id}" data-team="${teamId}">✕</button>`
-    : `<button class="btn btn-ghost btn-sm edit-member-btn"
-          data-userid="${m.user_id}"
-          data-name="${escAttr(m.name)}"
-          data-email="${escAttr(m.email)}"
-          data-shirt="${m.shirt_number ?? ''}"
-          data-position="${escAttr(m.position || '')}"
-          data-birthdate="${escAttr(m.birth_date || '')}"
-          data-team="${teamId}"
-          style="color:var(--primary)">✏️</button>`;
+  const roleLabel = ROLE_LABELS[m.membership_type] || m.membership_type;
+  const shirtPart =
+    m.shirt_number != null && String(m.shirt_number).trim() !== ''
+      ? `#${m.shirt_number}`
+      : '—';
+  const npc = Number(m.is_npc) === 1 ? '1' : '0';
   return `
-    <div class="admin-user-row" data-member-id="${m.user_id}">
+    <div class="admin-user-row tm-member-row" data-member-id="${m.user_id}" style="align-items:center">
       <div class="admin-user-info" style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
-          <strong>${escHtml(m.name)}</strong>
-          ${npcChip}${shirtLabel}${posLabel}
+        <strong style="font-size:0.95rem">${escHtml(m.name)}</strong>
+        <div class="text-muted text-small" style="margin-top:0.2rem;line-height:1.35">
+          ${escHtml(shirtPart)} · ${escHtml(roleLabel)}
         </div>
-        <span class="text-muted text-small">${escHtml(m.email)}</span>
       </div>
-      <div class="flex gap-1 items-center" style="flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-        ${npcToggle}
-        ${mergeBtn}
-        ${manageBtns}
-      </div>
+      <button type="button" class="btn btn-secondary btn-sm edit-member-btn"
+        data-userid="${m.user_id}"
+        data-name="${escAttr(m.name)}"
+        data-email="${escAttr(m.email)}"
+        data-shirt="${m.shirt_number ?? ''}"
+        data-position="${escAttr(m.position || '')}"
+        data-birthdate="${escAttr(m.birth_date || '')}"
+        data-role="${escAttr(m.membership_type)}"
+        data-npc="${npc}"
+        data-team="${teamId}"
+        style="flex-shrink:0">Bewerken</button>
     </div>`;
 }
 
@@ -692,6 +663,7 @@ function showAddMemberModal(teamId, clubId, onSuccess) {
         <select id="member-type" class="form-input">
           <option value="player">Speler</option>
           <option value="coach">Trainer / Coach</option>
+          <option value="trainer">Trainer</option>
           <option value="staff">Begeleiding</option>
           <option value="parent">Ouder / Contact</option>
         </select>
@@ -769,63 +741,77 @@ function showAddMemberModal(teamId, clubId, onSuccess) {
   });
 }
 
-function showChangeRoleModal(teamId, userId, userName, currentRole, onSuccess) {
-  const overlay = document.createElement('div');
-  overlay.className = 'badge-unlock-overlay';
-  overlay.innerHTML = `
-    <div class="badge-unlock-card" style="max-width:320px">
-      <h3 style="margin-bottom:0.5rem">Rol wijzigen</h3>
-      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:1rem"><strong>${escHtml(userName)}</strong></p>
+function showEditPlayerModal(
+  {
+    userId,
+    teamId,
+    name,
+    email,
+    shirt,
+    position,
+    birthDate,
+    membershipType,
+    isNpc,
+    canManageMembers,
+  },
+  onSuccess,
+) {
+  const POSITIONS = ['Libero', 'Setter', 'Outside hitter', 'Opposite', 'Middle blocker', 'Defensive specialist'];
+  const mt = membershipType || 'player';
+
+  const teamSection = canManageMembers
+    ? `
+      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin:0 0 0.35rem;text-transform:uppercase;letter-spacing:0.05em">Team &amp; lidmaatschap</p>
+      <p class="text-muted text-small" style="margin:0 0 0.75rem;font-size:0.76rem;line-height:1.4">
+        NPC = placeholder zonder login. <strong>Koppel</strong> zet teamdata op een geregistreerd account.
+      </p>
       <div class="form-group">
-        <label class="form-label">Rol</label>
-        <select id="cr-role" class="form-input">
-          <option value="player"  ${currentRole === 'player'  ? 'selected' : ''}>🏐 Speler</option>
-          <option value="coach"   ${currentRole === 'coach'   ? 'selected' : ''}>📋 Trainer / Coach</option>
-          <option value="staff"   ${currentRole === 'staff'   ? 'selected' : ''}>🎽 Begeleiding</option>
-          <option value="parent"  ${currentRole === 'parent'  ? 'selected' : ''}>👨‍👩‍👧 Ouder / Contact</option>
+        <label class="form-label">Rol in dit team</label>
+        <select id="ep-role" class="form-input">
+          <option value="player"  ${mt === 'player'  ? 'selected' : ''}>🏐 Speler</option>
+          <option value="coach"   ${mt === 'coach'   ? 'selected' : ''}>📋 Trainer / Coach</option>
+          <option value="trainer" ${mt === 'trainer' ? 'selected' : ''}>📋 Trainer</option>
+          <option value="staff"   ${mt === 'staff'   ? 'selected' : ''}>🎽 Begeleiding</option>
+          <option value="parent"  ${mt === 'parent'  ? 'selected' : ''}>👨‍👩‍👧 Ouder / Contact</option>
         </select>
       </div>
-      <div class="flex gap-2 mt-3">
-        <button class="btn btn-secondary" style="flex:1" id="cr-cancel">Annuleren</button>
-        <button class="btn btn-primary" style="flex:1" id="cr-confirm">Opslaan</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector('#cr-cancel').addEventListener('click', () => overlay.remove());
-  overlay.querySelector('#cr-confirm').addEventListener('click', async () => {
-    const membership_type = overlay.querySelector('#cr-role').value;
-    try {
-      await api(`/api/admin/teams/${teamId}/members/${userId}`, { method: 'PATCH', body: { membership_type } });
-      overlay.remove();
-      showToast('Rol bijgewerkt', 'success');
-      onSuccess();
-    } catch (err) { showToast(err.message, 'error'); }
-  });
-}
-
-function showEditPlayerModal({ userId, teamId, name, email, shirt, position, birthDate }, onSuccess) {
-  const POSITIONS = ['Libero', 'Setter', 'Outside hitter', 'Opposite', 'Middle blocker', 'Defensive specialist'];
-
-  const overlay = document.createElement('div');
-  overlay.className = 'badge-unlock-overlay';
-  overlay.innerHTML = `
-    <div class="badge-unlock-card" style="max-width:380px">
-      <h3 style="margin-bottom:1rem">✏️ ${escHtml(name)}</h3>
-
-      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin-bottom:0.5rem;text-transform:uppercase;letter-spacing:0.05em">Teamgegevens</p>
       <div class="form-group">
         <label class="form-label">Rugnummer</label>
-        <input type="number" id="ep-shirt" class="form-input" value="${escAttr(shirt)}" min="1" max="99" placeholder="Bijv. 7" />
+        <input type="number" id="ep-shirt" class="form-input" value="${escAttr(shirt)}" min="1" max="99" placeholder="—" />
       </div>
       <div class="form-group">
-        <label class="form-label">Positie</label>
+        <label class="form-label">Positie op het veld</label>
         <select id="ep-position" class="form-input">
           <option value="">— Geen —</option>
           ${POSITIONS.map(p => `<option value="${p}"${position === p ? ' selected' : ''}>${p}</option>`).join('')}
         </select>
       </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer;font-size:0.86rem;line-height:1.35">
+          <input type="checkbox" id="ep-npc" ${isNpc ? 'checked' : ''} style="margin-top:0.2rem;flex-shrink:0" />
+          <span>Team-placeholder (NPC) — geen login</span>
+        </label>
+      </div>
+      <div class="form-group" id="ep-merge-wrap" style="display:${isNpc ? 'block' : 'none'}">
+        <button type="button" class="btn btn-primary btn-sm" style="width:100%" id="ep-merge">↗ Koppel aan geregistreerd account</button>
+      </div>
+      <div class="form-group" style="margin-bottom:1rem">
+        <button type="button" class="btn btn-ghost btn-sm" id="ep-remove" style="color:var(--danger,#b91c1c);border:1px solid currentColor;width:100%">Verwijderen uit dit team</button>
+      </div>
+      `
+    : `
+      <p class="text-muted text-small" style="margin:0 0 0.75rem;font-size:0.8rem">
+        Je kunt hier alleen naam en contact wijzigen. Teambeheer (rol, rugnummer, verwijderen) gaat via een teambeheerder.
+      </p>
+      `;
 
-      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin:1rem 0 0.5rem;text-transform:uppercase;letter-spacing:0.05em">Persoonsgegevens</p>
+  const overlay = document.createElement('div');
+  overlay.className = 'badge-unlock-overlay';
+  overlay.innerHTML = `
+    <div class="badge-unlock-card" style="max-width:400px;max-height:90vh;overflow-y:auto;text-align:left;padding:1.35rem 1.25rem 1.5rem">
+      <h3 style="margin:0 0 0.75rem;font-size:1.1rem">✏️ ${escHtml(name)}</h3>
+      ${teamSection}
+      <p style="font-size:0.8rem;font-weight:600;color:var(--primary);margin:0 0 0.5rem;text-transform:uppercase;letter-spacing:0.05em">Persoonsgegevens</p>
       <div class="form-group">
         <label class="form-label">Naam</label>
         <input type="text" id="ep-name" class="form-input" value="${escAttr(name)}" />
@@ -838,14 +824,39 @@ function showEditPlayerModal({ userId, teamId, name, email, shirt, position, bir
         <label class="form-label">Geboortedatum</label>
         <input type="date" id="ep-birthdate" class="form-input" value="${escAttr(birthDate)}" />
       </div>
-
       <div class="flex gap-2 mt-3">
-        <button class="btn btn-secondary" style="flex:1" id="ep-cancel">Annuleren</button>
-        <button class="btn btn-primary" style="flex:1" id="ep-save">Opslaan</button>
+        <button type="button" class="btn btn-secondary" style="flex:1" id="ep-cancel">Annuleren</button>
+        <button type="button" class="btn btn-primary" style="flex:1" id="ep-save">Opslaan</button>
       </div>
     </div>`;
 
   document.body.appendChild(overlay);
+
+  const npcCb = overlay.querySelector('#ep-npc');
+  const mergeWrap = overlay.querySelector('#ep-merge-wrap');
+  if (canManageMembers && npcCb && mergeWrap) {
+    npcCb.addEventListener('change', () => {
+      mergeWrap.style.display = npcCb.checked ? 'block' : 'none';
+    });
+  }
+
+  overlay.querySelector('#ep-merge')?.addEventListener('click', () => {
+    overlay.remove();
+    showNpcMergeModal(teamId, +userId, name, onSuccess);
+  });
+
+  overlay.querySelector('#ep-remove')?.addEventListener('click', async () => {
+    if (!confirm(`${name} verwijderen uit dit team?`)) return;
+    try {
+      await api(`/api/admin/teams/${teamId}/members/${userId}`, { method: 'DELETE' });
+      overlay.remove();
+      showToast('Lid verwijderd', 'info');
+      onSuccess?.();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
   overlay.querySelector('#ep-cancel').addEventListener('click', () => overlay.remove());
 
   overlay.querySelector('#ep-save').addEventListener('click', async () => {
@@ -853,26 +864,42 @@ function showEditPlayerModal({ userId, teamId, name, email, shirt, position, bir
     saveBtn.disabled = true;
     saveBtn.textContent = 'Bezig…';
     try {
-      // Save team-specific fields via membership endpoint
-      await api(`/api/admin/teams/${teamId}/members/${userId}`, {
-        method: 'PATCH',
-        body: {
-          shirt_number: overlay.querySelector('#ep-shirt').value,
-          position:     overlay.querySelector('#ep-position').value,
-        },
-      });
-      // Save personal fields via user profile endpoint
+      const nameVal = overlay.querySelector('#ep-name').value.trim();
+      const emailVal = overlay.querySelector('#ep-email').value.trim();
+      if (!nameVal) {
+        showToast('Naam is verplicht', 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Opslaan';
+        return;
+      }
+
+      if (canManageMembers) {
+        await api(`/api/admin/teams/${teamId}/members/${userId}`, {
+          method: 'PATCH',
+          body: {
+            membership_type: overlay.querySelector('#ep-role').value,
+            shirt_number:    overlay.querySelector('#ep-shirt').value,
+            position:        overlay.querySelector('#ep-position').value,
+          },
+        });
+        await api(`/api/admin/users/${userId}/npc`, {
+          method: 'PATCH',
+          body: { is_npc: overlay.querySelector('#ep-npc').checked },
+        });
+      }
+
       await api(`/api/admin/users/${userId}/profile`, {
         method: 'POST',
         body: {
-          name:       overlay.querySelector('#ep-name').value.trim(),
-          email:      overlay.querySelector('#ep-email').value.trim(),
+          name:       nameVal,
+          email:      emailVal,
           birth_date: overlay.querySelector('#ep-birthdate').value,
         },
       });
+
       overlay.remove();
-      showToast('Profiel bijgewerkt', 'success');
-      if (onSuccess) onSuccess();
+      showToast('Opgeslagen', 'success');
+      onSuccess?.();
     } catch (err) {
       showToast(err.message || 'Opslaan mislukt', 'error');
       saveBtn.disabled = false;

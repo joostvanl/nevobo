@@ -75,6 +75,249 @@
   gap: 4px;
   flex-wrap: wrap;
 }
+
+/* ── Toolbar (blauwdruk / week): groepen, weergave, acties ─────────────── */
+
+.tp-toolbar {
+  padding: 10px 0 8px;
+}
+.tp-toolbar__row--primary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+.tp-toolbar__row--secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.tp-toolbar__row--secondary.tp-toolbar__row--hidden {
+  display: none;
+}
+.tp-toolbar__notice {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: rgba(33, 150, 243, 0.08);
+  border: 1px solid rgba(33, 150, 243, 0.22);
+  border-radius: 8px;
+}
+.tp-draft-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: rgba(180, 120, 0, 0.09);
+  border: 1px solid rgba(180, 120, 0, 0.28);
+  border-radius: 8px;
+}
+.tp-draft-banner__text {
+  margin: 0;
+  flex: 1 1 220px;
+  max-width: 52rem;
+}
+.tp-draft-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.tp-toolbar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.tp-toolbar-group__label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+.tp-toolbar-group--week-status {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.tp-toolbar-group--week-status > .tp-toolbar-group__label {
+  display: none;
+}
+.tp-toolbar-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  flex-shrink: 0;
+  align-self: center;
+}
+.tp-toolbar-spacer {
+  flex: 1 1 12px;
+  min-width: 8px;
+  height: 1px;
+  align-self: center;
+}
+.tp-segmented {
+  display: inline-flex;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg, #f0f4f8);
+  padding: 2px;
+  gap: 2px;
+}
+.tp-seg {
+  border: none;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+  white-space: nowrap;
+}
+.tp-seg:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.65);
+}
+.tp-seg.tp-seg--active {
+  background: var(--bg-card, #fff);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.tp-bp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tp-archief-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(22rem, 100%);
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, #fff);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+button.tp-archief-chip {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+button.tp-archief-chip:hover {
+  border-color: var(--text-muted);
+  background: var(--bg);
+}
+.tp-archief-chip__k {
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.tp-archief-chip__v {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tp-archief-chip--empty .tp-archief-chip__v {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.tp-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.tp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.tp-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.tp-btn--sm {
+  padding: 5px 12px;
+  font-size: 0.78rem;
+}
+.tp-btn--secondary {
+  border-color: var(--border);
+  background: var(--bg-card, #fff);
+  color: var(--text);
+}
+.tp-btn--secondary:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  background: var(--bg);
+}
+.tp-btn--primary {
+  border-color: var(--accent, #2196f3);
+  background: var(--accent, #2196f3);
+  color: #fff;
+}
+.tp-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.tp-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.tp-btn--ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.04);
+}
+.tp-btn--danger-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--danger-color, #c0392b);
+  font-weight: 600;
+}
+.tp-btn--danger-ghost:hover:not(:disabled) {
+  background: rgba(192, 57, 43, 0.08);
+}
+.tp-btn--edit-on {
+  background: #e8f5e9 !important;
+  border-color: #43a047 !important;
+  color: #2e7d32 !important;
+}
+.tp-btn--edit-on:hover:not(:disabled) {
+  background: #c8e6c9 !important;
+}
+
 .tp-ctx-btn {
   border: 1px solid var(--border);
   background: var(--bg-card, #fff);
@@ -251,12 +494,207 @@
   pointer-events: none;
 }
 
+.tp-bp-toolbar {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+}
+.tp-bp-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.tp-bp-select {
+  min-width: 10.5rem;
+  max-width: 18rem;
+  font-size: 0.82rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #ddd);
+  background: var(--card-bg, #fff);
+  color: var(--text);
+}
+.tp-bp-new.tp-ctx-btn {
+  font-size: 0.78rem;
+}
+.tp-snap-archief,
+.tp-snap-archief-muted {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.tp-bp-readonly {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.tp-week-bp-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.tp-toolbar--week .tp-week-bp-hint {
+  align-self: center;
+  white-space: normal;
+  max-width: 14rem;
+  line-height: 1.35;
+}
+.tp-toolbar--week .tp-week-bp-hint strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .tp-wrapper.tp-mode-blueprint.tp-locked .tp-venue-track {
   pointer-events: none;
+}
+/* Inhuur tekenen alleen met Bewerken aan — anders blijft blauwdruk vergrendeld */
+.tp-wrapper.tp-inhuur-mode.tp-mode-blueprint.tp-locked:not(.tp-inhuur-interactive) .tp-venue-track {
+  pointer-events: none;
+  cursor: default;
+}
+.tp-wrapper.tp-inhuur-mode.tp-inhuur-interactive.tp-mode-blueprint.tp-locked .tp-venue-track {
+  pointer-events: auto;
+  cursor: crosshair;
 }
 .tp-wrapper.tp-mode-blueprint.tp-locked .tp-block {
   cursor: default;
   opacity: 0.85;
+}
+
+/* ── Inhuurmodus: alleen velden + niet-beschikbaar ───────────────────────── */
+
+.tp-inhuur-banner {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(121, 85, 72, 0.12), rgba(93, 64, 55, 0.08));
+  border: 1px solid rgba(121, 85, 72, 0.35);
+}
+.tp-inhuur-banner-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+.tp-inhuur-banner-sub {
+  margin: 0.35rem 0 0;
+}
+.tp-inhuur-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+}
+.tp-inhuur-scope-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.tp-inhuur-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.tp-ctx-btn.tp-ctx-inhuur-active {
+  background: rgba(121, 85, 72, 0.2) !important;
+  border-color: rgba(121, 85, 72, 0.45) !important;
+  font-weight: 600;
+}
+
+.tp-inhuur-toolbar-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 4px 0;
+  line-height: 1.35;
+}
+
+/* In inhuurmodus: alleen teamoverzicht & niet-gepland verbergen; Locaties & velden zit juist hier */
+.tp-wrapper.tp-inhuur-mode .tp-team-overview,
+.tp-wrapper.tp-inhuur-mode .tp-unplanned-dock {
+  display: none !important;
+}
+
+.tp-wrapper.tp-inhuur-mode.tp-has-unplanned-dock {
+  padding-bottom: 1rem;
+}
+
+.tp-venue-track.tp-inhuur-painting {
+  cursor: crosshair;
+}
+
+.tp-unavail-paint-preview {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  z-index: 20;
+  border-radius: 6px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(192, 57, 43, 0.55);
+  border: 2px solid #922b21;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.5),
+    0 4px 14px rgba(192, 57, 43, 0.45);
+}
+
+.tp-unavail-paint-preview-time {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+  pointer-events: none;
+  padding: 0 4px;
+}
+
+.tp-unavail-block--interactive {
+  pointer-events: auto !important;
+  cursor: grab;
+  z-index: 10;
+}
+.tp-unavail-block--interactive:hover {
+  filter: brightness(1.06);
+  box-shadow: inset 0 0 0 2px rgba(192, 57, 43, 0.55);
+}
+.tp-unavail-block--interactive.tp-unavail-dragging {
+  cursor: grabbing;
+  z-index: 25;
+  opacity: 0.92;
+}
+
+/* Zelfde resize-grepen als trainingsblokken (.tp-block .tp-resize-*) */
+.tp-unavail-block--interactive .tp-resize-left,
+.tp-unavail-block--interactive .tp-resize-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 12;
+  transition: background 0.1s;
+}
+.tp-unavail-block--interactive .tp-resize-left {
+  left: 0;
+  border-radius: 7px 0 0 7px;
+}
+.tp-unavail-block--interactive .tp-resize-right {
+  right: 0;
+  border-radius: 0 7px 7px 0;
+}
+.tp-unavail-block--interactive .tp-resize-left:hover,
+.tp-unavail-block--interactive .tp-resize-right:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* ── Blueprint mode tint ────────────────────────────────────────────────── */
@@ -446,6 +884,13 @@
 
 .tp-hour-line.half { background: rgba(0,0,0,0.04); }
 
+.tp-hour-line.tp-preferred-end {
+  background: rgba(180, 110, 0, 0.55);
+  width: 2px;
+  z-index: 2;
+  pointer-events: none;
+}
+
 /* ── Training block ─────────────────────────────────────────────────────── */
 
 .tp-block {
@@ -488,6 +933,21 @@
   transform: scale(1.02);
   z-index: 999;
   cursor: grabbing;
+}
+
+/* Multi-select (Ctrl/Cmd) — gezamenlijk horizontaal slepen */
+.tp-block.tp-block--selected {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 0 2px rgba(33, 150, 243, 0.95),
+    0 2px 10px rgba(0, 0, 0, 0.18);
+  z-index: 6;
+}
+.tp-block.tp-block--selected:hover {
+  z-index: 7;
+}
+.tp-block.tp-block--selected.dragging {
+  z-index: 999;
 }
 
 .tp-block.readonly {
@@ -546,6 +1006,56 @@
 .tp-block.match:hover {
   transform: none;
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+
+/* ── Veld niet beschikbaar (achter training-blokken) ───────────────────────── */
+
+.tp-unavail-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  z-index: 1;
+  border-radius: 6px;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(120, 20, 20, 0.14),
+    rgba(120, 20, 20, 0.14) 5px,
+    rgba(120, 20, 20, 0.05) 5px,
+    rgba(120, 20, 20, 0.05) 10px
+  );
+  box-shadow: inset 0 0 0 1px rgba(160, 50, 50, 0.4);
+}
+
+.tp-block-unavailable-conflict {
+  outline: 2px solid #c0392b !important;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 3px rgba(192, 57, 43, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.tp-block-unavailable-conflict.readonly {
+  outline-color: #c0392b !important;
+}
+
+.tp-conflict-badge {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 50%;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  z-index: 6;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
 }
 
 /* ── Popover ────────────────────────────────────────────────────────────── */
@@ -834,6 +1344,368 @@ tr.tp-tov-skip { opacity: 0.5; }
 }
 
 .tp-modal h3 { margin: 0 0 1rem; font-size: 1rem; }
+
+.tp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Blauwdrukken beheren — basis vs uitwijk + weekkalender */
+.tp-modal--bp-manage {
+  width: min(720px, 96vw);
+  max-height: min(92vh, 880px);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 1rem;
+}
+.tp-bp-modal-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.tp-bp-manage-intro {
+  margin: 0 0 12px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.tp-bp-manage-footnote {
+  margin: 10px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.tp-bp-manage-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.tp-bp-manage-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-right: 4px;
+}
+.tp-bp-sec {
+  border-radius: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+.tp-bp-sec--basis {
+  background: linear-gradient(135deg, rgba(46, 125, 50, 0.07), rgba(255, 255, 255, 0.96));
+  border-color: rgba(46, 125, 50, 0.28);
+}
+.tp-bp-sec--uitwijk {
+  background: linear-gradient(145deg, rgba(183, 110, 40, 0.08), rgba(255, 255, 255, 0.96));
+  border-color: rgba(183, 110, 40, 0.3);
+}
+.tp-bp-sec-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.tp-bp-sec-icon {
+  font-size: 1.35rem;
+  line-height: 1;
+  color: #2e7d32;
+  flex-shrink: 0;
+}
+.tp-bp-sec-icon--uitwijk {
+  color: #b8732e;
+}
+.tp-bp-sec-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+.tp-bp-sec-desc {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.tp-bp-manage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tp-bp-empty-sec {
+  list-style: none;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 4px;
+}
+.tp-bp-badge-basis,
+.tp-bp-badge-uitwijk {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  width: fit-content;
+}
+.tp-bp-badge-basis {
+  background: rgba(46, 125, 50, 0.18);
+  color: #1b5e20;
+}
+.tp-bp-badge-uitwijk {
+  background: rgba(183, 110, 40, 0.2);
+  color: #6d3f12;
+}
+.tp-bp-manage-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--bg-card, #fff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.tp-bp-manage-row--basis {
+  border-color: rgba(46, 125, 50, 0.2);
+}
+.tp-bp-manage-row--uitwijk {
+  border-color: rgba(183, 110, 40, 0.22);
+}
+.tp-bp-manage-view {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tp-bp-manage-namecol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.tp-bp-manage-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+.tp-bp-manage-actief {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+}
+.tp-bp-manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.tp-bp-manage-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+}
+.tp-bp-manage-edit-label {
+  display: block;
+  margin: 0;
+}
+.tp-bp-manage-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tp-bp-manage-meta {
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  width: 100%;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.tp-bp-manage-meta strong {
+  color: var(--text);
+  font-weight: 700;
+}
+.tp-bp-manage-schedule {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.tp-bp-manage-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.tp-bp-manage-schedule-row--uitwijk-head {
+  margin-bottom: 4px;
+}
+.tp-bp-sched-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.tp-bp-manage-schedule-row .tp-bp-priority-input {
+  width: 5rem;
+  font-size: 0.82rem;
+}
+.tp-bp-cal-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--bg, #f4f6f9);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tp-bp-cal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.tp-bp-cal-year-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.tp-bp-cal-year-label .tp-bp-year-select {
+  min-width: 5.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.tp-bp-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.tp-bp-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tp-bp-leg-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, #fff);
+}
+.tp-bp-leg-swatch.is-on {
+  background: linear-gradient(145deg, #1565c0, #0d47a1);
+  border-color: #0d47a1;
+}
+.tp-bp-leg-swatch.is-void {
+  background: repeating-linear-gradient(-45deg, #e0e0e0, #e0e0e0 2px, #f5f5f5 2px, #f5f5f5 4px);
+  border-color: #ccc;
+}
+.tp-bp-cal-tip {
+  margin: 0 0 10px;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.tp-bp-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(14, 2.35rem);
+  grid-auto-rows: 2.35rem;
+  gap: 3px;
+  width: max-content;
+}
+.tp-bp-cal-week {
+  box-sizing: border-box;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, #fff);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  transition: transform 0.1s, box-shadow 0.15s, border-color 0.15s, background 0.15s;
+}
+.tp-bp-cal-week:hover:not(:disabled) {
+  border-color: var(--accent, #2196f3);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(33, 150, 243, 0.22);
+}
+.tp-bp-cal-week.is-on {
+  background: linear-gradient(145deg, #1976d2, #0d47a1);
+  border-color: #0d47a1;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(13, 71, 161, 0.35);
+}
+.tp-bp-cal-week.is-void {
+  opacity: 0.38;
+  cursor: not-allowed;
+  background: var(--bg);
+}
+.tp-bp-cal-week:disabled {
+  pointer-events: none;
+}
+.tp-bp-other-years {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.tp-bp-other-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.tp-bp-weeks-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.tp-bp-week-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.tp-bp-week-item code {
+  font-size: 0.78rem;
+  background: var(--bg-card, #fff);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
 
 /* ── AI Optimize modal ─────────────────────────────────────────────────── */
 
@@ -1200,4 +2072,11 @@ tr.tp-tov-skip { opacity: 0.5; }
 
 .tp-unplanned-ghost {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Inhuur: team- en wedstrijdblokken verbergen (na alle .tp-block-regels i.v.m. volgorde) */
+.tp-wrapper.tp-inhuur-mode .tp-schedule-block {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }

@@ -6,7 +6,7 @@ const dayNames = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag
 const defaults = db.prepare(`
   SELECT d.day_of_week, d.start_time, d.end_time,
          t.display_name AS team_name, v.name AS venue_name, l.name AS location_name
-  FROM training_defaults d
+  FROM training_defaults_published d
   JOIN teams t ON t.id = d.team_id
   JOIN training_venues v ON v.id = d.venue_id
   JOIN training_locations l ON l.id = v.location_id

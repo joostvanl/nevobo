@@ -477,7 +477,11 @@ function renderPage(container, opts) {
         const ts = data.trainings || [];
         const dayNames = ['Maandag','Dinsdag','Woensdag','Donderdag','Vrijdag','Zaterdag','Zondag'];
         if (ts.length === 0) {
-          trainingEl.innerHTML = '';
+          trainingEl.innerHTML = `
+            <div class="card mb-3">
+              <div class="card-header"><h3>🏋️ Trainingen deze week</h3></div>
+              <div class="card-body"><p class="text-muted text-small" style="padding:0.25rem 0">Geen trainingen in het rooster voor deze week.</p></div>
+            </div>`;
           return;
         }
 
@@ -516,7 +520,13 @@ function renderPage(container, opts) {
             });
           });
         });
-      } catch (_) { trainingEl.innerHTML = ''; }
+      } catch (_) {
+        trainingEl.innerHTML = `
+          <div class="card mb-3">
+            <div class="card-header"><h3>🏋️ Trainingen deze week</h3></div>
+            <div class="card-body"><p class="text-muted text-small" style="padding:0.25rem 0">Kon het trainingsschema niet laden.</p></div>
+          </div>`;
+      }
     })();
   }
 

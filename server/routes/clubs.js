@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/db');
-const { verifyToken, requireSuperAdmin } = require('../middleware/auth');
+const { verifyToken, requireSuperAdmin, requireClubAdmin } = require('../middleware/auth');
+const { fetchClubCompetitionTeams, parseCompetitieTeamPath } = require('./nevobo');
 const RSSParser = require('rss-parser');
 
 const parser = new RSSParser({
@@ -138,11 +139,30 @@ router.post('/', verifyToken, requireSuperAdmin, async (req, res) => {
   }
 });
 
+// GET /api/clubs/:id/nevobo-competition-teams — LD+json competitieteams (cache + Nevobo), clubbeheerders
+router.get('/:id/nevobo-competition-teams', verifyToken, requireClubAdmin('id'), async (req, res) => {
+  const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(req.params.id);
+  if (!club?.nevobo_code) return res.status(404).json({ ok: false, error: 'Club niet gevonden of geen Nevobo-code' });
+  try {
+    const raw = await fetchClubCompetitionTeams(club.nevobo_code.toLowerCase());
+    const teams = (raw || []).map((t) => ({
+      team_path: t['@id'] || '',
+      naam: t.naam || '',
+      standpositietekst: t.standpositietekst || '',
+    }));
+    res.json({ ok: true, teams });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: 'Nevobo-teams ophalen mislukt', detail: err.message });
+  }
+});
+
 // GET /api/clubs/:id — single club with teams
 router.get('/:id', async (req, res) => {
   const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(req.params.id);
   if (!club) return res.status(404).json({ ok: false, error: 'Club niet gevonden' });
-  const teams = db.prepare('SELECT * FROM teams WHERE club_id = ? ORDER BY display_name ASC').all(club.id);
+  const teams = db.prepare(
+    'SELECT * FROM teams WHERE club_id = ? AND is_active = 1 ORDER BY display_name ASC'
+  ).all(club.id);
 
   // If home_address is not yet set, try to detect it in the background
   if (!club.home_address) {
@@ -159,7 +179,9 @@ router.get('/:id/teams', (req, res) => {
   if (!club) return res.status(404).json({ ok: false, error: 'Club niet gevonden' });
 
   const userId = req.query.userId ? parseInt(req.query.userId) : null;
-  const teams = db.prepare('SELECT * FROM teams WHERE club_id = ? ORDER BY display_name ASC').all(club.id);
+  const teams = db.prepare(
+    'SELECT * FROM teams WHERE club_id = ? AND is_active = 1 ORDER BY display_name ASC'
+  ).all(club.id);
 
   if (userId) {
     const followedTeamIds = new Set(
@@ -239,21 +261,111 @@ router.get('/:id/teams/:teamId', async (req, res) => {
   res.json({ ok: true, team, club, members, followerCount, isFollowing, isOwnTeam });
 });
 
-// POST /api/clubs/:id/teams — manually add a team
-router.post('/:id/teams', verifyToken, (req, res) => {
-  const { nevobo_team_type, nevobo_number, display_name } = req.body;
-  if (!display_name) {
-    return res.status(400).json({ ok: false, error: 'Teamnaam is verplicht' });
+// PATCH /api/clubs/:id/teams/:teamId — clubbeheerder: naam, actief, Nevobo-koppeling
+router.patch('/:id/teams/:teamId', verifyToken, requireClubAdmin('id'), (req, res) => {
+  const clubId = parseInt(req.params.id, 10);
+  const teamId = parseInt(req.params.teamId, 10);
+  const team = db.prepare('SELECT * FROM teams WHERE id = ? AND club_id = ?').get(teamId, clubId);
+  if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+
+  const club = db.prepare('SELECT nevobo_code FROM clubs WHERE id = ?').get(clubId);
+  const body = req.body || {};
+
+  let nevobo_team_type = team.nevobo_team_type;
+  let nevobo_number = team.nevobo_number;
+  let display_name = team.display_name;
+
+  if (body.display_name !== undefined) {
+    const dn = String(body.display_name).trim();
+    if (!dn) return res.status(400).json({ ok: false, error: 'Teamnaam mag niet leeg zijn' });
+    display_name = dn;
   }
+
+  let is_active = team.is_active == null || Number(team.is_active) !== 0 ? 1 : 0;
+  if (body.is_active !== undefined) {
+    is_active = body.is_active === true || body.is_active === 1 || body.is_active === '1' ? 1 : 0;
+  }
+
+  if (body.clear_nevobo === true || body.clear_nevobo === 1) {
+    nevobo_team_type = '';
+    nevobo_number = 0;
+  } else if (body.nevobo_team_path !== undefined && body.nevobo_team_path !== null && body.nevobo_team_path !== '') {
+    const parsed = parseCompetitieTeamPath(String(body.nevobo_team_path).trim());
+    if (!parsed) {
+      return res.status(400).json({ ok: false, error: 'Ongeldig Nevobo-teampad' });
+    }
+    const code = (club?.nevobo_code || '').toLowerCase();
+    if (!code || parsed.nevobo_code !== code) {
+      return res.status(400).json({ ok: false, error: 'Dit Nevobo-team hoort niet bij deze vereniging' });
+    }
+    nevobo_team_type = parsed.nevobo_team_type;
+    nevobo_number = parsed.nevobo_number;
+    if (body.sync_display_name_from_nevobo === true && body.naam_from_nevobo) {
+      display_name = String(body.naam_from_nevobo).trim() || display_name;
+    }
+  }
+
+  db.prepare(
+    `UPDATE teams SET display_name = ?, is_active = ?, nevobo_team_type = ?, nevobo_number = ?
+     WHERE id = ? AND club_id = ?`
+  ).run(display_name, is_active, nevobo_team_type, nevobo_number, teamId, clubId);
+
+  const updated = db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId);
+  res.json({ ok: true, team: updated });
+});
+
+// DELETE /api/clubs/:id/teams/:teamId — clubbeheerder (verwijdert team en gerelateerde data via FK CASCADE)
+router.delete('/:id/teams/:teamId', verifyToken, requireClubAdmin('id'), (req, res) => {
+  const clubId = parseInt(req.params.id, 10);
+  const teamId = parseInt(req.params.teamId, 10);
+  const team = db.prepare('SELECT id FROM teams WHERE id = ? AND club_id = ?').get(teamId, clubId);
+  if (!team) return res.status(404).json({ ok: false, error: 'Team niet gevonden' });
+  db.prepare('DELETE FROM teams WHERE id = ? AND club_id = ?').run(teamId, clubId);
+  res.json({ ok: true });
+});
+
+// POST /api/clubs/:id/teams — manually add a team
+router.post('/:id/teams', verifyToken, requireClubAdmin('id'), (req, res) => {
+  const clubId = parseInt(req.params.id, 10);
+  const { display_name, nevobo_team_path, sync_display_name_from_nevobo, naam_from_nevobo } = req.body || {};
+  if (!display_name && !nevobo_team_path) {
+    return res.status(400).json({ ok: false, error: 'Teamnaam of Nevobo-koppeling is verplicht' });
+  }
+
+  const club = db.prepare('SELECT nevobo_code FROM clubs WHERE id = ?').get(clubId);
+  let nevobo_team_type = '';
+  let nevobo_number = 0;
+  let name = display_name ? String(display_name).trim() : '';
+
+  if (nevobo_team_path) {
+    const parsed = parseCompetitieTeamPath(String(nevobo_team_path).trim());
+    if (!parsed) {
+      return res.status(400).json({ ok: false, error: 'Ongeldig Nevobo-teampad' });
+    }
+    const code = (club?.nevobo_code || '').toLowerCase();
+    if (!code || parsed.nevobo_code !== code) {
+      return res.status(400).json({ ok: false, error: 'Dit Nevobo-team hoort niet bij deze vereniging' });
+    }
+    nevobo_team_type = parsed.nevobo_team_type;
+    nevobo_number = parsed.nevobo_number;
+    if (sync_display_name_from_nevobo && naam_from_nevobo) {
+      name = String(naam_from_nevobo).trim();
+    }
+  }
+
+  if (!name) {
+    return res.status(400).json({ ok: false, error: 'Teamnaam is verplicht (of kies sync met Nevobo-naam)' });
+  }
+
   const result = db.prepare(
-    'INSERT INTO teams (club_id, nevobo_team_type, nevobo_number, display_name) VALUES (?, ?, ?, ?)'
-  ).run(req.params.id, nevobo_team_type || '', nevobo_number || 0, display_name);
+    'INSERT INTO teams (club_id, nevobo_team_type, nevobo_number, display_name, is_active) VALUES (?, ?, ?, ?, 1)'
+  ).run(clubId, nevobo_team_type, nevobo_number, name);
   const team = db.prepare('SELECT * FROM teams WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({ ok: true, team });
 });
 
 // POST /api/clubs/:id/sync-teams — re-sync teams from Nevobo RSS
-router.post('/:id/sync-teams', verifyToken, async (req, res) => {
+router.post('/:id/sync-teams', verifyToken, requireClubAdmin('id'), async (req, res) => {
   const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(req.params.id);
   if (!club) return res.status(404).json({ ok: false, error: 'Club niet gevonden' });
   try {

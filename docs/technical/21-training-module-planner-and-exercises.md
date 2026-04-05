@@ -61,6 +61,7 @@ Webhook en prompt-opbouw: `server/routes/training.js`; systeemprompts (revisies,
 
 ## Zie ook
 
+- [22-teamplanner-architecture-and-data-flows.md](./22-teamplanner-architecture-and-data-flows.md) — **diepgaande planner-architectuur**: club-actieve vs effectieve blauwdruk per week, draft/published, resolve-algoritme, valkuilen voor ontwikkelaars  
 - [02-database-and-migrations.md](./02-database-and-migrations.md) — `training_*` tabellen  
 - [14-api-endpoint-inventory.md](./14-api-endpoint-inventory.md) — `/api/training/*`  
 - [03-frontend-app-and-routing.md](./03-frontend-app-and-routing.md) — routing en SW/cache

@@ -4,6 +4,7 @@ const {
   getBuiltInDefaultConfig,
   validateConfig,
   composeBuiltInPrompt,
+  getActiveSystemPrompt,
 } = require('../server/lib/training-ai-prompts.js');
 
 test('built-in default config validates', () => {
@@ -17,4 +18,11 @@ test('composeBuiltInPrompt differs per mode', () => {
   assert.ok(a.includes('VOLLEDIG NIEUW'));
   assert.ok(b.includes('OPTIMALISEREN'));
   assert.notStrictEqual(a, b);
+});
+
+test('getActiveSystemPrompt appends venue unavailability rules', () => {
+  const p = getActiveSystemPrompt('complete');
+  assert.ok(p.includes('venue_unavailability'));
+  assert.ok(p.includes('R9'));
+  assert.ok(p.includes('V10 HUUR'));
 });

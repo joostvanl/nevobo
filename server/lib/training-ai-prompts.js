@@ -209,6 +209,36 @@ VELDREGELS:
 · team / venue / location: exact uit de input, hoofdlettergevoelig
 · schedule bevat ALLE trainingen (complete set)`;
 
+/**
+ * Wordt achter elke actieve systeemprompt geplakt (bundel + data/live JSON).
+ * Zorgt dat zaalhuur / niet-beschikbaar uit training.venue_unavailability[] altijd wordt meegenomen.
+ */
+const VENUE_UNAVAILABILITY_APPENDIX = `
+
+════════════════════════════════════════════════════════════════
+ZAAIHUUR / VELD NIET BESCHIKBAAR (VERPLICHT)
+════════════════════════════════════════════════════════════════
+training.venue_unavailability[] komt uit de planner (inhuur / geen huur). Dit zijn periodes waarin dat veld op die locatie op die dag niet gebruikt mag worden voor training.
+
+Structuur per element:
+  · venue, location — exacte namen (zelfde spelling als training.venues[] en schedule[])
+  · day_of_week — 0=ma … 6=zo
+  · start_time, end_time — "HH:MM"
+  · iso_week — null of leeg: TERUGKEREND, geldt voor het vaste weekrooster (blauwdruk). Gezet (bijv. "2026-W12"): alleen die kalenderweek; voor dit algemene herhalende conceptrooster is zo'n blok GEEN harde blokkade bij plaatsen, maar vermeld kort in advice dat die week apart controle vereist.
+  · note — optionele toelichting
+
+R9  GEEN TRAINING OP NIET-GEHUURDE / GEBLOKKEERDE TIJD
+    Plan NOOIT een training waar geen huur/beschikbaarheid is.
+    Voor elke rij in schedule[]: op (day_of_week, venue, location) mag het interval start_time–end_time GEEN overlap hebben met een regel uit venue_unavailability waarvoor iso_week null/leeg is (terugkerend).
+    Overlap = (training_start < blok_einde) EN (training_einde > blok_start), zelfde dag, zelfde venue+location. Randen gelijk = overlap.
+    Als door terugkerende huur op alle geschikte velden onvoldoende vrije tijd overblijft om R3 (frequentie) te halen: los dat niet op door alsnog op geblokkeerde tijden te plannen — vermeld in advice welke teams niet volledig geplaatst kunnen worden door huur.
+
+CAPACITEIT — correctie op 2a
+    Per veld per dag: beschikbare tijd = 17:00–23:00 MINUS de terugkerende venue_unavailability-blokken (iso_week leeg) op dat veld. Plan alleen binnen wat overblijft.
+
+FASE 4 — extra check
+V10 HUUR  Elke schedule-entry: geen overlap met terugkerende venue_unavailability (iso_week null/leeg) op hetzelfde veld en dezelfde dag. Zo niet → corrigeren.`;
+
 function composeBuiltInPrompt(mode) {
   const m = MODES.includes(mode) ? mode : 'complete';
   const intro = MODE_INTROS[m] || MODE_INTROS.complete;
@@ -350,8 +380,8 @@ function getActiveSystemPrompt(mode) {
   const env = getResolvedPromptEnvironment();
   const envBlock = config.environments[env] || config.environments.production;
   const slot = envBlock[m];
-  if (!slot) return composeBuiltInPrompt(m);
-  return getActivePromptForSlot(slot, m);
+  const base = !slot ? composeBuiltInPrompt(m) : getActivePromptForSlot(slot, m);
+  return base + VENUE_UNAVAILABILITY_APPENDIX;
 }
 
 function saveNewRevision(environment, mode, prompt, note) {
